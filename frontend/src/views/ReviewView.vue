@@ -81,6 +81,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { researchApi, syncApi } from '../api'
 import MarkdownIt from 'markdown-it'
+import DOMPurify from 'dompurify'
 import { useResearchStore } from '../stores/research'
 
 const route = useRoute()
@@ -101,7 +102,7 @@ const reportContent = ref('')
 const reportTitle = ref('')
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 
-const renderedPRD = computed(() => prdContent.value ? md.render(prdContent.value) : '')
+const renderedPRD = computed(() => prdContent.value ? DOMPurify.sanitize(md.render(prdContent.value)) : '')
 
 async function generateReview(roleId) {
   if (!reportContent.value) {

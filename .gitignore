@@ -50,6 +50,7 @@ ENV/
 node_modules/
 package-lock.json
 yarn.lock
+!frontend/yarn.lock
 pnpm-lock.yaml
 .npmrc
 .yarnrc

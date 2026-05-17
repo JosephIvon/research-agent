@@ -6,7 +6,7 @@ const REPORT_INDEX_KEY = 'research_report_index'
 const REPORT_PREFIX = 'research_report_'
 
 function storage() {
-  return typeof window === 'undefined' ? null : window.sessionStorage
+  return typeof window === 'undefined' ? null : window.localStorage
 }
 
 function readJson(key, fallback) {

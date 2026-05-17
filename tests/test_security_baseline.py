@@ -7,6 +7,24 @@ from src.llm import OpenAICompatibleClient
 from src.security.url_validation import UnsafeURL, validate_fetch_url
 
 
+def test_tools_package_imports_without_eager_search_instance():
+    import src.tools as tools
+    import src.tools.followup_optimizer as followup_module
+    import src.tools.multi_role_reviewer as reviewer_module
+    import src.tools.prd_generator as prd_module
+    import src.tools.search_tool as search_module
+
+    assert tools.get_search_tool is search_module.get_search_tool
+    assert tools.get_follow_up_optimizer is followup_module.get_follow_up_optimizer
+    assert tools.get_multi_role_reviewer is reviewer_module.get_multi_role_reviewer
+    assert tools.get_prd_generator is prd_module.get_prd_generator
+    assert search_module._search_tool_instance is None
+    assert followup_module._follow_up_optimizer_instance is None
+    assert reviewer_module._multi_role_reviewer_instance is None
+    assert prd_module._prd_generator_instance is None
+    assert not hasattr(search_module, "search_tool")
+
+
 def test_validate_fetch_url_rejects_private_and_non_http_urls():
     blocked_urls = [
         "http://127.0.0.1:8080/health",

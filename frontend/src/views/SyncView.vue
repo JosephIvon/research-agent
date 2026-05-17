@@ -39,6 +39,22 @@
             <span class="label">文档标题:</span>
             <el-input v-model="docTitle" placeholder="输入文档标题" class="title-input" />
           </div>
+          <div class="setting-row">
+            <span class="label">报告:</span>
+            <el-select
+              v-model="selectedReportId"
+              placeholder="选择要同步的报告"
+              class="report-select"
+              @change="loadSelectedReport"
+            >
+              <el-option
+                v-for="report in reports"
+                :key="report.id"
+                :label="report.title"
+                :value="report.id"
+              />
+            </el-select>
+          </div>
         </div>
 
         <div class="sync-history card">
@@ -70,15 +86,44 @@ const syncSummaryOnly = ref(false)
 const docTitle = ref('')
 const syncHistory = ref([])
 const reportContent = ref(null)
+const reports = ref([])
+const selectedReportId = ref('')
 
 async function loadLatestReport() {
   try {
     const history = await researchApi.history()
-    if (history?.length) {
-      const latest = await researchApi.getReport(history[0].id)
-      reportContent.value = latest?.markdown || null
+    reports.value = history || []
+    if (reports.value.length) {
+      selectedReportId.value = reports.value[0].id
+      await loadSelectedReport()
     }
   } catch (_) {}
+}
+
+async function loadSelectedReport() {
+  if (!selectedReportId.value) {
+    reportContent.value = null
+    return
+  }
+  const report = await researchApi.getReport(selectedReportId.value)
+  reportContent.value = report?.markdown || null
+  if (!docTitle.value && report?.title) {
+    docTitle.value = report.title
+  }
+}
+
+function syncPayload() {
+  const payload = {
+    title: docTitle.value || '智能调研报告',
+    full_report: syncFullReport.value
+  }
+  if (selectedReportId.value) {
+    payload.report_id = selectedReportId.value
+  }
+  if (reportContent.value) {
+    payload.report_content = reportContent.value
+  }
+  return payload
 }
 
 async function loadStatus() {
@@ -102,11 +147,7 @@ function connectTencent() {
 
 async function syncToFeishu() {
   try {
-    await syncApi.feishu({
-      title: docTitle.value || '智能调研报告',
-      full_report: syncFullReport.value,
-      report_content: reportContent.value
-    })
+    await syncApi.feishu(syncPayload())
     syncHistory.value.unshift({
       platform: '飞书文档',
       status: 'success',
@@ -125,11 +166,7 @@ async function syncToFeishu() {
 
 async function syncToTencent() {
   try {
-    await syncApi.tencent({
-      title: docTitle.value || '智能调研报告',
-      full_report: syncFullReport.value,
-      report_content: reportContent.value
-    })
+    await syncApi.tencent(syncPayload())
     syncHistory.value.unshift({
       platform: '腾讯文档',
       status: 'success',
@@ -214,6 +251,7 @@ onMounted(() => {
 
     .label { width: 80px; }
     .title-input { flex: 1; max-width: 400px; }
+    .report-select { flex: 1; max-width: 400px; }
   }
 }
 

@@ -74,7 +74,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import MarkdownIt from 'markdown-it'
@@ -94,6 +94,7 @@ const report = ref(null)
 const taskId = route.params.id
 const chartRef = ref(null)
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
+let chartInstance = null
 
 const gradeClass = computed(() => `grade-${(report.value?.grade || 'B').toLowerCase()}`)
 
@@ -134,8 +135,11 @@ async function loadReport() {
 
 function initChart() {
   if (!chartRef.value || !chartData.value) return
-  const chart = init(chartRef.value)
-  chart.setOption({
+  if (chartInstance) {
+    chartInstance.dispose()
+  }
+  chartInstance = init(chartRef.value)
+  chartInstance.setOption({
     radar: {
       indicator: chartData.value.map(item => ({
         name: item.name,
@@ -175,6 +179,13 @@ function shareReport() {
 
 onMounted(() => {
   loadReport()
+})
+
+onUnmounted(() => {
+  if (chartInstance) {
+    chartInstance.dispose()
+    chartInstance = null
+  }
 })
 </script>
 
