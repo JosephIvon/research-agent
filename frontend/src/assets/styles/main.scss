@@ -1,0 +1,194 @@
+:root {
+  /* 主色调 */
+  --primary: #4F46E5;
+  --primary-hover: #4338CA;
+
+  /* 语义色 */
+  --success: #10B981;
+  --warning: #F59E0B;
+  --error: #EF4444;
+
+  /* 背景 */
+  --bg-page: #F8FAFC;
+  --bg-card: #FFFFFF;
+  --bg-hover: #F1F5F9;
+
+  /* 文字 */
+  --text-primary: #1E293B;
+  --text-secondary: #64748B;
+  --text-muted: #94A3B8;
+
+  /* 边框 */
+  --border: #E2E8F0;
+  --border-focus: #4F46E5;
+
+  /* 质量等级 */
+  --grade-a: #10B981;
+  --grade-b: #22D3EE;
+  --grade-c: #F59E0B;
+  --grade-d: #F97316;
+  --grade-f: #EF4444;
+
+  /* 间距 */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  color: var(--text-primary);
+  background-color: var(--bg-page);
+  line-height: 1.5;
+}
+
+a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--primary-hover);
+}
+
+/* 布局工具类 */
+.page-container {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: var(--space-lg);
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-lg);
+}
+
+.page-title {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* 卡片 */
+.card {
+  background: var(--bg-card);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  padding: var(--space-lg);
+}
+
+.card-header {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: var(--space-md);
+  color: var(--text-primary);
+}
+
+/* 按钮 */
+.btn-primary {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 12px 24px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-primary:hover {
+  background: var(--primary-hover);
+}
+
+.btn-primary:disabled {
+  background: var(--text-muted);
+  cursor: not-allowed;
+}
+
+/* 质量等级 */
+.grade-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  font-size: 20px;
+  font-weight: 700;
+  border-radius: 8px;
+  color: #fff;
+}
+
+.grade-a { background: var(--grade-a); }
+.grade-b { background: var(--grade-b); }
+.grade-c { background: var(--grade-c); }
+.grade-d { background: var(--grade-d); }
+.grade-f { background: var(--grade-f); }
+
+/* 输入框 */
+.input-large {
+  width: 100%;
+  padding: 16px 20px;
+  font-size: 16px;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  transition: border-color 0.2s;
+}
+
+.input-large:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+/* 标签页 */
+.nav-tabs {
+  display: flex;
+  gap: var(--space-md);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-lg);
+}
+
+.nav-tab {
+  padding: var(--space-sm) var(--space-md);
+  font-size: 14px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.nav-tab:hover {
+  color: var(--primary);
+}
+
+.nav-tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+/* Markdown 样式 */
+.markdown-content {
+  line-height: 1.8;
+}
+
+.markdown-content h1 { font-size: 24px; font-weight: 600; margin: 24px 0 16px; }
+.markdown-content h2 { font-size: 20px; font-weight: 600; margin: 20px 0 12px; }
+.markdown-content h3 { font-size: 16px; font-weight: 600; margin: 16px 0 8px; }
+.markdown-content p { margin: 12px 0; }
+.markdown-content table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+.markdown-content th, .markdown-content td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+.markdown-content th { background: var(--bg-hover); font-weight: 600; }
+.markdown-content code { background: var(--bg-hover); padding: 2px 6px; border-radius: 4px; }
+.markdown-content pre { background: var(--bg-hover); padding: 16px; border-radius: 8px; overflow-x: auto; }
