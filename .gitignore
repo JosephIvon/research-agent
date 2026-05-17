@@ -1,0 +1,129 @@
+# ============== Environment & Secrets ==============
+# Environment variables (API keys, secrets)
+.env
+.env.local
+.env.*.local
+.env.prod
+.env.staging
+.env.development
+
+# MCP Server configuration
+.claude/
+.mcp-servers/
+mcp-servers.json
+
+# ============== Python ==============
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+nosetests.xml
+coverage.xml
+
+# ============== Virtual Environment ==============
+.venv/
+venv/
+ENV/
+.env/
+
+# ============== Node.js / Frontend ==============
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+.npmrc
+.yarnrc
+.yarnrc.yml
+.next/
+.nuxt/
+dist/
+*.log
+
+# ============== IDE ==============
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ============== Output & Logs ==============
+output/
+*.log
+.logs/
+.learnings/
+
+# ============== OS ==============
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ============== Docker ==============
+docker-compose.override.yml
+docker-compose.prod.yml
+.docker/.env
+
+# ============== Deployment ==============
+deploy-config.sh
+.env.production
+.ssh/
+.pem
+.key
+
+# ============== Security ==============
+*.pem
+*.key
+*.crt
+*.p12
+secrets/
+credentials/
+
+# ============== SearXNG ==============
+searxng-settings.yml
+
+# ============== Research Agent Specific ==============
+# Crawler cache
+.crawler_cache/
+playwright-report/
+test-results/
+
+# Report generation artifacts
+reports/
+*.md.bak
+*.pdf
+*.docx
+
+# LLM cache
+.llm_cache/
+.cache/
+
+# Server runtime
+.pid
+.sock
