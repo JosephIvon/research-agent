@@ -27,6 +27,9 @@ api.interceptors.response.use(
       ? detail.map(item => item.msg).join('；')
       : (detail || error.message || '请求失败')
     ElMessage.error(message)
+    if (error.response?.status === 401 && window.location.pathname !== '/settings') {
+      window.location.assign('/settings')
+    }
     return Promise.reject(error)
   }
 )
