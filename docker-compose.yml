@@ -5,7 +5,7 @@ services:
     ports:
       - "127.0.0.1:8888:8080"
     volumes:
-      - ./searxng-settings.yml:/etc/searxng/settings.yml:ro
+      - ./searxng-data:/etc/searxng:ro
     environment:
       SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://localhost:8888/}
       SEARXNG_SECRET: ${SEARXNG_SECRET:?set SEARXNG_SECRET in .env}
@@ -22,7 +22,7 @@ services:
     build: .
     container_name: research-agent
     ports:
-      - "8080:8080"
+      - "0.0.0.0:8080:8080"
     environment:
       - MINIMAX_API_KEY=${MINIMAX_API_KEY}
       - MINIMAX_BASE_URL=${MINIMAX_BASE_URL}
@@ -65,7 +65,7 @@ services:
     build: ./frontend
     container_name: research-agent-frontend
     ports:
-      - "3000:80"
+      - "0.0.0.0:3000:80"
     restart: unless-stopped
     depends_on:
       research-agent:

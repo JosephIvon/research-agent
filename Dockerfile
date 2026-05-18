@@ -28,7 +28,7 @@ RUN pip install uv
 COPY pyproject.toml uv.lock README.md ./
 
 # 使用 uv 安装依赖（使用锁定版本）
-RUN uv sync --frozen --no-dev --no-install-project --no-interactive
+RUN uv sync --frozen --no-dev --no-install-project
 
 # 安装Playwright浏览器
 RUN uv run playwright install chromium --with-deps \
