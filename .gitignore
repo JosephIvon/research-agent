@@ -128,3 +128,12 @@ reports/
 # Server runtime
 .pid
 .sock
+
+# Environment files
+.env*
+.env.save
+
+# SearXNG runtime files
+searxng-default.yml
+searxng/
+searxng-data/
