@@ -578,7 +578,7 @@ async def _run_research_task(task_id: str, req: TaskRequest):
         if event.status == "running":
             await store.update(task_id, current_stage=event.stage, current_message=event.message, status=TaskStatus.RUNNING)
         elif event.status in ("completed", "failed"):
-            await store.update(task_id, current_stage=event.stage, current_message=event.message)
+            await store.update(task_id, current_stage=event.stage, current_message=event.message, status=TaskStatus.FAILED if event.status == "failed" else TaskStatus.COMPLETED)
 
     emitter._on_event = on_event
 
@@ -617,6 +617,13 @@ async def _run_research_task(task_id: str, req: TaskRequest):
             )
     else:
         await store.update(task_id, status=TaskStatus.FAILED)
+
+    # Always set report artifact if present (even partial/warning results)
+    if result.get("report_final"):
+        await store.set_artifact(
+            task_id, "report",
+            TaskArtifact(artifact_type="report", content=result["report_final"], report_id=result.get("report_id"))
+        )
 
 
 @app.post("/research/tasks", response_model=Dict[str, Any])
