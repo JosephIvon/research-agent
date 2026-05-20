@@ -2,68 +2,105 @@
   <div class="layout">
     <header class="layout-header">
       <div class="header-left">
-        <el-button text @click="$router.push('/')">← 返回</el-button>
+        <el-button text @click="$router.push('/')">
+          <el-icon><ArrowLeft /></el-icon>
+          返回
+        </el-button>
         <span class="report-title">竞品分析报告</span>
       </div>
       <div class="header-actions">
-        <el-button @click="copyReport">📋 复制</el-button>
-        <el-button @click="exportReport">📥 导出</el-button>
-        <el-button @click="shareReport">🔗 分享</el-button>
+        <el-button @click="copyReport">
+          <el-icon><DocumentCopy /></el-icon>
+          复制
+        </el-button>
+        <el-button @click="exportReport">
+          <el-icon><Download /></el-icon>
+          导出
+        </el-button>
       </div>
     </header>
 
     <main class="layout-main">
       <div class="report-container" v-if="report">
-        <div class="report-sidebar">
-          <div class="report-meta card">
-            <div class="grade-badge" :class="gradeClass">{{ report.grade || 'B' }}</div>
-            <div class="meta-info">
-              <div class="meta-score">{{ report.score || 7.2 }}/10</div>
-              <div class="meta-label">质量评分</div>
+        <aside class="report-sidebar">
+          <section class="score-panel">
+            <div class="score-head">
+              <div class="grade-badge" :class="gradeClass">{{ gradeDisplay }}</div>
+              <div>
+                <div class="score-value">{{ scoreDisplay }}</div>
+                <div class="score-label">质量评分 / 10</div>
+              </div>
             </div>
-          </div>
-
-          <div class="report-toc card">
-            <div class="card-header">📑 目录</div>
-            <div class="toc-list">
-              <a v-for="item in toc" :key="item.id" :href="'#' + item.id" class="toc-item">
-                {{ item.text }}
-              </a>
+            <div class="score-track" aria-hidden="true">
+              <div class="score-fill" :class="scoreTone" :style="{ width: `${scorePercent}%` }"></div>
             </div>
-          </div>
+            <p class="score-note">{{ qualityMessage }}</p>
+          </section>
 
-          <div class="report-missing card" v-if="missingDimensions.length">
-            <div class="card-header">⚠️ 缺失维度</div>
+          <section class="side-panel">
+            <h2>报告信息</h2>
+            <dl class="meta-list">
+              <div>
+                <dt>生成时间</dt>
+                <dd>{{ createdAt }}</dd>
+              </div>
+              <div>
+                <dt>竞品数量</dt>
+                <dd>{{ report.competitors || 0 }} 个</dd>
+              </div>
+              <div>
+                <dt>自动评级</dt>
+                <dd>{{ gradeDisplay }} 级</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="side-panel" v-if="missingDimensions.length">
+            <h2>缺失维度</h2>
             <div class="missing-tags">
               <el-tag v-for="dim in missingDimensions" :key="dim" type="warning">{{ dim }}</el-tag>
             </div>
-          </div>
+          </section>
 
-          <div class="report-actions">
-            <el-button type="primary" @click="$router.push(`/followup/${taskId}`)">💬 追问</el-button>
-            <el-button @click="$router.push(`/review/${taskId}`)">🔍 多角色审查</el-button>
-            <el-button @click="$router.push('/sync')">📤 同步</el-button>
-          </div>
-        </div>
+          <section class="side-actions">
+            <el-button type="primary" @click="$router.push(`/followup/${taskId}`)">
+              <el-icon><ChatDotRound /></el-icon>
+              追问
+            </el-button>
+            <el-button @click="$router.push(`/review/${taskId}`)">
+              <el-icon><View /></el-icon>
+              多角色审查
+            </el-button>
+            <el-button @click="$router.push('/sync')">
+              <el-icon><Upload /></el-icon>
+              同步
+            </el-button>
+          </section>
+        </aside>
 
-        <div class="report-content">
-          <div class="report-header card">
-            <h1 class="report-title-main">{{ report.title || '竞品分析报告' }}</h1>
-            <div class="report-info">
-              <span>生成时间: {{ report.created_at || '未知' }}</span>
-              <span v-if="report.quality">数据质量: {{ report.quality }}</span>
+        <section class="report-content">
+          <div class="title-panel">
+            <div>
+              <div class="section-kicker">调研主题</div>
+              <h1>{{ displayTitle }}</h1>
             </div>
+            <el-tag :type="qualityTagType" effect="light">{{ qualityTagText }}</el-tag>
           </div>
 
-          <div class="report-body card">
+          <div v-if="isLowQuality" class="quality-callout">
+            <strong>当前报告数据不足</strong>
+            <span>建议补充明确竞品 URL，若网站需要登录，请在首页为对应网站单独填写登录凭据后重新调研。</span>
+          </div>
+
+          <article class="report-body">
             <div class="markdown-content" v-html="renderedMarkdown"></div>
-          </div>
+          </article>
 
-          <div class="report-chart card" v-if="chartData">
-            <div class="card-header">📊 功能对比雷达图</div>
+          <section class="chart-panel" v-if="chartData">
+            <h2>功能评分雷达图</h2>
             <div ref="chartRef" class="radar-chart"></div>
-          </div>
-        </div>
+          </section>
+        </section>
       </div>
 
       <div v-else class="loading-state">
@@ -74,9 +111,17 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import {
+  ArrowLeft,
+  ChatDotRound,
+  DocumentCopy,
+  Download,
+  Upload,
+  View
+} from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
 import { RadarChart } from 'echarts/charts'
@@ -86,7 +131,6 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { useResearchStore } from '../stores/research'
 
 const route = useRoute()
-const router = useRouter()
 const store = useResearchStore()
 use([RadarChart, RadarComponent, TooltipComponent, LegendComponent, GridComponent, CanvasRenderer])
 
@@ -96,31 +140,58 @@ const chartRef = ref(null)
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 let chartInstance = null
 
-const gradeClass = computed(() => `grade-${(report.value?.grade || 'B').toLowerCase()}`)
+const numericScore = computed(() => {
+  const value = Number(report.value?.score)
+  return Number.isFinite(value) ? Math.max(0, Math.min(10, value)) : null
+})
 
-const toc = computed(() => {
-  if (!report.value?.markdown) return []
-  const headings = []
-  const regex = /^(#{1,3})\s+(.+)/gm
-  let match
-  while ((match = regex.exec(report.value.markdown)) !== null) {
-    const level = match[1].length
-    const text = match[2]
-    const id = text.toLowerCase().replace(/[^\w]/g, '-')
-    headings.push({ id, text, level })
+const scoreDisplay = computed(() => numericScore.value === null ? '暂无' : numericScore.value.toFixed(1))
+const scorePercent = computed(() => numericScore.value === null ? 0 : Math.round(numericScore.value * 10))
+const gradeDisplay = computed(() => {
+  if (numericScore.value !== null) return gradeFromScore(numericScore.value)
+  return report.value?.grade || 'B'
+})
+const gradeClass = computed(() => `grade-${gradeDisplay.value.toLowerCase()}`)
+const scoreTone = computed(() => {
+  if (numericScore.value === null) return 'score-muted'
+  if (numericScore.value < 3) return 'score-bad'
+  if (numericScore.value < 6) return 'score-warn'
+  return 'score-good'
+})
+const isLowQuality = computed(() => numericScore.value !== null && numericScore.value < 5)
+const qualityTagType = computed(() => isLowQuality.value ? 'warning' : 'success')
+const qualityTagText = computed(() => isLowQuality.value ? '需要补充数据' : '可阅读')
+const qualityMessage = computed(() => {
+  if (numericScore.value === null) return '暂无质量评分，建议检查报告内容完整性。'
+  if (numericScore.value < 5) return '数据基础偏弱，报告更适合作为问题诊断。'
+  if (numericScore.value < 7) return '信息可用，但建议补充更多竞品来源。'
+  return '信息覆盖较完整，可进入追问和审查。'
+})
+const createdAt = computed(() => report.value?.created_at || '未知')
+const displayTitle = computed(() => {
+  const rawTitle = report.value?.title || ''
+  const trimmedTitle = rawTitle.trim()
+  if (trimmedTitle && !trimmedTitle.startsWith('>') && !trimmedTitle.includes('数据质量提示')) {
+    return trimmedTitle
   }
-  return headings
+  const heading = report.value?.markdown?.match(/^#\s+(.+)$/m)?.[1]
+  return heading || report.value?.query || '竞品分析报告'
 })
 
 const renderedMarkdown = computed(() => {
   return report.value?.markdown ? DOMPurify.sanitize(md.render(report.value.markdown)) : ''
 })
 
-const missingDimensions = computed(() => {
-  return report.value?.missing_dimensions || []
-})
-
+const missingDimensions = computed(() => report.value?.missing_dimensions || [])
 const chartData = computed(() => report.value?.radar_data)
+
+function gradeFromScore(score) {
+  if (score >= 8.5) return 'A'
+  if (score >= 7) return 'B'
+  if (score >= 5.5) return 'C'
+  if (score >= 3) return 'D'
+  return 'F'
+}
 
 async function loadReport() {
   try {
@@ -172,11 +243,6 @@ function exportReport() {
   URL.revokeObjectURL(url)
 }
 
-function shareReport() {
-  navigator.clipboard.writeText(window.location.href)
-  ElMessage.success('链接已复制')
-}
-
 onMounted(() => {
   loadReport()
 })
@@ -194,105 +260,223 @@ onUnmounted(() => {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  background: #f4f7fb;
 }
 
 .layout-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 24px;
+  min-height: 64px;
+  padding: 0 28px;
   background: #fff;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid #dbe3ee;
 }
 
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  .report-title { font-size: 16px; font-weight: 500; }
-}
-
+.header-left,
 .header-actions {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
+}
+
+.report-title {
+  color: #172033;
+  font-weight: 700;
 }
 
 .layout-main {
   flex: 1;
-  padding: 24px;
+  padding: 28px;
 }
 
 .report-container {
-  display: flex;
-  gap: 24px;
-  max-width: 1400px;
+  width: min(1480px, 100%);
   margin: 0 auto;
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
 }
 
 .report-sidebar {
-  width: 280px;
-  flex-shrink: 0;
-}
-
-.report-meta {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 16px;
-
-  .meta-info {
-    .meta-score { font-size: 24px; font-weight: 600; }
-    .meta-label { font-size: 12px; color: var(--text-secondary); }
-  }
-}
-
-.report-toc {
-  margin-bottom: 16px;
-}
-
-.toc-list {
+  position: sticky;
+  top: 24px;
   display: flex;
   flex-direction: column;
+  gap: 14px;
+}
+
+.score-panel,
+.side-panel,
+.title-panel,
+.report-body,
+.chart-panel {
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.10);
+}
+
+.score-panel,
+.side-panel,
+.title-panel,
+.report-body,
+.chart-panel {
+  padding: 22px;
+}
+
+.score-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.grade-badge {
+  flex: 0 0 44px;
+}
+
+.score-value {
+  color: #172033;
+  font-size: 28px;
+  line-height: 1;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.score-label {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.score-track {
+  height: 8px;
+  margin-top: 18px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8eef6;
+}
+
+.score-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #2563eb;
+}
+
+.score-fill.score-good {
+  background: #16a34a;
+}
+
+.score-fill.score-warn {
+  background: #f97316;
+}
+
+.score-fill.score-bad {
+  background: #ef4444;
+}
+
+.score-fill.score-muted {
+  background: #94a3b8;
+}
+
+.score-note {
+  margin: 12px 0 0;
+  color: #64748b;
+}
+
+.side-panel h2,
+.chart-panel h2 {
+  margin: 0 0 14px;
+  color: #172033;
+  font-size: 15px;
+}
+
+.meta-list {
+  margin: 0;
+}
+
+.meta-list > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid #edf2f7;
+}
+
+.meta-list > div:last-child {
+  border-bottom: 0;
+}
+
+.meta-list dt {
+  color: #64748b;
+}
+
+.meta-list dd {
+  margin: 0;
+  color: #172033;
+  font-weight: 700;
+  text-align: right;
+}
+
+.missing-tags {
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
-.toc-item {
-  font-size: 14px;
-  color: var(--text-secondary);
-  padding: 4px 0;
-  &:hover { color: var(--primary); }
-}
-
-.report-missing {
-  margin-bottom: 16px;
-
-  .missing-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-}
-
-.report-actions {
+.side-actions {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
 .report-content {
-  flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
-.report-header {
-  margin-bottom: 16px;
+.title-panel {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
 
-  .report-title-main { font-size: 24px; font-weight: 600; margin-bottom: 8px; }
-  .report-info { font-size: 12px; color: var(--text-secondary); display: flex; gap: 16px; }
+.section-kicker {
+  margin-bottom: 8px;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.title-panel h1 {
+  margin: 0;
+  max-width: 920px;
+  color: #172033;
+  font-size: 26px;
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+
+.quality-callout {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border-radius: 8px;
+  color: #713f12;
+  background: #fff7ed;
+  box-shadow: inset 0 0 0 1px #fed7aa;
+
+  strong {
+    flex: 0 0 auto;
+  }
 }
 
 .report-body {
-  margin-bottom: 16px;
+  min-height: 360px;
 }
 
 .radar-chart {
@@ -303,5 +487,31 @@ onUnmounted(() => {
 .loading-state {
   max-width: 900px;
   margin: 0 auto;
+}
+
+@media (max-width: 960px) {
+  .layout-header {
+    align-items: flex-start;
+    flex-direction: column;
+    height: auto;
+    padding: 12px 18px;
+  }
+
+  .layout-main {
+    padding: 18px;
+  }
+
+  .report-container {
+    grid-template-columns: 1fr;
+  }
+
+  .report-sidebar {
+    position: static;
+  }
+
+  .title-panel,
+  .quality-callout {
+    flex-direction: column;
+  }
 }
 </style>

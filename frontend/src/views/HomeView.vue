@@ -2,8 +2,13 @@
   <div class="layout">
     <header class="layout-header">
       <div class="header-left">
-        <span class="logo">🧠</span>
-        <span class="title">智能调研助手</span>
+        <div class="logo-mark">
+          <el-icon><DataAnalysis /></el-icon>
+        </div>
+        <div>
+          <span class="title">智能调研助手</span>
+          <span class="subtitle">竞品分析工作台</span>
+        </div>
       </div>
       <div class="header-right">
         <el-button text @click="$router.push('/reports')">历史报告</el-button>
@@ -13,126 +18,251 @@
     </header>
 
     <main class="layout-main">
-      <div class="home-container">
-        <div class="search-section">
-          <h1 class="search-title">开启智能竞品调研</h1>
-          <p class="search-subtitle">输入您想了解的问题，AI将自动为您收集和分析竞品信息</p>
+      <section class="workspace">
+        <div class="workspace-main">
+          <section class="brief-panel">
+            <div class="section-kicker">新建调研</div>
+            <h1>定义问题和竞品范围</h1>
+            <p>输入调研目标，指定要对比的网站。每个网站都可以单独配置登录页和账号密码。</p>
 
-          <div class="search-box">
             <el-input
               v-model="query"
               type="textarea"
-              :rows="3"
-              placeholder="我想了解..."
+              :rows="5"
+              placeholder="例如：我想做一个多模态 AI 接口聚合平台，现在需要分析竞品的能力矩阵、定价策略和接入体验"
               resize="none"
-              class="search-input"
+              class="query-input"
             />
-          </div>
 
-          <div class="quick-templates">
-            <div class="template-label">快捷示例</div>
-            <div class="template-cards">
-              <div class="template-card" @click="fillTemplate('对比在线文档产品：Notion、Obsidian、飞书文档的功能和定价')">
-                <span class="template-icon">📱</span>
-                <span class="template-text">SaaS产品对比</span>
-              </div>
-              <div class="template-card" @click="fillTemplate('分析AI助手的定价策略：ChatGPT、Claude、 Gemini的收费模式')">
-                <span class="template-icon">💰</span>
-                <span class="template-text">定价策略分析</span>
-              </div>
-              <div class="template-card" @click="fillTemplate('对比低代码平台的技术架构：OutSystems Mendix 的优劣势')">
-                <span class="template-icon">🔧</span>
-                <span class="template-text">技术架构对比</span>
-              </div>
+            <div class="quick-templates" aria-label="快速示例">
+              <button type="button" @click="fillTemplate('对比多模态 AI API 聚合平台，重点分析模型覆盖、接口稳定性、价格和开发者体验')">
+                <el-icon><Connection /></el-icon>
+                多模态 API 聚合
+              </button>
+              <button type="button" @click="fillTemplate('分析 AI 助手产品的定价策略，比较套餐、用量限制和企业版能力')">
+                <el-icon><Money /></el-icon>
+                定价策略
+              </button>
+              <button type="button" @click="fillTemplate('对比开发者平台的技术架构和接入流程，输出产品机会点')">
+                <el-icon><Tools /></el-icon>
+                技术架构
+              </button>
             </div>
-          </div>
+          </section>
 
-          <div class="url-section">
-            <div class="section-header" @click="showUrls = !showUrls">
-              <span>📎 指定竞品网站（可选）</span>
-              <span class="toggle-icon">{{ showUrls ? '▲' : '▼' }}</span>
-            </div>
-            <div v-show="showUrls" class="url-inputs">
-              <el-tag
-                v-for="(url, index) in urls"
-                :key="index"
-                closable
-                @close="removeUrl(index)"
-                class="url-tag"
+          <section class="targets-panel">
+            <div class="panel-heading">
+              <div>
+                <div class="section-kicker">竞品网站</div>
+                <h2>指定对比对象</h2>
+              </div>
+              <el-button
+                :disabled="competitorSites.length >= MAX_SITES"
+                @click="addSite"
               >
-                {{ url }}
-              </el-tag>
-              <el-input
-                v-if="urls.length < 10"
-                v-model="newUrl"
-                placeholder="输入URL后按回车添加"
-                @keyup.enter="addUrl"
-                class="url-input"
-              />
+                <el-icon><Plus /></el-icon>
+                添加网站
+              </el-button>
             </div>
-          </div>
 
-          <div class="advanced-section">
-            <div class="section-header" @click="showAdvanced = !showAdvanced">
-              <span>▼ 高级选项</span>
+            <div class="target-list">
+              <article
+                v-for="(site, index) in competitorSites"
+                :key="site.id"
+                class="target-site"
+              >
+                <div class="target-topline">
+                  <div class="target-index">{{ index + 1 }}</div>
+                  <el-input
+                    v-model="site.url"
+                    placeholder="https://example.com/product"
+                    clearable
+                    class="site-url-input"
+                    @keyup.enter="addSite"
+                  >
+                    <template #prefix>
+                      <el-icon><Link /></el-icon>
+                    </template>
+                  </el-input>
+                  <el-switch
+                    v-model="site.authEnabled"
+                    inline-prompt
+                    active-text="登录"
+                    inactive-text="公开"
+                  />
+                  <el-button
+                    v-if="competitorSites.length > 1"
+                    text
+                    class="icon-btn"
+                    aria-label="删除网站"
+                    @click="removeSite(index)"
+                  >
+                    <el-icon><Delete /></el-icon>
+                  </el-button>
+                </div>
+
+                <div v-if="site.authEnabled" class="auth-grid">
+                  <el-input v-model="site.loginUrl" placeholder="登录页 URL">
+                    <template #prefix>
+                      <el-icon><Lock /></el-icon>
+                    </template>
+                  </el-input>
+                  <el-input v-model="site.username" placeholder="用户名 / 邮箱">
+                    <template #prefix>
+                      <el-icon><User /></el-icon>
+                    </template>
+                  </el-input>
+                  <el-input v-model="site.password" type="password" placeholder="密码" show-password>
+                    <template #prefix>
+                      <el-icon><Key /></el-icon>
+                    </template>
+                  </el-input>
+                </div>
+              </article>
             </div>
+          </section>
+
+          <section class="advanced-panel">
+            <button type="button" class="advanced-toggle" @click="showAdvanced = !showAdvanced">
+              <span>
+                <el-icon><Setting /></el-icon>
+                高级选项
+              </span>
+              <el-icon><component :is="showAdvanced ? ArrowUp : ArrowDown" /></el-icon>
+            </button>
             <div v-show="showAdvanced" class="advanced-content">
-              <div class="option-row">
-                <el-switch v-model="disableAutoSearch" />禁用自动搜索
-              </div>
-              <div class="option-group">
-                <div class="option-label">登录凭据（用于需要登录的网站）</div>
-                <el-input v-model="loginUrl" placeholder="登录页 URL" />
-                <el-input v-model="loginUsername" placeholder="用户名" />
-                <el-input v-model="loginPassword" type="password" placeholder="密码" show-password />
+              <div class="advanced-row">
+                <div>
+                  <strong>自动搜索补充竞品</strong>
+                  <p>没有指定网站时建议开启；已经输入明确竞品时可关闭，避免混入无关站点。</p>
+                </div>
+                <el-switch v-model="enableAutoSearch" />
               </div>
             </div>
-          </div>
-
-          <el-button type="primary" size="large" :loading="isSubmitting" @click="startResearch" class="start-btn">
-            🚀 开始调研
-          </el-button>
+          </section>
         </div>
-      </div>
+
+        <aside class="run-panel">
+          <div class="run-card">
+            <div class="section-kicker">本次任务</div>
+            <dl>
+              <div>
+                <dt>指定网站</dt>
+                <dd>{{ filledSiteCount }} / {{ MAX_SITES }}</dd>
+              </div>
+              <div>
+                <dt>需登录</dt>
+                <dd>{{ loginSiteCount }}</dd>
+              </div>
+              <div>
+                <dt>自动搜索</dt>
+                <dd>{{ enableAutoSearch ? '开启' : '关闭' }}</dd>
+              </div>
+            </dl>
+            <el-button
+              type="primary"
+              size="large"
+              :loading="isSubmitting"
+              class="start-btn"
+              @click="startResearch"
+            >
+              <el-icon><Search /></el-icon>
+              开始调研
+            </el-button>
+          </div>
+        </aside>
+      </section>
     </main>
   </div>
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import {
+  ArrowDown,
+  ArrowUp,
+  Connection,
+  DataAnalysis,
+  Delete,
+  Key,
+  Link,
+  Lock,
+  Money,
+  Plus,
+  Search,
+  Setting,
+  Tools,
+  User
+} from '@element-plus/icons-vue'
 import { useResearchStore } from '../stores/research'
+
+const MAX_SITES = 10
 
 const router = useRouter()
 const route = useRoute()
 const store = useResearchStore()
 
 const query = ref('')
-const urls = ref([])
-const newUrl = ref('')
-const showUrls = ref(false)
+const competitorSites = ref([createSite()])
 const showAdvanced = ref(false)
-const disableAutoSearch = ref(false)
-const loginUrl = ref('')
-const loginUsername = ref('')
-const loginPassword = ref('')
+const enableAutoSearch = ref(true)
 const isSubmitting = ref(false)
+
+const filledSiteCount = computed(() => competitorSites.value.filter(site => site.url.trim()).length)
+const loginSiteCount = computed(() => competitorSites.value.filter(site => site.url.trim() && site.authEnabled).length)
+
+function createSite() {
+  return {
+    id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`,
+    url: '',
+    authEnabled: false,
+    loginUrl: '',
+    username: '',
+    password: ''
+  }
+}
 
 function fillTemplate(template) {
   query.value = template
 }
 
-function addUrl() {
-  const url = newUrl.value.trim()
-  if (url && !urls.value.includes(url)) {
-    urls.value.push(url)
-    newUrl.value = ''
-  }
+function addSite() {
+  if (competitorSites.value.length >= MAX_SITES) return
+  competitorSites.value.push(createSite())
 }
 
-function removeUrl(index) {
-  urls.value.splice(index, 1)
+function removeSite(index) {
+  competitorSites.value.splice(index, 1)
+}
+
+function buildTargetSites() {
+  return competitorSites.value
+    .map(site => ({
+      url: site.url.trim(),
+      login_url: site.authEnabled ? site.loginUrl.trim() : '',
+      username: site.authEnabled ? site.username.trim() : '',
+      password: site.authEnabled ? site.password : '',
+      authEnabled: site.authEnabled
+    }))
+    .filter(site => site.url)
+}
+
+function validateTargetSites(targetSites) {
+  for (const site of targetSites) {
+    const hasPartialAuth = site.authEnabled || site.login_url || site.username || site.password
+    const hasCompleteAuth = site.login_url && site.username && site.password
+    if (hasPartialAuth && !hasCompleteAuth) {
+      ElMessage.warning('开启登录的网站需要填写登录页 URL、用户名和密码')
+      return false
+    }
+  }
+  if (!enableAutoSearch.value && targetSites.length === 0) {
+    ElMessage.warning('关闭自动搜索时，至少需要填写一个竞品网站')
+    return false
+  }
+  return true
 }
 
 async function startResearch() {
@@ -141,17 +271,25 @@ async function startResearch() {
     return
   }
 
+  const targetSites = buildTargetSites()
+  if (!validateTargetSites(targetSites)) return
+
   isSubmitting.value = true
   try {
-    const params = {
-      query: query.value,
-      urls: urls.value.length > 0 ? urls.value : undefined,
-      enable_search: !disableAutoSearch.value,
-      login_url: loginUrl.value.trim() || undefined,
-      auth_credentials: (loginUsername.value && loginPassword.value) ? {
-        username: loginUsername.value,
-        password: loginPassword.value
+    const normalizedSites = targetSites.map(site => ({
+      url: site.url,
+      login_url: site.authEnabled ? site.login_url : undefined,
+      auth_credentials: site.authEnabled ? {
+        username: site.username,
+        password: site.password
       } : undefined
+    }))
+
+    const params = {
+      query: query.value.trim(),
+      urls: normalizedSites.map(site => site.url),
+      target_sites: normalizedSites,
+      enable_search: enableAutoSearch.value
     }
 
     const result = await store.createTask(params)
@@ -175,23 +313,46 @@ onMounted(() => {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  background: #f4f7fb;
 }
 
 .layout-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 24px;
-  background: #fff;
-  border-bottom: 1px solid var(--border);
+  padding: 14px 28px;
+  background: rgba(255, 255, 255, 0.94);
+  border-bottom: 1px solid #dbe3ee;
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: 8px;
-  .logo { font-size: 24px; }
-  .title { font-size: 18px; font-weight: 600; }
+  gap: 12px;
+}
+
+.logo-mark {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: #fff;
+  background: #1f6feb;
+}
+
+.title {
+  display: block;
+  font-size: 16px;
+  font-weight: 700;
+  color: #172033;
+}
+
+.subtitle {
+  display: block;
+  font-size: 12px;
+  color: #64748b;
 }
 
 .header-right {
@@ -201,139 +362,276 @@ onMounted(() => {
 
 .layout-main {
   flex: 1;
+  padding: 32px 28px 48px;
+}
+
+.workspace {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 24px;
+  align-items: start;
+}
+
+.workspace-main {
   display: flex;
-  justify-content: center;
-  padding: 48px 24px;
+  flex-direction: column;
+  gap: 16px;
 }
 
-.home-container {
-  width: 100%;
-  max-width: 800px;
+.brief-panel,
+.targets-panel,
+.advanced-panel,
+.run-card {
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.10);
 }
 
-.search-section {
-  text-align: center;
+.brief-panel,
+.targets-panel,
+.run-card {
+  padding: 24px;
 }
 
-.search-title {
-  font-size: 32px;
-  font-weight: 600;
-  color: var(--text-primary);
+.section-kicker {
+  font-size: 12px;
+  font-weight: 700;
+  color: #2563eb;
   margin-bottom: 8px;
 }
 
-.search-subtitle {
-  font-size: 16px;
-  color: var(--text-secondary);
-  margin-bottom: 32px;
+h1,
+h2 {
+  letter-spacing: 0;
+  color: #172033;
 }
 
-.search-box {
-  margin-bottom: 24px;
+h1 {
+  font-size: 28px;
+  line-height: 1.25;
+  margin: 0 0 8px;
 }
 
-.search-input {
+h2 {
+  font-size: 18px;
+  margin: 0;
+}
+
+.brief-panel p {
+  color: #64748b;
+  margin: 0 0 18px;
+}
+
+.query-input {
   :deep(.el-textarea__inner) {
-    font-size: 16px;
-    padding: 16px 20px;
-    border: 2px solid var(--border);
-    border-radius: 12px;
-    &:focus { border-color: var(--primary); }
+    min-height: 148px;
+    padding: 16px 18px;
+    font-size: 15px;
+    border-radius: 8px;
+    border-color: #cfd8e6;
+    box-shadow: none;
   }
 }
 
 .quick-templates {
-  margin-bottom: 32px;
-}
-
-.template-label {
-  font-size: 14px;
-  color: var(--text-secondary);
-  margin-bottom: 12px;
-}
-
-.template-cards {
   display: flex;
-  gap: 12px;
-  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+
+  button {
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 14px;
+    border-radius: 8px;
+    border: 1px solid #dbe3ee;
+    background: #fff;
+    color: #334155;
+    cursor: pointer;
+    transition: border-color 0.16s ease, background-color 0.16s ease, transform 0.16s ease;
+
+    &:hover {
+      border-color: #93b4ef;
+      background: #f7faff;
+    }
+
+    &:active {
+      transform: scale(0.98);
+    }
+  }
 }
 
-.template-card {
+.panel-heading {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 20px;
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s;
-  &:hover {
-    border-color: var(--primary);
-    box-shadow: 0 2px 8px rgba(79, 70, 229, 0.1);
-  }
-  .template-icon { font-size: 18px; }
-  .template-text { font-size: 14px; color: var(--text-primary); }
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
 }
 
-.url-section, .advanced-section {
-  text-align: left;
-  margin-bottom: 16px;
-  background: #fff;
-  border-radius: 12px;
+.target-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.target-site {
+  padding: 14px;
+  border-radius: 8px;
+  background: #f8fbff;
+  box-shadow: inset 0 0 0 1px #dbe6f4;
+}
+
+.target-topline {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 82px 40px;
+  gap: 10px;
+  align-items: center;
+}
+
+.target-index {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #e8f1ff;
+  color: #1d4ed8;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.site-url-input {
+  :deep(.el-input__wrapper) {
+    min-height: 40px;
+    border-radius: 8px;
+    box-shadow: 0 0 0 1px #cfd8e6 inset;
+  }
+}
+
+.icon-btn {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+}
+
+.auth-grid {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr 1fr;
+  gap: 10px;
+  margin-top: 12px;
+
+  :deep(.el-input__wrapper) {
+    min-height: 40px;
+    border-radius: 8px;
+  }
+}
+
+.advanced-panel {
   overflow: hidden;
 }
 
-.section-header {
+.advanced-toggle {
+  width: 100%;
+  min-height: 52px;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 16px 20px;
+  justify-content: space-between;
+  padding: 0 20px;
+  border: 0;
+  background: #eef3f9;
+  color: #334155;
   cursor: pointer;
-  font-size: 14px;
-  color: var(--text-secondary);
-  &:hover { background: var(--bg-hover); }
-}
 
-.url-inputs {
-  padding: 0 20px 16px;
-}
-
-.url-tag {
-  margin-right: 8px;
-  margin-bottom: 8px;
-}
-
-.url-input {
-  width: 300px;
+  span {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+  }
 }
 
 .advanced-content {
-  padding: 0 20px 16px;
+  padding: 18px 20px;
 }
 
-.option-row {
+.advanced-row {
   display: flex;
+  justify-content: space-between;
+  gap: 16px;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-  font-size: 14px;
+
+  strong {
+    color: #172033;
+  }
+
+  p {
+    color: #64748b;
+    margin: 4px 0 0;
+  }
 }
 
-.option-group {
-  .option-label {
-    font-size: 12px;
-    color: var(--text-secondary);
-    margin-bottom: 8px;
-  }
-  .el-input { margin-bottom: 8px; }
+.run-panel {
+  position: sticky;
+  top: 24px;
+}
+
+.run-card dl {
+  margin: 8px 0 20px;
+}
+
+.run-card dl > div {
+  display: flex;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid #edf2f7;
+}
+
+.run-card dt {
+  color: #64748b;
+}
+
+.run-card dd {
+  margin: 0;
+  color: #172033;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .start-btn {
-  width: 200px;
-  height: 48px;
-  font-size: 16px;
-  border-radius: 24px;
-  margin-top: 16px;
+  width: 100%;
+  height: 44px;
+  border-radius: 8px;
+  font-size: 15px;
+}
+
+@media (max-width: 900px) {
+  .layout-header {
+    align-items: flex-start;
+    gap: 12px;
+    flex-direction: column;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .run-panel {
+    position: static;
+  }
+
+  .target-topline,
+  .auth-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .target-index {
+    display: none;
+  }
 }
 </style>

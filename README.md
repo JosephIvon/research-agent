@@ -104,6 +104,33 @@ research-agent/
 | `/sync/tencent` | POST | 同步到腾讯文档 |
 | `/health` | GET | 健康检查 |
 
+### 竞品分析请求体
+
+`/research/competitive` 和 `/research/prd-from-query` 支持两种指定竞品的方式：
+
+- `urls`: 兼容旧调用方，只传公开页面 URL；若同时传全局 `login_url` 和 `auth_credentials`，会作为这些 URL 的共享登录凭据。
+- `target_sites`: 推荐前端和新调用方使用。每个竞品网站可以单独声明 `url`、`login_url` 和 `auth_credentials`，用于多个需要不同账号密码的网站对比。
+
+```json
+{
+  "query": "我想做一个多模态 AI 接口聚合平台，现在需要分析竞品",
+  "enable_search": true,
+  "target_sites": [
+    {
+      "url": "https://example-a.com/product",
+      "login_url": "https://example-a.com/login",
+      "auth_credentials": {
+        "username": "demo@example.com",
+        "password": "example-password"
+      }
+    },
+    {
+      "url": "https://example-b.com/pricing"
+    }
+  ]
+}
+```
+
 ## 许可证
 
 MIT - 允许商用、修改、私有闭源
