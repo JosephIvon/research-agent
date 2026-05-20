@@ -127,7 +127,9 @@ class EventEmitter:
     async def emit(self, event: TaskEvent):
         if self._on_event:
             try:
-                self._on_event(event)
+                result = self._on_event(event)
+                if asyncio.iscoroutine(result):
+                    await result
             except Exception as e:
                 logger.warning(f"Event callback error: {e}")
         async with self._lock:
@@ -137,7 +139,9 @@ class EventEmitter:
     def emit_sync(self, event: TaskEvent):
         if self._on_event:
             try:
-                self._on_event(event)
+                result = self._on_event(event)
+                if asyncio.iscoroutine(result):
+                    raise RuntimeError("emit_sync cannot await coroutine")
             except Exception as e:
                 logger.warning(f"Event callback error: {e}")
         for q in self._subscribers:
@@ -153,6 +157,7 @@ class TaskStore:
     def __init__(self):
         self._tasks: Dict[str, TaskState] = {}
         self._lock = asyncio.Lock()
+        self._emitters: Dict[str, EventEmitter] = {}
 
     async def create(
         self,
@@ -181,7 +186,7 @@ class TaskStore:
             ts = self._tasks.get(task_id)
             if not ts:
                 return None
-            if "status" in kwargs:
+            if "status" in kwargs and kwargs["status"] is not None:
                 ts.status = TaskStatus(kwargs["status"])
             if "current_stage" in kwargs:
                 ts.current_stage = kwargs["current_stage"]
@@ -222,6 +227,15 @@ class TaskStore:
         async with self._lock:
             return list(self._tasks.values())
 
+    def get_or_create_emitter(self, task_id: str) -> EventEmitter:
+        if task_id not in self._emitters:
+            self._emitters[task_id] = EventEmitter()
+        return self._emitters[task_id]
+
+    def subscribe_task(self, task_id: str) -> asyncio.Queue:
+        emitter = self.get_or_create_emitter(task_id)
+        return emitter.subscribe()
+
 
 _task_store: Optional[TaskStore] = None
 
@@ -238,5 +252,5 @@ def _sanitize_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     sanitized = dict(payload)
     for key in ["password", "auth_credentials", "secret", "token"]:
         if key in sanitized:
-            sanitized[key] = "[redacted]"
+            del sanitized[key]
     return sanitized
