@@ -22,7 +22,7 @@ services:
     build: .
     container_name: research-agent
     ports:
-      - "0.0.0.0:8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       - MINIMAX_API_KEY=${MINIMAX_API_KEY}
       - MINIMAX_BASE_URL=${MINIMAX_BASE_URL}
@@ -41,7 +41,7 @@ services:
       - APP_PORT=8080
       - API_MAX_BODY_BYTES=${API_MAX_BODY_BYTES:-1048576}
       - API_AUTH_TOKEN=${API_AUTH_TOKEN:-}
-      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost,127.0.0.1}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost,127.0.0.1,research-agent}
       # SearXNG 配置
       - SEARXNG_URL=http://searxng:8080
       - SEARCH_PROVIDER=${SEARCH_PROVIDER:-searxng}

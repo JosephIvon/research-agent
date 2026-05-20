@@ -1,8 +1,10 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import { resolveApiBaseUrl } from './baseUrl'
 import { createAuthorizedEventSource } from './sse'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
+const DEV_API_BASE_URL = import.meta.env.DEV ? import.meta.env.VITE_API_BASE_URL : ''
+const API_BASE_URL = resolveApiBaseUrl(DEV_API_BASE_URL, import.meta.env.DEV)
 
 const api = axios.create({
   baseURL: API_BASE_URL,
