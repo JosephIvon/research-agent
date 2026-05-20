@@ -558,17 +558,19 @@ async def _run_research_task(task_id: str, req: TaskRequest):
     from src.workflow.mvp_workflow import MVPWorkflow
 
     store = get_task_store()
-    emitter = EventEmitter()
+    emitter = store.get_or_create_emitter(task_id)
+
+    event_counter = 0
 
     async def on_event(event: TaskEvent):
-        event.id = len(await store.get(task_id)) if await store.get(task_id) else 0
+        nonlocal event_counter
+        event_counter += 1
+        event.id = event_counter
         await store.add_event(task_id, event)
-        await store.update(
-            task_id,
-            current_stage=event.stage,
-            current_message=event.message,
-            status=TaskStatus.RUNNING if event.status == "running" else None,
-        )
+        if event.status == "running":
+            await store.update(task_id, current_stage=event.stage, current_message=event.message, status=TaskStatus.RUNNING)
+        elif event.status in ("completed", "failed"):
+            await store.update(task_id, current_stage=event.stage, current_message=event.message)
 
     emitter._on_event = on_event
 
@@ -655,8 +657,7 @@ async def stream_task_events(task_id: str, request: Request):
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
 
-    emitter = EventEmitter()
-    q = emitter.subscribe()
+    q = store.subscribe_task(task_id)
 
     last_event_id = 0
     if request.headers.get("Last-Event-ID"):
@@ -688,6 +689,12 @@ async def stream_task_events(task_id: str, request: Request):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.get("/research/history", response_model=List[Dict[str, Any]])
+def list_history():
+    """列出本地历史报告。"""
+    return [_report_payload(path) for path in _report_files()[:100]]
 
 
 @app.get("/research/history/{report_id}", response_model=Dict[str, Any])

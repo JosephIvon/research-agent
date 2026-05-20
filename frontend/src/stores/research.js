@@ -113,12 +113,7 @@ function connectTaskSSE(runId, taskId, callbacks = {}) {
       const data = JSON.parse(event.data)
       const { event: backendEvent, stage, status, message, payload } = data
 
-      const frontendStage = mapBackendStage(backendEvent)
-      if (!frontendStage) return
-
-      const eventType = getEventType(backendEvent, status)
-      emitRunEvent(runId, frontendStage, eventType, message, callbacks)
-
+      // Capture artifact data before stage mapping check
       if (backendEvent === 'artifact_ready' && payload) {
         if (payload.artifact_type === 'report' && payload.report_id) {
           reportId = payload.report_id
@@ -127,6 +122,12 @@ function connectTaskSSE(runId, taskId, callbacks = {}) {
           prdContent = payload.content
         }
       }
+
+      const frontendStage = mapBackendStage(backendEvent)
+      if (!frontendStage) return
+
+      const eventType = getEventType(backendEvent, status)
+      emitRunEvent(runId, frontendStage, eventType, message, callbacks)
 
       if (backendEvent === 'completed' || status === 'failed') {
         cleanup()
@@ -166,11 +167,20 @@ function connectTaskSSE(runId, taskId, callbacks = {}) {
     }
   }
 
+  const BACKEND_EVENTS = [
+    'task_created', 'decompose', 'search', 'crawl_start',
+    'crawl_progress', 'crawl_complete', 'extract', 'verify',
+    'report_generate', 'prd_generate', 'artifact_ready',
+    'completed', 'error'
+  ]
+
   function cleanup() {
     eventSource.close()
   }
 
-  eventSource.addEventListener('message', (e) => handleMessage(e))
+  for (const evt of BACKEND_EVENTS) {
+    eventSource.addEventListener(evt, (e) => handleMessage(e))
+  }
   eventSource.addEventListener('error', () => {
     cleanup()
   })
