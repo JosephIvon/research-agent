@@ -323,7 +323,7 @@ async function startResearch() {
       enable_search: enableAutoSearch.value
     }
 
-    const run = store.createResearchRun(params, {
+    const run = await store.createAsyncTask(params, {
       deliverables: deliverables.value
     })
     router.push(`/progress/${run.id}`)

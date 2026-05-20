@@ -190,11 +190,12 @@ async function executeRun() {
 
   isExecuting.value = true
   try {
-    const finalRun = await store.runResearchRun(taskId, {
+    const result = await store.runResearchRun(taskId, {
       onEvent: () => syncRun()
     })
     syncRun()
-    if (finalRun?.report_id) {
+    // In sync mode, finalRun has report_id. In SSE mode, report_id is set via store update.
+    if (result?.report_id) {
       setTimeout(openReport, 900)
     }
   } catch (e) {

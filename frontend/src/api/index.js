@@ -51,7 +51,17 @@ export const researchApi = {
 
   getReport: (id) => api.get(`/research/history/${encodeURIComponent(id)}`),
 
-  deleteReport: (id) => api.delete(`/research/history/${encodeURIComponent(id)}`)
+  deleteReport: (id) => api.delete(`/research/history/${encodeURIComponent(id)}`),
+
+  // Async task queue API
+  createTask: (params) => api.post('/research/tasks', params),
+
+  getTask: (taskId) => api.get(`/research/tasks/${taskId}`),
+
+  getTaskEvents: (taskId) => {
+    const base = API_BASE_URL || '/api'
+    return new EventSource(`${base}/research/tasks/${taskId}/events`)
+  }
 }
 
 export const syncApi = {
