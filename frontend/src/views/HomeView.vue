@@ -159,6 +159,31 @@
                 <dd>{{ enableAutoSearch ? '开启' : '关闭' }}</dd>
               </div>
             </dl>
+
+            <div class="deliverable-panel">
+              <div class="deliverable-title">本次交付</div>
+              <label class="deliverable-option locked">
+                <span class="option-icon">
+                  <el-icon><Document /></el-icon>
+                </span>
+                <span>
+                  <strong>竞品分析报告</strong>
+                  <em>默认生成，包含结论、来源和质量提示</em>
+                </span>
+                <el-checkbox :model-value="true" disabled />
+              </label>
+              <label class="deliverable-option">
+                <span class="option-icon">
+                  <el-icon><DocumentChecked /></el-icon>
+                </span>
+                <span>
+                  <strong>PRD 产品需求文档</strong>
+                  <em>报告完成后自动继续生成</em>
+                </span>
+                <el-checkbox v-model="deliverables.prd" />
+              </label>
+            </div>
+
             <el-button
               type="primary"
               size="large"
@@ -186,6 +211,8 @@ import {
   Connection,
   DataAnalysis,
   Delete,
+  Document,
+  DocumentChecked,
   Key,
   Link,
   Lock,
@@ -208,6 +235,10 @@ const query = ref('')
 const competitorSites = ref([createSite()])
 const showAdvanced = ref(false)
 const enableAutoSearch = ref(true)
+const deliverables = ref({
+  report: true,
+  prd: true
+})
 const isSubmitting = ref(false)
 
 const filledSiteCount = computed(() => competitorSites.value.filter(site => site.url.trim()).length)
@@ -292,8 +323,10 @@ async function startResearch() {
       enable_search: enableAutoSearch.value
     }
 
-    const result = await store.createTask(params)
-    router.push(`/report/${result.id}`)
+    const run = store.createResearchRun(params, {
+      deliverables: deliverables.value
+    })
+    router.push(`/progress/${run.id}`)
   } catch (e) {
     ElMessage.error('提交调研失败')
   } finally {
@@ -601,6 +634,64 @@ h2 {
   color: #172033;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+.deliverable-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  margin-bottom: 18px;
+  border-radius: 8px;
+  background: #f8fbff;
+  box-shadow: inset 0 0 0 1px #dbe6f4;
+}
+
+.deliverable-title {
+  color: #172033;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.deliverable-option {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 28px;
+  gap: 10px;
+  align-items: center;
+  cursor: pointer;
+  color: #172033;
+
+  &.locked {
+    cursor: default;
+  }
+
+  strong,
+  em {
+    display: block;
+    font-style: normal;
+    letter-spacing: 0;
+  }
+
+  strong {
+    font-size: 14px;
+  }
+
+  em {
+    margin-top: 2px;
+    color: #64748b;
+    font-size: 12px;
+  }
+}
+
+.option-icon {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: #1d4ed8;
+  background: #e8f1ff;
 }
 
 .start-btn {
