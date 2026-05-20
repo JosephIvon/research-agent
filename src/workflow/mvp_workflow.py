@@ -105,7 +105,11 @@ class CoordinatorAgent:
                 "role": "system",
                 "content": f"""你是一个信息提取专家。请从以下网页内容中提取关键信息。
                 输出格式必须是有效的JSON，按照schema格式输出。
-                schema: {schema}"""
+                schema: {schema}
+
+                请优先使用以下标准 key，便于后续质量评分和报告对比：
+                pricing、features、models、target_users、integrations、api_flow、workflow、limitations、reviews。
+                value 中要保留可核验的事实、数字、页面来源线索；不要只写概括性形容词。"""
             },
             {
                 "role": "user",
@@ -115,7 +119,7 @@ class CoordinatorAgent:
 
         response = self.llm_client.chat_completion(prompt, temperature=0.1)
         try:
-            data = json.loads(response)
+            data = _parse_json_response(response)
             for item in data:
                 item["source_url"] = url
             normalized = []
@@ -215,7 +219,11 @@ class CopywriterAgent:
 ### 3.2 [竞品B名称]
 （每个竞品一段综合评价）
 
-## 四、选型建议
+## 四、API / 数据流 / 工作流对比
+- 对比注册、获取 Key、替换 Base URL、调用模型、监控用量、计费结算等链路
+- 区分“网页明确披露”和“未公开披露”，不要脑补
+
+## 五、选型建议
 - 根据[场景]推荐
 - 优先考虑因素排序
 - 给出可落地建议
@@ -252,7 +260,8 @@ class CopywriterAgent:
 1. **调研概述**：简要说明调研目的和范围（不超过100字）
 2. **核心发现**：列出3-5个关键点
 3. **详细分析**：深入分析各维度（如功能、定价、用户体验等）
-4. **结论与建议**：总结分析结果，提出建议
+4. **API / 数据流 / 工作流分析**：说明用户从注册、获取 Key、替换 Base URL、调用模型、监控用量到计费结算的链路；若网页没有证据，要明确标注“未公开披露”
+5. **结论与建议**：总结分析结果，提出建议
 
 写作要求：
 - 语言简洁专业，符合职场报告规范
@@ -646,18 +655,24 @@ class MVPWorkflow:
         self._emit("crawl_progress", "crawl", "running", f"正在抓取 {url}", payload={"url": url, "name": "unknown"})
         try:
             async with WebCrawler() as crawler:
-                content = await crawler.fetch_page(
-                    url, auth_credentials, login_url, custom_selectors
+                profile = await crawler.fetch_site_profile(
+                    url,
+                    auth_credentials=auth_credentials,
+                    login_url=login_url,
+                    custom_selectors=custom_selectors,
                 )
-                extracted = await self.coordinator.extract_key_info(content, url)
+                extracted = await self.coordinator.extract_key_info(profile["content"], url)
 
             name = infer_competitor_name(url, extracted)
-            self._emit("crawl_progress", "crawl", "running", f"抓取成功 {url}", payload={"url": url, "name": name, "status": "success"})
+            page_count = len(profile.get("pages", []))
+            self._emit("crawl_progress", "crawl", "running", f"抓取成功 {url}，覆盖 {page_count} 个站内页", payload={"url": url, "name": name, "status": "success", "page_count": page_count})
 
             return {
                 "name": name,
                 "url": url,
                 "extracted_data": extracted,
+                "raw_pages": profile.get("pages", []),
+                "discovered_urls": profile.get("discovered_urls", []),
                 "status": "success",
                 "error_message": None
             }
