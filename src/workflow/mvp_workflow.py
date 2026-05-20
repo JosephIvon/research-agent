@@ -19,10 +19,25 @@ from src.security.url_validation import UnsafeURL, validate_fetch_url, validate_
 from src.workflow.task_store import _sanitize_payload
 import asyncio
 import json
+import re
 import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+
+def _parse_json_response(response: str):
+    """解析LLM返回的JSON，支持markdown代码块包装和无包装两种格式"""
+    if not response:
+        raise ValueError("Empty response")
+    text = response.strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        if len(lines) >= 3:
+            text = "\n".join(lines[1:-1])
+            text = re.sub(r"^json\s+", "", text, flags=re.IGNORECASE)
+    return json.loads(text)
 
 
 class CoordinatorAgent:
@@ -103,9 +118,19 @@ class CoordinatorAgent:
             data = json.loads(response)
             for item in data:
                 item["source_url"] = url
-                if "confidence" not in item:
-                    item["confidence"] = 0.8
-            return data
+            normalized = []
+            for item in data:
+                if isinstance(item, str):
+                    # 模型返回了字符串数组，转为标准格式
+                    normalized.append({"key": "content", "value": item, "source_url": url, "confidence": 0.8})
+                elif isinstance(item, dict):
+                    item["source_url"] = url
+                    if "confidence" not in item:
+                        item["confidence"] = 0.8
+                    normalized.append(item)
+                else:
+                    normalized.append({"key": "content", "value": str(item), "source_url": url, "confidence": 0.5})
+            return normalized
         except Exception as e:
             logger.warning(f"信息提取JSON解析失败: {e}")
             return [{
