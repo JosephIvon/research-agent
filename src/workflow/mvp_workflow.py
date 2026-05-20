@@ -14,7 +14,7 @@ from src.config.settings import (
     MAX_RETRIES,
     MAX_FETCH_URLS
 )
-from src.security.url_validation import UnsafeURL, validate_fetch_urls
+from src.security.url_validation import UnsafeURL, validate_fetch_url, validate_fetch_urls
 import asyncio
 import json
 import logging
@@ -298,6 +298,7 @@ class MVPWorkflow:
         self,
         user_query: str,
         target_urls: Optional[List[str]] = None,
+        target_sites: Optional[List[Dict[str, Any]]] = None,
         auth_credentials: Optional[Dict[str, str]] = None,
         login_url: Optional[str] = None,
         sync_targets: Optional[List[str]] = None,
@@ -305,11 +306,18 @@ class MVPWorkflow:
         custom_selectors: Optional[Dict[str, List[str]]] = None
     ) -> Dict[str, Any]:
         """执行完整调研流程"""
-        initial_urls = validate_fetch_urls((target_urls or [])[:MAX_FETCH_URLS])
-        if target_urls and len(target_urls) > MAX_FETCH_URLS:
+        initial_sites = self._normalize_target_sites(
+            target_urls=target_urls,
+            target_sites=target_sites,
+            auth_credentials=auth_credentials,
+            login_url=login_url,
+        )
+        initial_urls = [site["url"] for site in initial_sites]
+        if len(initial_sites) > MAX_FETCH_URLS:
             raise ValueError(f"目标URL数量不能超过 {MAX_FETCH_URLS} 个")
 
         state = self._initialize_state(user_query, initial_urls)
+        state["target_sites"] = initial_sites
         state["custom_selectors"] = custom_selectors
 
         try:
@@ -319,12 +327,17 @@ class MVPWorkflow:
             if enable_search and not state["target_urls"]:
                 state["status"] = "researching"
                 search_urls = await self.coordinator.search_topics(user_query)
-                state["target_urls"].extend(self._filter_search_urls(search_urls))
+                search_target_sites = [
+                    {"url": url, "auth_credentials": None, "login_url": None}
+                    for url in self._filter_search_urls(search_urls)
+                ]
+                state["target_sites"].extend(search_target_sites)
+                state["target_urls"].extend([site["url"] for site in search_target_sites])
                 logger.info(f"自动搜索补充了 {len(search_urls)} 个URL")
 
             state["status"] = "researching"
             state["competitors"] = await self._fetch_all_competitors(
-                state["target_urls"],
+                state["target_sites"],
                 auth_credentials,
                 login_url,
                 custom_selectors
@@ -412,6 +425,40 @@ class MVPWorkflow:
                 logger.warning(f"跳过不安全搜索结果 {url}: {exc}")
         return safe_urls
 
+    def _normalize_target_sites(
+        self,
+        target_urls: Optional[List[str]] = None,
+        target_sites: Optional[List[Dict[str, Any]]] = None,
+        auth_credentials: Optional[Dict[str, str]] = None,
+        login_url: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        sites: List[Dict[str, Any]] = []
+        seen_urls = set()
+        legacy_login_url = validate_fetch_url(login_url) if login_url else None
+
+        for site in target_sites or []:
+            url = validate_fetch_url(site["url"])
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+            sites.append({
+                "url": url,
+                "auth_credentials": site.get("auth_credentials"),
+                "login_url": validate_fetch_url(site["login_url"]) if site.get("login_url") else None,
+            })
+
+        for url in validate_fetch_urls(target_urls or []):
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+            sites.append({
+                "url": url,
+                "auth_credentials": auth_credentials,
+                "login_url": legacy_login_url,
+            })
+
+        return sites
+
     def _initialize_state(self, user_query: str, target_urls: List[str]) -> Dict[str, Any]:
         return {
             "task_id": str(uuid4()),
@@ -447,19 +494,35 @@ class MVPWorkflow:
 
     async def _fetch_all_competitors(
         self,
-        urls: List[str],
+        sites: List[Any],
         auth_credentials: Optional[Dict[str, str]] = None,
         login_url: Optional[str] = None,
         custom_selectors: Optional[Dict[str, List[str]]] = None
     ) -> List[Dict[str, Any]]:
         """并行抓取多个竞品页面，限制并发数"""
-        semaphore = asyncio.Semaphore(min(3, len(urls)))
+        site_configs = [
+            item if isinstance(item, dict) else {
+                "url": item,
+                "auth_credentials": auth_credentials,
+                "login_url": login_url,
+            }
+            for item in sites
+        ]
+        if not site_configs:
+            return []
 
-        async def _limited_fetch(url: str) -> Dict[str, Any]:
+        semaphore = asyncio.Semaphore(min(3, len(site_configs)))
+
+        async def _limited_fetch(site: Dict[str, Any]) -> Dict[str, Any]:
             async with semaphore:
-                return await self._fetch_single_competitor(url, auth_credentials, login_url, custom_selectors)
+                return await self._fetch_single_competitor(
+                    site["url"],
+                    site.get("auth_credentials"),
+                    site.get("login_url"),
+                    custom_selectors,
+                )
 
-        tasks = [_limited_fetch(url) for url in urls]
+        tasks = [_limited_fetch(site) for site in site_configs]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         competitors = []
@@ -469,7 +532,7 @@ class MVPWorkflow:
             else:
                 competitors.append({
                     "name": f"竞品{i+1}",
-                    "url": urls[i],
+                    "url": site_configs[i]["url"],
                     "extracted_data": [],
                     "status": "failed",
                     "error_message": str(result)
@@ -557,6 +620,7 @@ class MVPWorkflow:
 def run_sync(
     user_query: str,
     target_urls: Optional[List[str]] = None,
+    target_sites: Optional[List[Dict[str, Any]]] = None,
     auth_credentials: Optional[Dict[str, str]] = None,
     login_url: Optional[str] = None,
     sync_targets: Optional[List[str]] = None,
@@ -565,6 +629,12 @@ def run_sync(
 ) -> Dict[str, Any]:
     """同步执行工作流"""
     return asyncio.run(MVPWorkflow().run(
-        user_query, target_urls, auth_credentials, login_url,
-        sync_targets, enable_search, custom_selectors
+        user_query=user_query,
+        target_urls=target_urls,
+        target_sites=target_sites,
+        auth_credentials=auth_credentials,
+        login_url=login_url,
+        sync_targets=sync_targets,
+        enable_search=enable_search,
+        custom_selectors=custom_selectors,
     ))

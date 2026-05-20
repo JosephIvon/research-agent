@@ -65,6 +65,76 @@ def test_research_request_rejects_private_url_before_workflow_runs():
     assert response.status_code == 422
 
 
+def test_competitive_request_accepts_per_site_credentials(monkeypatch):
+    import src.workflow.mvp_workflow as workflow_module
+
+    captured = {}
+
+    class FakeWorkflow:
+        async def run(self, **kwargs):
+            captured.update(kwargs)
+            return {
+                "status": "completed",
+                "task_id": "task-1",
+                "report_final": "# OK",
+                "competitors": [],
+            }
+
+    monkeypatch.setattr(workflow_module, "MVPWorkflow", FakeWorkflow)
+    client = TestClient(app)
+    response = client.post(
+        "/research/competitive",
+        json={
+            "query": "test",
+            "enable_search": False,
+            "target_sites": [
+                {
+                    "url": "https://93.184.216.34/product-a",
+                    "login_url": "https://93.184.216.34/login",
+                    "auth_credentials": {"username": "alice", "password": "secret"},
+                },
+                {"url": "https://93.184.216.34/product-b"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["target_sites"][0]["auth_credentials"] == {"username": "alice", "password": "secret"}
+    assert captured["target_sites"][0]["login_url"] == "https://93.184.216.34/login"
+    assert captured["target_sites"][1]["auth_credentials"] is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_competitors_uses_per_site_credentials(monkeypatch):
+    from src.workflow.mvp_workflow import MVPWorkflow
+
+    workflow = object.__new__(MVPWorkflow)
+    calls = []
+
+    async def fake_fetch(url, auth_credentials=None, login_url=None, custom_selectors=None):
+        calls.append((url, auth_credentials, login_url))
+        return {"name": url, "url": url, "extracted_data": [], "status": "success", "error_message": None}
+
+    monkeypatch.setattr(workflow, "_fetch_single_competitor", fake_fetch)
+    await workflow._fetch_all_competitors([
+        {
+            "url": "https://alpha.example/product",
+            "auth_credentials": {"username": "alpha", "password": "one"},
+            "login_url": "https://alpha.example/login",
+        },
+        {
+            "url": "https://beta.example/product",
+            "auth_credentials": {"username": "beta", "password": "two"},
+            "login_url": "https://beta.example/signin",
+        },
+    ])
+
+    assert calls == [
+        ("https://alpha.example/product", {"username": "alpha", "password": "one"}, "https://alpha.example/login"),
+        ("https://beta.example/product", {"username": "beta", "password": "two"}, "https://beta.example/signin"),
+    ]
+
+
 def test_optional_bearer_auth_protects_research_endpoints(monkeypatch):
     monkeypatch.setattr(server, "API_AUTH_TOKEN", "test-token")
     client = TestClient(app)

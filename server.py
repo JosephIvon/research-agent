@@ -8,7 +8,7 @@ from typing import Optional, List, Dict, Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 import uvicorn
 
@@ -103,9 +103,33 @@ class AuthCredentials(StrictModel):
         }
 
 
+class CompetitorSite(StrictModel):
+    url: str = Field(..., min_length=1, max_length=2048)
+    login_url: Optional[str] = Field(default=None, min_length=1, max_length=2048)
+    auth_credentials: Optional[AuthCredentials] = None
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, url: str) -> str:
+        return validate_fetch_url(url)
+
+    @field_validator("login_url")
+    @classmethod
+    def validate_login_url(cls, login_url: Optional[str]) -> Optional[str]:
+        return validate_fetch_url(login_url) if login_url else login_url
+
+    def to_workflow_dict(self) -> Dict[str, Any]:
+        return {
+            "url": self.url,
+            "login_url": self.login_url,
+            "auth_credentials": _auth_dict(self.auth_credentials),
+        }
+
+
 class ResearchRequest(StrictModel):
     query: str = Field(..., min_length=1, max_length=1000)
     urls: List[str] = Field(default_factory=list, max_length=MAX_FETCH_URLS)
+    target_sites: List[CompetitorSite] = Field(default_factory=list, max_length=MAX_FETCH_URLS)
     auth_credentials: Optional[AuthCredentials] = None
     login_url: Optional[str] = None
     enable_search: bool = True
@@ -120,6 +144,14 @@ class ResearchRequest(StrictModel):
     @classmethod
     def validate_login_url(cls, login_url: Optional[str]) -> Optional[str]:
         return validate_fetch_url(login_url) if login_url else login_url
+
+    @model_validator(mode="after")
+    def validate_target_count(self):
+        unique_urls = {site.url for site in self.target_sites}
+        unique_urls.update(self.urls)
+        if len(unique_urls) > MAX_FETCH_URLS:
+            raise ValueError(f"目标URL数量不能超过 {MAX_FETCH_URLS} 个")
+        return self
 
     @field_validator("custom_selectors")
     @classmethod
@@ -174,6 +206,10 @@ class SyncRequest(StrictModel):
 
 def _auth_dict(credentials: Optional[AuthCredentials]) -> Optional[Dict[str, str]]:
     return credentials.to_plain_dict() if credentials else None
+
+
+def _target_sites(req: ResearchRequest) -> List[Dict[str, Any]]:
+    return [site.to_workflow_dict() for site in req.target_sites]
 
 
 def _internal_error(operation: str, exc: Exception) -> HTTPException:
@@ -301,6 +337,7 @@ async def competitive_research(req: ResearchRequest):
         result = await workflow.run(
             user_query=req.query,
             target_urls=req.urls,
+            target_sites=_target_sites(req),
             auth_credentials=_auth_dict(req.auth_credentials),
             login_url=req.login_url,
             enable_search=req.enable_search,
@@ -410,6 +447,7 @@ async def prd_from_query(req: ResearchRequest):
         research_result = await workflow.run(
             user_query=req.query,
             target_urls=req.urls,
+            target_sites=_target_sites(req),
             auth_credentials=_auth_dict(req.auth_credentials),
             login_url=req.login_url,
             enable_search=req.enable_search,
