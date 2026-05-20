@@ -191,7 +191,12 @@ async function executeRun() {
   isExecuting.value = true
   try {
     const result = await store.runResearchRun(taskId, {
-      onEvent: () => syncRun()
+      onEvent: () => syncRun(),
+      onComplete: () => {
+        syncRun()
+        setTimeout(openReport, 900)
+      },
+      onError: () => syncRun()
     })
     syncRun()
     // In sync mode, finalRun has report_id. In SSE mode, report_id is set via store update.

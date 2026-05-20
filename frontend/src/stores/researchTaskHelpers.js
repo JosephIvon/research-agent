@@ -24,6 +24,11 @@ export function getTaskInputSummary(params = {}) {
   }
 }
 
+export function getTaskArtifactContent(task = {}, key, fallback = '') {
+  const content = task?.artifacts?.[key]?.content
+  return typeof content === 'string' && content ? content : fallback
+}
+
 export function buildTaskTimeline({ params = {}, deliverables = {} } = {}) {
   const normalizedDeliverables = normalizeDeliverables(deliverables)
   const summary = getTaskInputSummary(params)

@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { researchApi } from '../api'
 import {
   buildTaskTimeline,
+  getTaskArtifactContent,
   makeResearchRunId,
   normalizeDeliverables
 } from './researchTaskHelpers'
@@ -76,6 +77,32 @@ function createRunEvent(stage, type, message) {
   }
 }
 
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+async function fetchTaskUntilArtifactsReady(taskId, deliverables = {}, fallbackReportId = null) {
+  const expected = normalizeDeliverables(deliverables)
+  let lastTask = null
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    lastTask = await researchApi.getTask(taskId)
+    if (lastTask?.status === 'failed') return lastTask
+
+    const hasReport = expected.report === false ||
+      Boolean(getTaskArtifactContent(lastTask, 'report') || lastTask?.report_id || fallbackReportId)
+    const hasPrd = expected.prd === false || Boolean(getTaskArtifactContent(lastTask, 'prd'))
+
+    if (lastTask?.status === 'completed' && hasReport && hasPrd) {
+      return lastTask
+    }
+
+    await wait(400)
+  }
+
+  return lastTask
+}
+
 // Backend SSE event stage → frontend timeline stage mapping
 const STAGE_MAP = {
   decompose: 'understand',
@@ -103,7 +130,7 @@ function getEventType(backendEvent, status) {
   return 'running'
 }
 
-function connectTaskSSE(runId, taskId, callbacks = {}) {
+function connectTaskSSE(runId, taskId, callbacks = {}, handlers = {}) {
   const eventSource = researchApi.getTaskEvents(taskId)
   let reportId = null
   let prdContent = null
@@ -131,39 +158,17 @@ function connectTaskSSE(runId, taskId, callbacks = {}) {
 
       if (backendEvent === 'completed' || status === 'failed') {
         cleanup()
-        finalizeRun(runId, reportId, prdContent, status === 'failed' ? 'failed' : 'completed', callbacks)
+        handlers.onComplete?.({
+          runId,
+          taskId,
+          reportId,
+          prdContent,
+          status: status === 'failed' ? 'failed' : 'completed',
+          callbacks
+        })
       }
     } catch (e) {
       // ignore parse errors
-    }
-  }
-
-  function finalizeRun(runId, reportId, prdContent, status, callbacks) {
-    if (reportId) {
-      researchApi.getTask(taskId).then(task => {
-        const artifact = task?.artifacts?.report
-        if (artifact) {
-          const report = {
-            id: reportId,
-            markdown: artifact.content || '',
-            query: task.user_query,
-            competitors: task.crawl_results?.competitors || [],
-            quality_score: task.quality_score,
-            quality_grade: task.quality_grade,
-            missing_dimensions: task.missing_dimensions || [],
-            created_at: artifact.created_at || new Date().toLocaleString(),
-          }
-          if (prdContent) {
-            report.prd = prdContent
-            report.prd_created_at = new Date().toISOString()
-          }
-          cacheReport(report)
-          updateResearchRun(runId, { status: 'completed', report_id: report.id, completed_at: new Date().toISOString() })
-          currentTask.value = { id: report.id, status: 'completed', result: report }
-        }
-      }).catch(() => {})
-    } else {
-      updateResearchRun(runId, { status, completed_at: new Date().toISOString() })
     }
   }
 
@@ -181,8 +186,9 @@ function connectTaskSSE(runId, taskId, callbacks = {}) {
   for (const evt of BACKEND_EVENTS) {
     eventSource.addEventListener(evt, (e) => handleMessage(e))
   }
-  eventSource.addEventListener('error', () => {
+  eventSource.addEventListener('error', (event) => {
     cleanup()
+    handlers.onError?.({ runId, taskId, event, callbacks })
   })
 
   return cleanup
@@ -231,6 +237,106 @@ export const useResearchStore = defineStore('research', () => {
       updated_at: new Date().toISOString()
     }
     return cacheRun(next)
+  }
+
+  async function finalizeAsyncRun({ runId, taskId, reportId, prdContent, status, callbacks }) {
+    const run = getResearchRun(runId)
+    const finalStatus = status === 'failed' ? 'failed' : 'completed'
+
+    if (finalStatus === 'failed') {
+      const failedRun = updateResearchRun(runId, {
+        status: 'failed',
+        error: '调研任务执行失败，请检查输入或稍后重试。',
+        completed_at: new Date().toISOString()
+      })
+      callbacks.onError?.(failedRun)
+      return failedRun
+    }
+
+    try {
+      const task = await fetchTaskUntilArtifactsReady(taskId, run?.deliverables || {}, reportId)
+      if (task?.status === 'failed') {
+        const failedRun = updateResearchRun(runId, {
+          status: 'failed',
+          error: task.current_message || '调研任务执行失败，请检查输入或稍后重试。',
+          completed_at: new Date().toISOString()
+        })
+        callbacks.onError?.(failedRun)
+        return failedRun
+      }
+
+      const reportArtifact = task?.artifacts?.report
+      const prdArtifact = task?.artifacts?.prd
+      const resolvedReportId = reportId || task?.report_id || reportArtifact?.report_id
+      const reportMarkdown = getTaskArtifactContent(task, 'report')
+      const fullPrdContent = getTaskArtifactContent(task, 'prd', prdContent || '')
+
+      if (!resolvedReportId || !reportMarkdown) {
+        const failedRun = updateResearchRun(runId, {
+          status: 'failed',
+          error: '报告已生成，但前端未能取回完整结果，请刷新后重试。',
+          completed_at: new Date().toISOString()
+        })
+        callbacks.onError?.(failedRun)
+        return failedRun
+      }
+
+      const report = {
+        id: resolvedReportId,
+        title: firstHeading(reportMarkdown),
+        markdown: reportMarkdown,
+        query: task?.user_query || run?.params?.query || '',
+        competitors: task?.crawl_results?.competitors || [],
+        quality_score: task?.quality_score,
+        quality_grade: task?.quality_grade,
+        missing_dimensions: task?.missing_dimensions || [],
+        created_at: reportArtifact?.created_at || new Date().toLocaleString(),
+        raw: task
+      }
+
+      if (fullPrdContent) {
+        report.prd = fullPrdContent
+        report.prd_created_at = prdArtifact?.created_at || new Date().toISOString()
+      }
+
+      cacheReport(report)
+      const finalRun = updateResearchRun(runId, {
+        status: 'completed',
+        report_id: report.id,
+        completed_at: new Date().toISOString()
+      })
+      currentTask.value = { id: report.id, status: 'completed', result: report }
+      callbacks.onComplete?.(report, finalRun)
+      return finalRun
+    } catch (error) {
+      const failedRun = updateResearchRun(runId, {
+        status: 'failed',
+        error: error?.message || '报告结果获取失败，请稍后重试。',
+        completed_at: new Date().toISOString()
+      })
+      callbacks.onError?.(failedRun)
+      return failedRun
+    }
+  }
+
+  function handleTaskStreamError(id, event, callbacks = {}) {
+    const status = event?.status
+    const isAuthError = status === 401
+    const message = isAuthError
+      ? 'API Token 认证失败，请在设置页重新填写后重试。'
+      : '实时进度连接中断，请稍后重试。'
+
+    const failedRun = updateResearchRun(id, {
+      status: 'failed',
+      error: message,
+      completed_at: new Date().toISOString()
+    })
+    callbacks.onError?.(failedRun)
+
+    if (isAuthError && typeof window !== 'undefined' && window.location.pathname !== '/settings') {
+      window.location.assign('/settings')
+    }
+    return failedRun
   }
 
   function appendRunEvent(id, stage, type, message) {
@@ -313,7 +419,10 @@ export const useResearchStore = defineStore('research', () => {
         started_at: run.started_at || new Date().toISOString()
       })
 
-      connectTaskSSE(id, run.task_id, callbacks)
+      connectTaskSSE(id, run.task_id, callbacks, {
+        onComplete: finalizeAsyncRun,
+        onError: ({ runId, event, callbacks }) => handleTaskStreamError(runId, event, callbacks)
+      })
       return { sseConnected: true }
     }
 
