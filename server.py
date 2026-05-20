@@ -599,11 +599,19 @@ async def _run_research_task(task_id: str, req: TaskRequest):
         task_id=task_id,
     )
 
+    research_metadata = {
+        "crawl_results": {"competitors": result.get("competitors", [])},
+        "quality_score": result.get("quality_score"),
+        "quality_grade": result.get("quality_grade"),
+        "missing_dimensions": result.get("missing_dimensions", []),
+    }
+
     if result["status"] == "completed":
         await store.update(
             task_id,
             status=TaskStatus.COMPLETED,
             report_id=result.get("report_id"),
+            **research_metadata,
         )
         if req.deliverables.get("report") and result.get("report_final"):
             await store.set_artifact(
@@ -616,7 +624,12 @@ async def _run_research_task(task_id: str, req: TaskRequest):
                 TaskArtifact(artifact_type="prd", content=result.get("prd_content"))
             )
     else:
-        await store.update(task_id, status=TaskStatus.FAILED)
+        await store.update(
+            task_id,
+            status=TaskStatus.FAILED,
+            report_id=result.get("report_id"),
+            **research_metadata,
+        )
 
     # Always set report artifact if present (even partial/warning results)
     if result.get("report_final"):

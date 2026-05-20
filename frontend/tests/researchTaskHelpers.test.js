@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  buildSourceRows,
   buildTaskTimeline,
+  getReportCompetitorCount,
   getTaskArtifactContent,
   getTaskInputSummary,
   normalizeDeliverables
@@ -76,4 +78,34 @@ test('prefers full PRD artifact content over SSE preview text', () => {
 
 test('falls back to SSE preview when task artifact is missing', () => {
   assert.equal(getTaskArtifactContent({ artifacts: {} }, 'prd', '预览内容'), '预览内容')
+})
+
+test('builds source rows from async task crawl results', () => {
+  const report = {
+    raw: {
+      crawl_results: {
+        competitors: [
+          {
+            name: 'api000.com',
+            url: 'https://api000.com',
+            status: 'success',
+            extracted_data: [{ key: 'models', value: 'OpenAI' }],
+            raw_pages: [
+              { url: 'https://api000.com', content_length: 3300 },
+              { url: 'https://api000.com/pricing', content_length: 1200 }
+            ],
+            discovered_urls: ['https://api000.com/pricing']
+          }
+        ]
+      }
+    }
+  }
+
+  const rows = buildSourceRows(report)
+
+  assert.equal(getReportCompetitorCount(report), 1)
+  assert.equal(rows[0].pageCount, 2)
+  assert.equal(rows[0].dataCount, 1)
+  assert.deepEqual(rows[0].pageUrls, ['https://api000.com', 'https://api000.com/pricing'])
+  assert.deepEqual(rows[0].discoveredUrls, ['https://api000.com/pricing'])
 })

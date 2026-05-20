@@ -83,6 +83,9 @@ class TaskState:
     report_id: Optional[str] = None
     deliverables: Dict[str, bool] = field(default_factory=lambda: {"report": True, "prd": False})
     crawl_results: Dict[str, Any] = field(default_factory=dict)
+    quality_score: Optional[float] = None
+    quality_grade: Optional[str] = None
+    missing_dimensions: List[str] = field(default_factory=list)
 
     def __post_init__(self):
         if isinstance(self.status, str):
@@ -105,6 +108,9 @@ class TaskState:
             "report_id": self.report_id,
             "deliverables": self.deliverables,
             "crawl_results": self.crawl_results,
+            "quality_score": self.quality_score,
+            "quality_grade": self.quality_grade,
+            "missing_dimensions": self.missing_dimensions,
             "artifacts": {k: v.to_dict() for k, v in self.artifacts.items()},
             "events": [e.to_dict() for e in self.events],
         }
@@ -200,6 +206,12 @@ class TaskStore:
                 ts.errors = kwargs["errors"]
             if "crawl_results" in kwargs:
                 ts.crawl_results = kwargs["crawl_results"]
+            if "quality_score" in kwargs:
+                ts.quality_score = kwargs["quality_score"]
+            if "quality_grade" in kwargs:
+                ts.quality_grade = kwargs["quality_grade"]
+            if "missing_dimensions" in kwargs:
+                ts.missing_dimensions = kwargs["missing_dimensions"] or []
             self._tasks[task_id] = ts
             return ts
 

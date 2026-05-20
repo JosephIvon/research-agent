@@ -340,3 +340,33 @@ class TestTaskStore:
         assert "report" in task.artifacts
         assert task.artifacts["report"].artifact_type == "report"
         assert task.artifacts["report"].report_id == "report_abc"
+
+    def test_task_store_exposes_research_metadata(self):
+        """TaskStore 保存抓取来源、质量评分和缺失维度，供前端来源页展示"""
+        store = server.get_task_store()
+        task_id = "store-test-metadata"
+
+        asyncio.run(store.create(task_id, "test query", {"report": True, "prd": False}))
+        asyncio.run(store.update(
+            task_id,
+            crawl_results={
+                "competitors": [
+                    {
+                        "name": "api000.com",
+                        "url": "https://api000.com",
+                        "status": "success",
+                        "raw_pages": [{"url": "https://api000.com", "content_length": 3339}],
+                        "discovered_urls": ["https://api000.com/pricing"],
+                    }
+                ]
+            },
+            quality_score=6.5,
+            quality_grade="B",
+            missing_dimensions=["使用评价"],
+        ))
+
+        body = asyncio.run(store.get(task_id)).to_dict()
+        assert body["crawl_results"]["competitors"][0]["raw_pages"][0]["content_length"] == 3339
+        assert body["quality_score"] == 6.5
+        assert body["quality_grade"] == "B"
+        assert body["missing_dimensions"] == ["使用评价"]

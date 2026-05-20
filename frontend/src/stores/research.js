@@ -280,17 +280,26 @@ export const useResearchStore = defineStore('research', () => {
         return failedRun
       }
 
+      const crawlCompetitors = Array.isArray(task?.crawl_results?.competitors)
+        ? task.crawl_results.competitors
+        : []
+
       const report = {
         id: resolvedReportId,
         title: firstHeading(reportMarkdown),
         markdown: reportMarkdown,
         query: task?.user_query || run?.params?.query || '',
-        competitors: task?.crawl_results?.competitors || [],
+        competitors: crawlCompetitors.length,
+        score: task?.quality_score ?? null,
+        grade: task?.quality_grade || 'B',
         quality_score: task?.quality_score,
         quality_grade: task?.quality_grade,
         missing_dimensions: task?.missing_dimensions || [],
         created_at: reportArtifact?.created_at || new Date().toLocaleString(),
-        raw: task
+        raw: {
+          ...task,
+          competitors: crawlCompetitors
+        }
       }
 
       if (fullPrdContent) {
