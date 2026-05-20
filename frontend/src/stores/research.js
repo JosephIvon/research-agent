@@ -87,14 +87,13 @@ async function fetchTaskUntilArtifactsReady(taskId, deliverables = {}, fallbackR
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
     lastTask = await researchApi.getTask(taskId)
-    if (lastTask?.status === 'failed') return lastTask
-
-    const hasReport = expected.report === false ||
-      Boolean(getTaskArtifactContent(lastTask, 'report') || lastTask?.report_id || fallbackReportId)
-    const hasPrd = expected.prd === false || Boolean(getTaskArtifactContent(lastTask, 'prd'))
-
-    if (lastTask?.status === 'completed' && hasReport && hasPrd) {
-      return lastTask
+    if (lastTask?.status === 'failed' || lastTask?.status === 'completed') {
+      const hasReport = expected.report === false ||
+        Boolean(getTaskArtifactContent(lastTask, 'report') || lastTask?.report_id || fallbackReportId)
+      const hasPrd = expected.prd === false || Boolean(getTaskArtifactContent(lastTask, 'prd'))
+      if (hasReport && (expected.prd === false || hasPrd)) {
+        return lastTask
+      }
     }
 
     await wait(400)
@@ -267,7 +266,7 @@ export const useResearchStore = defineStore('research', () => {
 
       const reportArtifact = task?.artifacts?.report
       const prdArtifact = task?.artifacts?.prd
-      const resolvedReportId = reportId || task?.report_id || reportArtifact?.report_id
+      const resolvedReportId = reportId || task?.report_id || reportArtifact?.report_id || `partial_${taskId}`
       const reportMarkdown = getTaskArtifactContent(task, 'report')
       const fullPrdContent = getTaskArtifactContent(task, 'prd', prdContent || '')
 
