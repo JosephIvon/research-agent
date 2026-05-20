@@ -666,12 +666,19 @@ class MVPWorkflow:
             name = infer_competitor_name(url, extracted)
             page_count = len(profile.get("pages", []))
             self._emit("crawl_progress", "crawl", "running", f"抓取成功 {url}，覆盖 {page_count} 个站内页", payload={"url": url, "name": name, "status": "success", "page_count": page_count})
+            page_summaries = [
+                {
+                    "url": page.get("url"),
+                    "content_length": len(page.get("content", "")),
+                }
+                for page in profile.get("pages", [])
+            ]
 
             return {
                 "name": name,
                 "url": url,
                 "extracted_data": extracted,
-                "raw_pages": profile.get("pages", []),
+                "raw_pages": page_summaries,
                 "discovered_urls": profile.get("discovered_urls", []),
                 "status": "success",
                 "error_message": None

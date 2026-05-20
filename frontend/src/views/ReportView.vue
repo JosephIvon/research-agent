@@ -46,7 +46,7 @@
               </div>
               <div>
                 <dt>竞品数量</dt>
-                <dd>{{ report.competitors || 0 }} 个</dd>
+                <dd>{{ competitorCount }} 个</dd>
               </div>
               <div>
                 <dt>自动评级</dt>
@@ -145,6 +145,19 @@
                     {{ source.status === 'success' ? '成功' : '失败' }}
                   </el-tag>
                   <span>{{ source.dataCount }} 条信息</span>
+                  <span>{{ source.pageCount || 0 }} 个站内页</span>
+                </div>
+                <div v-if="source.pageUrls.length" class="source-pages">
+                  <span>已读取页面</span>
+                  <a v-for="url in source.pageUrls" :key="url" :href="url" target="_blank" rel="noreferrer">
+                    {{ url }}
+                  </a>
+                </div>
+                <div v-if="source.discoveredUrls.length" class="source-pages discovered">
+                  <span>发现的高价值入口</span>
+                  <a v-for="url in source.discoveredUrls" :key="url" :href="url" target="_blank" rel="noreferrer">
+                    {{ url }}
+                  </a>
                 </div>
                 <p v-if="source.error">{{ source.error }}</p>
               </article>
@@ -189,6 +202,7 @@ import { GridComponent, LegendComponent, RadarComponent, TooltipComponent } from
 import { init, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { useResearchStore } from '../stores/research'
+import { buildSourceRows, getReportCompetitorCount } from '../stores/researchTaskHelpers'
 import { researchApi } from '../api'
 
 const route = useRoute()
@@ -197,7 +211,8 @@ use([RadarChart, RadarComponent, TooltipComponent, LegendComponent, GridComponen
 
 const report = ref(null)
 const taskId = route.params.id
-const activeTab = ref(route.query.tab === 'prd' ? 'prd' : 'report')
+const requestedTab = typeof route.query.tab === 'string' ? route.query.tab : ''
+const activeTab = ref(['report', 'prd', 'sources'].includes(requestedTab) ? requestedTab : 'report')
 const isGeneratingPRD = ref(false)
 const chartRef = ref(null)
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
@@ -251,21 +266,20 @@ const renderedPRD = computed(() => {
 const missingDimensions = computed(() => report.value?.missing_dimensions || [])
 const chartData = computed(() => report.value?.radar_data)
 const hasPRD = computed(() => Boolean(report.value?.prd))
-const sourceRows = computed(() => {
-  const competitors = report.value?.raw?.competitors
-  if (!Array.isArray(competitors)) return []
-  return competitors.map((item, index) => ({
-    name: item.name || `竞品 ${index + 1}`,
-    url: item.url,
-    status: item.status || 'failed',
-    dataCount: Array.isArray(item.extracted_data) ? item.extracted_data.length : 0,
-    error: item.error_message || item.error || ''
-  })).filter(item => item.url)
-})
+const competitorCount = computed(() => getReportCompetitorCount(report.value || {}))
+const sourceRows = computed(() => buildSourceRows(report.value || {}))
 const activeArtifactContent = computed(() => {
   if (activeTab.value === 'prd') return report.value?.prd || ''
   if (activeTab.value === 'sources') {
-    return sourceRows.value.map(item => `${item.name}\n${item.url}\n状态: ${item.status}\n信息数量: ${item.dataCount}${item.error ? `\n错误: ${item.error}` : ''}`).join('\n\n')
+    return sourceRows.value.map(item => {
+      const pages = item.pageUrls.length
+        ? `\n已读取页面:\n${item.pageUrls.map(url => `- ${url}`).join('\n')}`
+        : ''
+      const discovered = item.discoveredUrls.length
+        ? `\n发现入口:\n${item.discoveredUrls.map(url => `- ${url}`).join('\n')}`
+        : ''
+      return `${item.name}\n${item.url}\n状态: ${item.status}\n信息数量: ${item.dataCount}\n站内页: ${item.pageCount}${pages}${discovered}${item.error ? `\n错误: ${item.error}` : ''}`
+    }).join('\n\n')
   }
   return report.value?.markdown || ''
 })
@@ -729,6 +743,25 @@ onUnmounted(() => {
   color: #64748b;
   font-size: 13px;
   white-space: nowrap;
+}
+
+.source-pages {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 6px 10px;
+  padding-top: 2px;
+  font-size: 13px;
+
+  span {
+    color: #64748b;
+    font-weight: 700;
+  }
+
+  a {
+    margin-top: 0;
+    color: #2563eb;
+  }
 }
 
 .radar-chart {

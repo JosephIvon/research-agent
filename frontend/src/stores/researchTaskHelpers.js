@@ -29,6 +29,39 @@ export function getTaskArtifactContent(task = {}, key, fallback = '') {
   return typeof content === 'string' && content ? content : fallback
 }
 
+export function getReportCompetitors(report = {}) {
+  if (Array.isArray(report?.raw?.competitors)) return report.raw.competitors
+  if (Array.isArray(report?.raw?.crawl_results?.competitors)) return report.raw.crawl_results.competitors
+  if (Array.isArray(report?.competitor_details)) return report.competitor_details
+  if (Array.isArray(report?.competitors)) return report.competitors
+  return []
+}
+
+export function getReportCompetitorCount(report = {}) {
+  const competitors = getReportCompetitors(report)
+  if (competitors.length) return competitors.length
+  return Number.isFinite(Number(report?.competitors)) ? Number(report.competitors) : 0
+}
+
+export function buildSourceRows(report = {}) {
+  return getReportCompetitors(report)
+    .map((item, index) => {
+      const rawPages = Array.isArray(item.raw_pages) ? item.raw_pages : []
+      const discoveredUrls = Array.isArray(item.discovered_urls) ? item.discovered_urls : []
+      return {
+        name: item.name || `竞品 ${index + 1}`,
+        url: item.url,
+        status: item.status || 'failed',
+        dataCount: Array.isArray(item.extracted_data) ? item.extracted_data.length : 0,
+        pageCount: rawPages.length || (item.page_count || 0),
+        pageUrls: rawPages.map(page => page.url).filter(Boolean),
+        discoveredUrls,
+        error: item.error_message || item.error || ''
+      }
+    })
+    .filter(item => item.url)
+}
+
 export function buildTaskTimeline({ params = {}, deliverables = {} } = {}) {
   const normalizedDeliverables = normalizeDeliverables(deliverables)
   const summary = getTaskInputSummary(params)
