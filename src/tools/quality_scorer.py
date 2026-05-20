@@ -106,8 +106,9 @@ class QualityScorer:
             for item in comp.get("extracted_data", []):
                 key = str(item.get("key", "")).lower()
                 value = str(item.get("value", ""))
+                value_lower = value.lower()
 
-                if any(kw.lower() in key for kw in keywords):
+                if any(kw.lower() in key or kw.lower() in value_lower for kw in keywords):
                     if value and len(value) > 2:
                         extracted_data.append(value[:100])
 

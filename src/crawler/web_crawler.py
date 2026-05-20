@@ -3,6 +3,7 @@ from playwright.async_api import async_playwright
 from bs4 import BeautifulSoup
 from datetime import datetime
 from typing import List, Optional, Dict
+from urllib.parse import urljoin, urlparse, urlunparse
 from src.config.settings import TIMEOUT_SECONDS, MAX_RETRIES
 from src.security.url_validation import validate_fetch_url
 import asyncio
@@ -89,17 +90,86 @@ class WebCrawler:
         if login_url:
             validate_fetch_url(login_url)
 
+        snapshot = await self._fetch_page_snapshot(
+            url,
+            auth_credentials=auth_credentials,
+            login_url=login_url,
+            custom_selectors=custom_selectors,
+            wait_for_content=wait_for_content,
+        )
+        return snapshot["content"]
+
+    async def fetch_site_profile(
+        self,
+        url: str,
+        auth_credentials: Optional[Dict[str, str]] = None,
+        login_url: Optional[str] = None,
+        custom_selectors: Optional[Dict[str, List[str]]] = None,
+        wait_for_content: bool = True,
+        max_pages: int = 3,
+        discovered_page_timeout: int = 15,
+    ) -> Dict[str, object]:
+        """Fetch homepage and high-value internal pages as one research profile."""
+        homepage = await self._fetch_page_snapshot(
+            url,
+            auth_credentials=auth_credentials,
+            login_url=login_url,
+            custom_selectors=custom_selectors,
+            wait_for_content=wait_for_content,
+        )
+        pages = [homepage]
+        discovered_urls = self.discover_research_links(url, homepage["html"], max_links=max(0, max_pages - 1))
+
+        for discovered_url in discovered_urls:
+            try:
+                page = await self._fetch_page_snapshot(
+                    discovered_url,
+                    auth_credentials=auth_credentials,
+                    login_url=login_url,
+                    custom_selectors=custom_selectors,
+                    wait_for_content=wait_for_content,
+                    timeout_seconds=discovered_page_timeout,
+                    max_attempts=1,
+                )
+                pages.append(page)
+            except Exception:
+                continue
+
+        return {
+            "url": url,
+            "content": self.combine_page_texts(pages),
+            "pages": pages,
+            "discovered_urls": discovered_urls,
+        }
+
+    async def _fetch_page_snapshot(
+        self,
+        url: str,
+        auth_credentials: Optional[Dict[str, str]] = None,
+        login_url: Optional[str] = None,
+        custom_selectors: Optional[Dict[str, List[str]]] = None,
+        wait_for_content: bool = True,
+        timeout_seconds: Optional[int] = None,
+        max_attempts: Optional[int] = None,
+    ) -> Dict[str, str]:
+        validate_fetch_url(url)
+        if login_url:
+            validate_fetch_url(login_url)
+
         page = None
         retry_delay = 1
 
-        for attempt in range(MAX_RETRIES):
+        attempts = max_attempts or MAX_RETRIES
+        page_timeout_ms = (timeout_seconds or TIMEOUT_SECONDS) * 1000
+
+        for attempt in range(attempts):
             try:
                 page = await self.browser.new_page()
                 await page.route("**/*", self._guard_outbound_request)
-                page.set_default_timeout(TIMEOUT_SECONDS * 1000)
+                page.set_default_timeout(page_timeout_ms)
 
                 if auth_credentials and login_url:
-                    await page.goto(login_url)
+                    await page.goto(login_url, wait_until="domcontentloaded", timeout=page_timeout_ms)
 
                     selectors = {**self.default_selectors, **(custom_selectors or {})}
 
@@ -122,7 +192,7 @@ class WebCrawler:
 
                     await page.wait_for_timeout(2000)
 
-                await page.goto(url)
+                await page.goto(url, wait_until="domcontentloaded", timeout=page_timeout_ms)
 
                 try:
                     await page.wait_for_load_state("networkidle", timeout=10000)
@@ -144,8 +214,15 @@ class WebCrawler:
                     await page.close()
                 except Exception:
                     pass
-                return text_content
+                return {"url": url, "content": text_content, "html": content}
 
+            except asyncio.CancelledError:
+                if page:
+                    try:
+                        await page.close()
+                    except Exception:
+                        pass
+                raise
             except Exception as e:
                 if page:
                     try:
@@ -153,7 +230,7 @@ class WebCrawler:
                     except Exception:
                         pass
 
-                if attempt < MAX_RETRIES - 1:
+                if attempt < attempts - 1:
                     await asyncio.sleep(retry_delay)
                     retry_delay *= 2
                     continue
@@ -189,6 +266,69 @@ class WebCrawler:
                 })
 
         return results
+
+    @staticmethod
+    def discover_research_links(base_url: str, html_content: str, max_links: int = 4) -> List[str]:
+        """Discover same-origin pages likely to contain research evidence."""
+        base = urlparse(validate_fetch_url(base_url))
+        soup = BeautifulSoup(html_content, "html.parser")
+        candidates = []
+        seen = set()
+
+        priority_terms = [
+            (100, ["pricing", "price", "plans", "billing", "cost", "定价", "价格", "计费", "套餐"]),
+            (90, ["docs", "doc", "quickstart", "guide", "developer", "文档", "开发", "接入"]),
+            (85, ["models", "model", "providers", "engines", "模型", "供应商"]),
+            (80, ["api", "sdk", "integration", "integrations", "接口", "集成"]),
+            (65, ["workflow", "flow", "route", "routing", "工作流", "流程", "路由"]),
+            (55, ["console", "dashboard", "控制台", "仪表盘"]),
+            (45, ["faq", "help", "support", "常见问题", "帮助", "支持"]),
+        ]
+
+        base_normalized = urlunparse((base.scheme, base.netloc, base.path.rstrip("/") or "/", "", base.query, ""))
+        for order, anchor in enumerate(soup.find_all("a", href=True)):
+            href = anchor.get("href", "").strip()
+            if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
+                continue
+
+            absolute_url = urljoin(base_url, href)
+            parsed = urlparse(absolute_url)
+            if parsed.netloc != base.netloc or parsed.scheme not in ("http", "https"):
+                continue
+
+            normalized = urlunparse((parsed.scheme, parsed.netloc, parsed.path.rstrip("/") or "/", "", parsed.query, ""))
+            if normalized in seen or normalized == base_normalized:
+                continue
+
+            evidence = f"{anchor.get_text(' ', strip=True)} {parsed.path} {parsed.query}".lower()
+            score = 0
+            for priority, terms in priority_terms:
+                if any(term.lower() in evidence for term in terms):
+                    score = priority
+                    break
+            if score <= 0:
+                continue
+
+            try:
+                validate_fetch_url(normalized)
+            except ValueError:
+                continue
+
+            seen.add(normalized)
+            candidates.append((score, order, normalized))
+
+        candidates.sort(key=lambda item: (-item[0], item[1]))
+        return [url for _, _, url in candidates[:max_links]]
+
+    @staticmethod
+    def combine_page_texts(pages: List[Dict[str, str]]) -> str:
+        sections = []
+        for page in pages:
+            content = page.get("content", "")
+            if not content:
+                continue
+            sections.append(f"### Source URL: {page.get('url', '')}\n{content}")
+        return "\n\n".join(sections)
 
     def _parse_html(self, html_content: str) -> str:
         """将HTML转换为纯文本"""
