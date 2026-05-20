@@ -6,16 +6,16 @@
           <el-icon><ArrowLeft /></el-icon>
           返回
         </el-button>
-        <span class="report-title">竞品分析报告</span>
+        <span class="report-title">结果中心</span>
       </div>
       <div class="header-actions">
         <el-button @click="copyReport">
           <el-icon><DocumentCopy /></el-icon>
-          复制
+          复制当前
         </el-button>
         <el-button @click="exportReport">
           <el-icon><Download /></el-icon>
-          导出
+          导出当前
         </el-button>
       </div>
     </header>
@@ -51,6 +51,10 @@
               <div>
                 <dt>自动评级</dt>
                 <dd>{{ gradeDisplay }} 级</dd>
+              </div>
+              <div>
+                <dt>PRD</dt>
+                <dd>{{ hasPRD ? '已生成' : '未生成' }}</dd>
               </div>
             </dl>
           </section>
@@ -92,11 +96,67 @@
             <span>建议补充明确竞品 URL，若网站需要登录，请在首页为对应网站单独填写登录凭据后重新调研。</span>
           </div>
 
-          <article class="report-body">
+          <nav class="artifact-tabs" aria-label="交付物">
+            <button :class="{ active: activeTab === 'report' }" type="button" @click="activeTab = 'report'">
+              竞品报告
+            </button>
+            <button :class="{ active: activeTab === 'prd' }" type="button" @click="activeTab = 'prd'">
+              PRD
+              <span v-if="hasPRD" class="tab-dot"></span>
+            </button>
+            <button :class="{ active: activeTab === 'sources' }" type="button" @click="activeTab = 'sources'">
+              来源状态
+            </button>
+          </nav>
+
+          <article v-if="activeTab === 'report'" class="report-body">
             <div class="markdown-content" v-html="renderedMarkdown"></div>
           </article>
 
-          <section class="chart-panel" v-if="chartData">
+          <section v-else-if="activeTab === 'prd'" class="report-body prd-body">
+            <div v-if="hasPRD" class="markdown-content" v-html="renderedPRD"></div>
+            <div v-else class="empty-artifact">
+              <h2>PRD 还没有生成</h2>
+              <p>如果这份竞品报告质量足够，可以直接把报告洞察转成产品需求文档。</p>
+              <el-button type="primary" :loading="isGeneratingPRD" @click="generatePRD">
+                生成 PRD
+              </el-button>
+            </div>
+          </section>
+
+          <section v-else class="report-body sources-body">
+            <div class="source-header">
+              <div>
+                <h2>来源和抓取状态</h2>
+                <p>这里展示本次调研实际读取到的竞品来源，便于判断报告可信度。</p>
+              </div>
+              <el-tag :type="sourceRows.length ? 'success' : 'warning'">
+                {{ sourceRows.length ? `${sourceRows.length} 个来源` : '暂无来源' }}
+              </el-tag>
+            </div>
+            <div v-if="sourceRows.length" class="source-list">
+              <article v-for="source in sourceRows" :key="source.url" class="source-item" :class="source.status">
+                <div>
+                  <strong>{{ source.name }}</strong>
+                  <a :href="source.url" target="_blank" rel="noreferrer">{{ source.url }}</a>
+                </div>
+                <div class="source-meta">
+                  <el-tag :type="source.status === 'success' ? 'success' : 'danger'" size="small">
+                    {{ source.status === 'success' ? '成功' : '失败' }}
+                  </el-tag>
+                  <span>{{ source.dataCount }} 条信息</span>
+                </div>
+                <p v-if="source.error">{{ source.error }}</p>
+              </article>
+            </div>
+            <div v-else class="empty-artifact">
+              <h2>没有可用来源</h2>
+              <p>建议回到首页补充明确的竞品网站，或检查需要登录的网站账号密码是否可用。</p>
+              <el-button type="primary" @click="$router.push('/')">补充竞品继续调研</el-button>
+            </div>
+          </section>
+
+          <section class="chart-panel" v-if="activeTab === 'report' && chartData">
             <h2>功能评分雷达图</h2>
             <div ref="chartRef" class="radar-chart"></div>
           </section>
@@ -111,7 +171,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -129,6 +189,7 @@ import { GridComponent, LegendComponent, RadarComponent, TooltipComponent } from
 import { init, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { useResearchStore } from '../stores/research'
+import { researchApi } from '../api'
 
 const route = useRoute()
 const store = useResearchStore()
@@ -136,6 +197,8 @@ use([RadarChart, RadarComponent, TooltipComponent, LegendComponent, GridComponen
 
 const report = ref(null)
 const taskId = route.params.id
+const activeTab = ref(route.query.tab === 'prd' ? 'prd' : 'report')
+const isGeneratingPRD = ref(false)
 const chartRef = ref(null)
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 let chartInstance = null
@@ -181,9 +244,36 @@ const displayTitle = computed(() => {
 const renderedMarkdown = computed(() => {
   return report.value?.markdown ? DOMPurify.sanitize(md.render(report.value.markdown)) : ''
 })
+const renderedPRD = computed(() => {
+  return report.value?.prd ? DOMPurify.sanitize(md.render(report.value.prd)) : ''
+})
 
 const missingDimensions = computed(() => report.value?.missing_dimensions || [])
 const chartData = computed(() => report.value?.radar_data)
+const hasPRD = computed(() => Boolean(report.value?.prd))
+const sourceRows = computed(() => {
+  const competitors = report.value?.raw?.competitors
+  if (!Array.isArray(competitors)) return []
+  return competitors.map((item, index) => ({
+    name: item.name || `竞品 ${index + 1}`,
+    url: item.url,
+    status: item.status || 'failed',
+    dataCount: Array.isArray(item.extracted_data) ? item.extracted_data.length : 0,
+    error: item.error_message || item.error || ''
+  })).filter(item => item.url)
+})
+const activeArtifactContent = computed(() => {
+  if (activeTab.value === 'prd') return report.value?.prd || ''
+  if (activeTab.value === 'sources') {
+    return sourceRows.value.map(item => `${item.name}\n${item.url}\n状态: ${item.status}\n信息数量: ${item.dataCount}${item.error ? `\n错误: ${item.error}` : ''}`).join('\n\n')
+  }
+  return report.value?.markdown || ''
+})
+const activeArtifactFilename = computed(() => {
+  if (activeTab.value === 'prd') return 'prd.md'
+  if (activeTab.value === 'sources') return 'sources.md'
+  return 'report.md'
+})
 
 function gradeFromScore(score) {
   if (score >= 8.5) return 'A'
@@ -228,23 +318,59 @@ function initChart() {
 }
 
 function copyReport() {
-  navigator.clipboard.writeText(report.value?.markdown || '')
+  navigator.clipboard.writeText(activeArtifactContent.value || '')
   ElMessage.success('已复制到剪贴板')
 }
 
 function exportReport() {
-  const content = report.value?.markdown || ''
+  const content = activeArtifactContent.value || ''
   const blob = new Blob([content], { type: 'text/markdown' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = 'report.md'
+  a.download = activeArtifactFilename.value
   a.click()
   URL.revokeObjectURL(url)
 }
 
+async function generatePRD() {
+  if (!report.value?.markdown) {
+    ElMessage.warning('报告内容尚未加载完成')
+    return
+  }
+
+  isGeneratingPRD.value = true
+  try {
+    const data = await researchApi.prd({
+      report_content: report.value.markdown,
+      query: report.value.query || report.value.title || '竞品分析'
+    })
+    const updated = store.updateReport(taskId, {
+      prd: data.prd || data.content || '',
+      prd_created_at: new Date().toISOString()
+    })
+    report.value = updated || {
+      ...report.value,
+      prd: data.prd || data.content || '',
+      prd_created_at: new Date().toISOString()
+    }
+    activeTab.value = 'prd'
+    ElMessage.success('PRD 已生成')
+  } catch (e) {
+    ElMessage.error('生成 PRD 失败')
+  } finally {
+    isGeneratingPRD.value = false
+  }
+}
+
 onMounted(() => {
   loadReport()
+})
+
+watch(activeTab, tab => {
+  if (tab === 'report' && chartData.value) {
+    setTimeout(initChart, 100)
+  }
 })
 
 onUnmounted(() => {
@@ -475,8 +601,134 @@ onUnmounted(() => {
   }
 }
 
+.artifact-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 10px;
+  background: #eaf0f7;
+
+  button {
+    min-height: 38px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 16px;
+    border: 0;
+    border-radius: 8px;
+    color: #475569;
+    background: transparent;
+    font-weight: 700;
+    cursor: pointer;
+
+    &.active {
+      color: #172033;
+      background: #fff;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.10);
+    }
+  }
+}
+
+.tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #16a34a;
+}
+
 .report-body {
   min-height: 360px;
+}
+
+.prd-body,
+.sources-body {
+  min-height: 520px;
+}
+
+.empty-artifact {
+  min-height: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+
+  h2 {
+    margin: 0 0 8px;
+    color: #172033;
+    font-size: 20px;
+    letter-spacing: 0;
+  }
+
+  p {
+    max-width: 460px;
+    margin: 0 0 18px;
+    color: #64748b;
+  }
+}
+
+.source-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+
+  h2 {
+    margin: 0 0 6px;
+    color: #172033;
+    font-size: 20px;
+    letter-spacing: 0;
+  }
+
+  p {
+    margin: 0;
+    color: #64748b;
+  }
+}
+
+.source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.source-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 8px;
+  background: #f8fbff;
+  box-shadow: inset 0 0 0 1px #dbe6f4;
+
+  strong,
+  a {
+    display: block;
+  }
+
+  strong {
+    color: #172033;
+  }
+
+  a {
+    margin-top: 4px;
+    overflow-wrap: anywhere;
+  }
+
+  p {
+    grid-column: 1 / -1;
+    margin: 0;
+    color: #b91c1c;
+  }
+}
+
+.source-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #64748b;
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .radar-chart {
@@ -510,8 +762,18 @@ onUnmounted(() => {
   }
 
   .title-panel,
-  .quality-callout {
+  .quality-callout,
+  .source-header,
+  .source-item {
     flex-direction: column;
+  }
+
+  .artifact-tabs {
+    overflow-x: auto;
+  }
+
+  .source-item {
+    display: flex;
   }
 }
 </style>
