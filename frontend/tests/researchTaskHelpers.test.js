@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   buildTaskTimeline,
+  getTaskArtifactContent,
   getTaskInputSummary,
   normalizeDeliverables
 } from '../src/stores/researchTaskHelpers.js'
@@ -56,4 +57,23 @@ test('summarizes target sites and credentials without exposing secrets', () => {
   assert.equal(summary.loginCount, 1)
   assert.equal(summary.autoSearchText, '关闭')
   assert.equal(summary.passwordsVisible, false)
+})
+
+test('prefers full PRD artifact content over SSE preview text', () => {
+  const task = {
+    artifacts: {
+      prd: {
+        content: '完整 PRD 正文'.repeat(200)
+      }
+    }
+  }
+
+  assert.equal(
+    getTaskArtifactContent(task, 'prd', '只有 500 字的预览'),
+    '完整 PRD 正文'.repeat(200)
+  )
+})
+
+test('falls back to SSE preview when task artifact is missing', () => {
+  assert.equal(getTaskArtifactContent({ artifacts: {} }, 'prd', '预览内容'), '预览内容')
 })
