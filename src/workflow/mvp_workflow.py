@@ -1,4 +1,5 @@
 """MVP工作流模块 - 2-agent简化版本：协调者 + 文案撰写员"""
+from pathlib import Path
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 from uuid import uuid4
@@ -15,6 +16,7 @@ from src.config.settings import (
     MAX_FETCH_URLS
 )
 from src.security.url_validation import UnsafeURL, validate_fetch_url, validate_fetch_urls
+from src.workflow.task_store import _sanitize_payload
 import asyncio
 import json
 import logging
@@ -289,10 +291,26 @@ class CopywriterAgent:
 class MVPWorkflow:
     """MVP工作流 - 2-agent模式：协调者 + 文案撰写员"""
 
-    def __init__(self):
+    def __init__(self, event_emitter=None):
         self.llm_client = get_llm_client()
         self.coordinator = CoordinatorAgent(self.llm_client)
         self.copywriter = CopywriterAgent(self.llm_client)
+        self._event_emitter = event_emitter
+
+    def _emit(self, event_type: str, stage: str, status: str, message: str, payload: Optional[Dict[str, Any]] = None):
+        if self._event_emitter is None:
+            return
+        from src.workflow.task_store import TaskEvent
+        event = TaskEvent(
+            id=0,
+            event=event_type,
+            task_id=self.state.get("task_id", ""),
+            stage=stage,
+            status=status,
+            message=message,
+            payload=_sanitize_payload(payload or {}),
+        )
+        asyncio.create_task(self._event_emitter.emit(event))
 
     async def run(
         self,
@@ -303,9 +321,12 @@ class MVPWorkflow:
         login_url: Optional[str] = None,
         sync_targets: Optional[List[str]] = None,
         enable_search: bool = True,
-        custom_selectors: Optional[Dict[str, List[str]]] = None
+        custom_selectors: Optional[Dict[str, List[str]]] = None,
+        deliverables: Optional[Dict[str, bool]] = None,
+        task_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """执行完整调研流程"""
+        deliverables = deliverables or {"report": True, "prd": False}
+
         initial_sites = self._normalize_target_sites(
             target_urls=target_urls,
             target_sites=target_sites,
@@ -316,16 +337,19 @@ class MVPWorkflow:
         if len(initial_sites) > MAX_FETCH_URLS:
             raise ValueError(f"目标URL数量不能超过 {MAX_FETCH_URLS} 个")
 
-        state = self._initialize_state(user_query, initial_urls)
+        state = self._initialize_state(user_query, initial_urls, task_id)
         state["target_sites"] = initial_sites
         state["custom_selectors"] = custom_selectors
+        self.state = state
 
         try:
             state["status"] = "decomposing"
+            self._emit("decompose", "decompose", "running", "正在理解需求、拆解调研维度")
             state["subtasks"] = await self.coordinator.decompose_task(user_query, state["target_urls"])
 
             if enable_search and not state["target_urls"]:
                 state["status"] = "researching"
+                self._emit("search", "search", "running", "正在搜索竞品范围和公开资料")
                 search_urls = await self.coordinator.search_topics(user_query)
                 search_target_sites = [
                     {"url": url, "auth_credentials": None, "login_url": None}
@@ -335,7 +359,8 @@ class MVPWorkflow:
                 state["target_urls"].extend([site["url"] for site in search_target_sites])
                 logger.info(f"自动搜索补充了 {len(search_urls)} 个URL")
 
-            state["status"] = "researching"
+            state["status"] = "crawling"
+            self._emit("crawl_start", "crawl", "running", f"开始登录/抓取 {len(state['target_sites'])} 个竞品网站")
             state["competitors"] = await self._fetch_all_competitors(
                 state["target_sites"],
                 auth_credentials,
@@ -353,7 +378,20 @@ class MVPWorkflow:
                         "source_type": "web"
                     })
 
+            success_count = sum(1 for c in state["competitors"] if c["status"] == "success")
+            failed_count = sum(1 for c in state["competitors"] if c["status"] == "failed")
+            self._emit(
+                "crawl_complete", "crawl", "completed",
+                f"抓取完成：成功 {success_count}，失败 {failed_count}",
+                payload={"success_count": success_count, "failed_count": failed_count}
+            )
+
+            state["status"] = "extracting"
+            self._emit("extract", "extract", "running", "正在提取功能、定价、模型、目标用户、限制等信息")
+            # Extract is implicit in the crawl data, nothing extra to call
+
             state["status"] = "verifying"
+            self._emit("verify", "verify", "running", "正在校验数据质量和一致性")
             verification_result = await self.coordinator.verify_consistency(state["extracted_data"])
             state["verification_score"] = verification_result["score"]
             state["verification_passed"] = verification_result["passed"]
@@ -372,6 +410,7 @@ class MVPWorkflow:
                 state["report_final"] = f"❌ 调研失败：可信度评分 {state['verification_score']}/10 低于阈值，无法生成报告。"
                 state["status"] = "failed"
                 state["termination_reason"] = "可信度不足"
+                self._emit("error", "verify", "failed", f"可信度不足：{state['verification_score']}/10")
                 return state
 
             if not quality_report.is_usable:
@@ -381,8 +420,11 @@ class MVPWorkflow:
                 state["report_final"] += "\n".join(f"- {r}" for r in quality_report.recommendations)
                 state["status"] = "failed"
                 state["termination_reason"] = "数据质量不足"
+                self._emit("error", "verify", "failed", f"数据质量不足：{quality_report.overall_score}/10")
                 return state
 
+            state["status"] = "report_generating"
+            self._emit("report_generate", "report_generate", "running", "正在生成竞品分析报告")
             state["report_final"] = self.copywriter.generate_report(
                 user_query,
                 state["extracted_data"],
@@ -392,12 +434,34 @@ class MVPWorkflow:
             )
 
             state["sync_results"]["local_file"] = self._save_report(state["report_final"])
+            state["report_id"] = Path(state["sync_results"]["local_file"]).stem
+
+            self._emit(
+                "artifact_ready", "report_generate", "completed",
+                "竞品分析报告已生成",
+                payload={"artifact_type": "report", "report_id": state["report_id"]}
+            )
+
+            prd_content = None
+            if deliverables.get("prd"):
+                from src.tools.prd_generator import PRDGenerator
+                state["status"] = "prd_generating"
+                self._emit("prd_generate", "prd_generate", "running", "正在生成 PRD")
+                generator = PRDGenerator()
+                prd_content = generator.generate_from_competitive_report(state["report_final"], user_query)
+                state["prd_content"] = prd_content
+                self._emit(
+                    "artifact_ready", "prd_generate", "completed",
+                    "PRD 已生成",
+                    payload={"artifact_type": "prd", "content": prd_content[:500] if prd_content else ""}
+                )
 
             if sync_targets:
                 state = await self._sync_documents(state, sync_targets)
 
             state["status"] = "completed"
             state["termination_reason"] = "所有步骤执行完成"
+            self._emit("completed", "completed", "completed", "全部完成")
 
         except Exception as e:
             logger.error(f"工作流执行失败: {e}", exc_info=True)
@@ -410,6 +474,11 @@ class MVPWorkflow:
                 "message": str(e),
                 "retry_attempts": 0
             })
+            self._emit(
+                "error", "workflow", "failed",
+                f"执行失败: {str(e)}",
+                payload={"stage": "workflow", "error_type": type(e).__name__}
+            )
 
         return state
 
@@ -459,9 +528,9 @@ class MVPWorkflow:
 
         return sites
 
-    def _initialize_state(self, user_query: str, target_urls: List[str]) -> Dict[str, Any]:
+    def _initialize_state(self, user_query: str, target_urls: List[str], task_id: Optional[str] = None) -> Dict[str, Any]:
         return {
-            "task_id": str(uuid4()),
+            "task_id": task_id or str(uuid4()),
             "status": "pending",
             "created_at": datetime.now(),
             "updated_at": datetime.now(),
@@ -549,6 +618,7 @@ class MVPWorkflow:
         custom_selectors: Optional[Dict[str, List[str]]] = None
     ) -> Dict[str, Any]:
         """抓取单个竞品页面并提取信息"""
+        self._emit("crawl_progress", "crawl", "running", f"正在抓取 {url}", payload={"url": url, "name": "unknown"})
         try:
             async with WebCrawler() as crawler:
                 content = await crawler.fetch_page(
@@ -557,6 +627,7 @@ class MVPWorkflow:
                 extracted = await self.coordinator.extract_key_info(content, url)
 
             name = infer_competitor_name(url, extracted)
+            self._emit("crawl_progress", "crawl", "running", f"抓取成功 {url}", payload={"url": url, "name": name, "status": "success"})
 
             return {
                 "name": name,
@@ -567,6 +638,11 @@ class MVPWorkflow:
             }
         except Exception as e:
             logger.warning(f"抓取竞品失败 {url}: {e}")
+            self._emit(
+                "error", "crawl", "failed",
+                f"抓取失败 {url}",
+                payload={"url": url, "message": str(e), "recoverable": True}
+            )
             return {
                 "name": infer_competitor_name(url),
                 "url": url,

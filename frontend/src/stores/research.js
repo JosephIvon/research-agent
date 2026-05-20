@@ -76,6 +76,108 @@ function createRunEvent(stage, type, message) {
   }
 }
 
+// Backend SSE event stage → frontend timeline stage mapping
+const STAGE_MAP = {
+  decompose: 'understand',
+  search: 'search',
+  crawl_start: 'crawl',
+  crawl_progress: 'crawl',
+  crawl_complete: 'extract',
+  extract: 'extract',
+  verify: null,          // no frontend step
+  report_generate: 'report',
+  prd_generate: 'prd',
+  completed: 'finish',
+  artifact_ready: null,  // handled via report_generate / prd_generate
+  error: 'finish'
+}
+
+function mapBackendStage(backendStage) {
+  return STAGE_MAP[backendStage] || null
+}
+
+function getEventType(backendEvent, status) {
+  if (status === 'failed' || status === 'error') return 'error'
+  if (status === 'completed' || backendEvent === 'completed') return 'success'
+  if (status === 'running') return 'running'
+  return 'running'
+}
+
+function connectTaskSSE(runId, taskId, callbacks = {}) {
+  const eventSource = researchApi.getTaskEvents(taskId)
+  let reportId = null
+  let prdContent = null
+
+  function handleMessage(event) {
+    try {
+      const data = JSON.parse(event.data)
+      const { event: backendEvent, stage, status, message, payload } = data
+
+      const frontendStage = mapBackendStage(backendEvent)
+      if (!frontendStage) return
+
+      const eventType = getEventType(backendEvent, status)
+      emitRunEvent(runId, frontendStage, eventType, message, callbacks)
+
+      if (backendEvent === 'artifact_ready' && payload) {
+        if (payload.artifact_type === 'report' && payload.report_id) {
+          reportId = payload.report_id
+        }
+        if (payload.artifact_type === 'prd' && payload.content) {
+          prdContent = payload.content
+        }
+      }
+
+      if (backendEvent === 'completed' || status === 'failed') {
+        cleanup()
+        finalizeRun(runId, reportId, prdContent, status === 'failed' ? 'failed' : 'completed', callbacks)
+      }
+    } catch (e) {
+      // ignore parse errors
+    }
+  }
+
+  function finalizeRun(runId, reportId, prdContent, status, callbacks) {
+    if (reportId) {
+      researchApi.getTask(taskId).then(task => {
+        const artifact = task?.artifacts?.report
+        if (artifact) {
+          const report = {
+            id: reportId,
+            markdown: artifact.content || '',
+            query: task.user_query,
+            competitors: task.crawl_results?.competitors || [],
+            quality_score: task.quality_score,
+            quality_grade: task.quality_grade,
+            missing_dimensions: task.missing_dimensions || [],
+            created_at: artifact.created_at || new Date().toLocaleString(),
+          }
+          if (prdContent) {
+            report.prd = prdContent
+            report.prd_created_at = new Date().toISOString()
+          }
+          cacheReport(report)
+          updateResearchRun(runId, { status: 'completed', report_id: report.id, completed_at: new Date().toISOString() })
+          currentTask.value = { id: report.id, status: 'completed', result: report }
+        }
+      }).catch(() => {})
+    } else {
+      updateResearchRun(runId, { status, completed_at: new Date().toISOString() })
+    }
+  }
+
+  function cleanup() {
+    eventSource.close()
+  }
+
+  eventSource.addEventListener('message', (e) => handleMessage(e))
+  eventSource.addEventListener('error', () => {
+    cleanup()
+  })
+
+  return cleanup
+}
+
 export const useResearchStore = defineStore('research', () => {
   const currentTask = ref(null)
   const taskHistory = ref(cachedReports())
@@ -141,10 +243,24 @@ export const useResearchStore = defineStore('research', () => {
       events: [],
       report_id: null,
       error: null,
+      task_id: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     }
     return cacheRun(run)
+  }
+
+  async function createAsyncTask(taskParams, options = {}) {
+    const deliverables = normalizeDeliverables(options.deliverables)
+    const run = createResearchRun(taskParams, { deliverables })
+
+    const result = await researchApi.createTask({
+      ...taskParams,
+      deliverables
+    })
+
+    updateResearchRun(run.id, { task_id: result.task_id, backend_status: 'pending' })
+    return run
   }
 
   function emitRunEvent(id, stage, type, message, callbacks = {}) {
@@ -177,6 +293,18 @@ export const useResearchStore = defineStore('research', () => {
     const run = getResearchRun(id)
     if (!run) {
       throw new Error('任务不存在')
+    }
+
+    if (run.task_id) {
+      isLoading.value = true
+      updateResearchRun(id, {
+        status: 'running',
+        error: null,
+        started_at: run.started_at || new Date().toISOString()
+      })
+
+      connectTaskSSE(id, run.task_id, callbacks)
+      return { sseConnected: true }
     }
 
     isLoading.value = true
@@ -313,6 +441,7 @@ export const useResearchStore = defineStore('research', () => {
     isLoading,
     createTask,
     createResearchRun,
+    createAsyncTask,
     getResearchRun,
     updateResearchRun,
     runResearchRun,

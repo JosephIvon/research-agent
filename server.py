@@ -1,13 +1,16 @@
 """Research Agent MCP Server - 让项目可被其他Agent调用"""
 from datetime import datetime
 from pathlib import Path
+import asyncio
 import hmac
+import json
 import logging
 import re
 from typing import Optional, List, Dict, Any
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 import uvicorn
@@ -40,6 +43,17 @@ from src.config.settings import (
     TIMEOUT_SECONDS,
 )
 from src.security.url_validation import validate_fetch_url, validate_fetch_urls
+from src.workflow.task_store import (
+    get_task_store,
+    TaskStore,
+    TaskState,
+    TaskEvent,
+    TaskArtifact,
+    TaskEventType,
+    TaskStatus,
+    EventEmitter,
+    _sanitize_payload,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -485,10 +499,195 @@ async def prd_from_query(req: ResearchRequest):
         raise _internal_error("PRD一体化流程", e)
 
 
-@app.get("/research/history", response_model=List[Dict[str, Any]])
-def list_history():
-    """列出本地历史报告。"""
-    return [_report_payload(path) for path in _report_files()[:100]]
+class TaskRequest(BaseModel):
+    """创建任务的请求体"""
+    query: str = Field(..., min_length=1, max_length=1000)
+    urls: List[str] = Field(default_factory=list, max_length=MAX_FETCH_URLS)
+    target_sites: List[CompetitorSite] = Field(default_factory=list, max_length=MAX_FETCH_URLS)
+    auth_credentials: Optional[AuthCredentials] = None
+    login_url: Optional[str] = Field(default=None, min_length=1, max_length=2048)
+    enable_search: bool = True
+    custom_selectors: Optional[Dict[str, List[str]]] = None
+    deliverables: Dict[str, bool] = Field(
+        default_factory=lambda: {"report": True, "prd": True}
+    )
+
+    @field_validator("urls")
+    @classmethod
+    def validate_urls(cls, urls: List[str]) -> List[str]:
+        return validate_fetch_urls(urls)
+
+    @field_validator("login_url")
+    @classmethod
+    def validate_login_url(cls, login_url: Optional[str]) -> Optional[str]:
+        return validate_fetch_url(login_url) if login_url else login_url
+
+    @model_validator(mode="after")
+    def validate_target_count(self):
+        unique_urls = {site.url for site in self.target_sites}
+        unique_urls.update(self.urls)
+        if len(unique_urls) > MAX_FETCH_URLS:
+            raise ValueError(f"目标URL数量不能超过 {MAX_FETCH_URLS} 个")
+        return self
+
+    @field_validator("custom_selectors")
+    @classmethod
+    def validate_custom_selectors(
+        cls, selectors: Optional[Dict[str, List[str]]]
+    ) -> Optional[Dict[str, List[str]]]:
+        if selectors is None:
+            return None
+        allowed_keys = {"username", "password", "submit"}
+        unknown_keys = set(selectors) - allowed_keys
+        if unknown_keys:
+            raise ValueError(f"不支持的选择器字段: {sorted(unknown_keys)}")
+        for key, values in selectors.items():
+            if not values or len(values) > 10:
+                raise ValueError(f"{key} 选择器数量必须在 1-10 之间")
+            for value in values:
+                if not value or len(value) > 300:
+                    raise ValueError(f"{key} 选择器长度必须在 1-300 字符之间")
+        return selectors
+
+
+_task_queue: List[asyncio.Task] = []
+
+
+async def _run_research_task(task_id: str, req: TaskRequest):
+    """Background task that runs the research workflow and emits events."""
+    from src.workflow.mvp_workflow import MVPWorkflow
+
+    store = get_task_store()
+    emitter = EventEmitter()
+
+    async def on_event(event: TaskEvent):
+        event.id = len(await store.get(task_id)) if await store.get(task_id) else 0
+        await store.add_event(task_id, event)
+        await store.update(
+            task_id,
+            current_stage=event.stage,
+            current_message=event.message,
+            status=TaskStatus.RUNNING if event.status == "running" else None,
+        )
+
+    emitter._on_event = on_event
+
+    workflow = MVPWorkflow(event_emitter=emitter)
+
+    target_sites_dict = _target_sites(req)
+    auth_creds = _auth_dict(req.auth_credentials)
+
+    result = await workflow.run(
+        user_query=req.query,
+        target_urls=req.urls,
+        target_sites=target_sites_dict,
+        auth_credentials=auth_creds,
+        login_url=req.login_url,
+        enable_search=req.enable_search,
+        custom_selectors=req.custom_selectors,
+        deliverables=req.deliverables,
+        task_id=task_id,
+    )
+
+    if result["status"] == "completed":
+        await store.update(
+            task_id,
+            status=TaskStatus.COMPLETED,
+            report_id=result.get("report_id"),
+        )
+        if req.deliverables.get("report") and result.get("report_final"):
+            await store.set_artifact(
+                task_id, "report",
+                TaskArtifact(artifact_type="report", content=result["report_final"], report_id=result.get("report_id"))
+            )
+        if req.deliverables.get("prd") and result.get("prd_content"):
+            await store.set_artifact(
+                task_id, "prd",
+                TaskArtifact(artifact_type="prd", content=result.get("prd_content"))
+            )
+    else:
+        await store.update(task_id, status=TaskStatus.FAILED)
+
+
+@app.post("/research/tasks", response_model=Dict[str, Any])
+async def create_task(req: TaskRequest):
+    """创建异步调研任务，立即返回 task_id"""
+    task_id = str(uuid4())
+    store = get_task_store()
+
+    await store.create(task_id, req.query, req.deliverables)
+
+    task_state = await store.get(task_id)
+    created_event = TaskEvent(
+        id=0,
+        event=TaskEventType.TASK_CREATED.value,
+        task_id=task_id,
+        stage="created",
+        status="created",
+        message="任务已创建，正在排队执行",
+    )
+    await store.add_event(task_id, created_event)
+
+    asyncio.create_task(_run_research_task(task_id, req))
+
+    return {
+        "task_id": task_id,
+        "status": "pending",
+        "created_at": task_state.created_at,
+    }
+
+
+@app.get("/research/tasks/{task_id}", response_model=Dict[str, Any])
+async def get_task(task_id: str):
+    """获取任务状态和历史事件"""
+    store = get_task_store()
+    task = await store.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return task.to_dict()
+
+
+@app.get("/research/tasks/{task_id}/events")
+async def stream_task_events(task_id: str, request: Request):
+    """SSE流，支持重连"""
+    store = get_task_store()
+    task = await store.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    emitter = EventEmitter()
+    q = emitter.subscribe()
+
+    last_event_id = 0
+    if request.headers.get("Last-Event-ID"):
+        try:
+            last_event_id = int(request.headers["Last-Event-ID"])
+        except ValueError:
+            pass
+
+    async def event_stream():
+        for event in task.events:
+            if event.id > last_event_id:
+                yield f"id: {event.id}\nevent: {event.event}\ndata: {json.dumps(event.to_dict(), ensure_ascii=False)}\n\n"
+
+        while True:
+            if await request.is_disconnected():
+                break
+            try:
+                event = await asyncio.wait_for(q.get(), timeout=30)
+                yield f"id: {event.id}\nevent: {event.event}\ndata: {json.dumps(event.to_dict(), ensure_ascii=False)}\n\n"
+            except asyncio.TimeoutError:
+                yield f": keepalive\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/research/history/{report_id}", response_model=Dict[str, Any])
