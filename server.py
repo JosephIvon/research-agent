@@ -2,6 +2,7 @@
 from datetime import datetime
 from pathlib import Path
 import asyncio
+import os
 import hmac
 import json
 import logging
@@ -10,11 +11,15 @@ from typing import Optional, List, Dict, Any
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+import hashlib
 
 from src.config.settings import (
     ALLOW_PRIVATE_NETWORK_URLS,
@@ -29,24 +34,36 @@ from src.config.settings import (
     FEISHU_APP_ID,
     FEISHU_APP_SECRET,
     GLM_API_KEY,
+    JWT_EXPIRE_MINUTES,
+    JWT_SECRET_KEY,
     LLM_PROVIDER,
     MAX_RETRIES,
     MAX_FETCH_URLS,
     MINIMAX_API_KEY,
     OPENAI_API_KEY,
     OUTPUT_DIR,
+    RATE_LIMIT_ENABLED,
+    RATE_LIMIT_PER_IP,
+    RATE_LIMIT_PER_TOKEN,
     SEARCH_MAX_RESULTS,
     SEARCH_PROVIDER,
     SEARCH_TIMEOUT,
     SEARXNG_URL,
+    SSE_KEEPALIVE_SECONDS,
+    TASK_STORE_BACKEND,
     TENCENT_APP_ID,
     TENCENT_APP_SECRET,
     TIMEOUT_SECONDS,
 )
+from src.auth.jwt_auth import create_access_token, decode_access_token
+from src.auth.user_db import get_user_db
 from src.security.url_validation import validate_fetch_url, validate_fetch_urls
+from src.config.config_manager import get_config_manager
 from src.workflow.task_store import (
     get_task_store,
-    TaskStore,
+    PersistenceBackend,
+    InMemoryTaskStore,
+    RedisTaskStore,
     TaskState,
     TaskEvent,
     TaskArtifact,
@@ -55,9 +72,19 @@ from src.workflow.task_store import (
     EventEmitter,
     _sanitize_payload,
 )
+from src.storage import get_report_db
+from src.logging import get_audit_logger, AuditEvent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Add audit logger handler
+audit_logger = logging.getLogger("audit")
+audit_handler = logging.StreamHandler()
+audit_handler.setFormatter(logging.Formatter("%(message)s"))
+audit_logger.addHandler(audit_handler)
+audit_logger.setLevel(logging.INFO)
+audit_logger.propagate = False
 
 IS_PRODUCTION = APP_ENV == "production"
 REPORT_ID_RE = re.compile(r"^research_report_\d{8}_\d{6}$")
@@ -73,26 +100,67 @@ if ALLOWED_HOSTS:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=[
+            origin.strip()
+            for origin in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+            if origin.strip()
+        ],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
 
-PUBLIC_PATHS = {"/", "/health", "/settings", "/sync/status"}
+PUBLIC_PATHS = {"/", "/health", "/settings", "/sync/status", "/auth/register", "/auth/login"}
 if not IS_PRODUCTION:
     PUBLIC_PATHS.update({"/docs", "/redoc", "/openapi.json"})
 
+# Token-based rate limit key function: uses Bearer token if present, otherwise falls back to IP
+def get_token_key(request: Request) -> str:
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        return hashlib.sha256(token.encode()).hexdigest()[:16]
+    return get_remote_address(request)
 
+# Initialize rate limiter
+limiter = Limiter(
+    key_func=get_token_key,
+    default_limits=[RATE_LIMIT_PER_IP] if RATE_LIMIT_ENABLED else [],
+)
+
+# Add rate limit exceeded handler
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# JWT Authentication middleware - supports both legacy API_AUTH_TOKEN and new JWT
 @app.middleware("http")
-async def enforce_optional_bearer_auth(request: Request, call_next):
-    if API_AUTH_TOKEN and request.url.path not in PUBLIC_PATHS:
+async def enforce_auth(request: Request, call_next):
+    # Skip auth for public paths
+    if request.url.path in PUBLIC_PATHS:
+        return await call_next(request)
+
+    # Try JWT authentication first
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        payload = decode_access_token(token)
+        if payload and "sub" in payload:
+            request.state.user_id = payload["sub"]
+            request.state.username = payload.get("username", "")
+            return await call_next(request)
+
+    # Fall back to legacy API_AUTH_TOKEN if configured
+    if API_AUTH_TOKEN:
         expected = f"Bearer {API_AUTH_TOKEN}"
         actual = request.headers.get("Authorization", "")
-        if not hmac.compare_digest(expected, actual):
-            return JSONResponse(status_code=401, content={"detail": "认证失败"})
-    return await call_next(request)
+        if hmac.compare_digest(expected, actual):
+            return await call_next(request)
+        # Token provided but doesn't match either JWT or legacy → reject
+        return JSONResponse(status_code=401, content={"detail": "认证失败"})
+
+    # No valid auth provided
+    return JSONResponse(status_code=401, content={"detail": "未授权，请先登录"})
 
 
 @app.middleware("http")
@@ -226,6 +294,46 @@ class SyncRequest(StrictModel):
     full_report: bool = True
 
 
+class ExportRequest(BaseModel):
+    report_id: str = Field(..., pattern=REPORT_ID_RE.pattern)
+    format: str = Field(..., pattern="^(pdf|word|html)$")
+    content_type: Optional[str] = Field(default="report", pattern="^(report|prd)$")
+
+
+class UserRegister(BaseModel):
+    username: str = Field(..., min_length=3, max_length=64)
+    email: str = Field(..., min_length=5, max_length=256)
+    password: str = Field(..., min_length=8, max_length=128)
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, v: str) -> str:
+        if not v.isalnum() and "_" not in v:
+            raise ValueError("username 只能包含字母、数字和下划线")
+        return v
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        if "@" not in v:
+            raise ValueError("email 格式无效")
+        return v.lower()
+
+
+class UserLogin(BaseModel):
+    username: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=1, max_length=128)
+
+
+class UserResponse(BaseModel):
+    id: str
+    username: str
+    email: str
+    role: str
+    created_at: str
+    last_login: Optional[str] = None
+
+
 def _auth_dict(credentials: Optional[AuthCredentials]) -> Optional[Dict[str, str]]:
     return credentials.to_plain_dict() if credentials else None
 
@@ -349,8 +457,9 @@ def _sync_content(req: SyncRequest) -> tuple[str, str]:
     return report["markdown"], req.title or report["title"]
 
 
+@limiter.limit(RATE_LIMIT_PER_TOKEN)
 @app.post("/research/competitive", response_model=Dict[str, Any])
-async def competitive_research(req: ResearchRequest):
+async def competitive_research(request: Request, req: ResearchRequest):
     """竞品分析接口"""
     try:
         from src.workflow.mvp_workflow import MVPWorkflow
@@ -385,8 +494,9 @@ async def competitive_research(req: ResearchRequest):
         raise _internal_error("竞品分析", e)
 
 
+@limiter.limit(RATE_LIMIT_PER_TOKEN)
 @app.post("/research/followup", response_model=Dict[str, Any])
-def followup(req: FollowUpRequest):
+def followup(request: Request, req: FollowUpRequest):
     """追问接口"""
     try:
         from src.tools.followup_optimizer import get_follow_up_optimizer
@@ -403,8 +513,9 @@ def followup(req: FollowUpRequest):
         raise _internal_error("追问优化", e)
 
 
+@limiter.limit(RATE_LIMIT_PER_TOKEN)
 @app.post("/research/suggest-followup", response_model=Dict[str, Any])
-def suggest_followup(req: FollowUpRequest):
+def suggest_followup(request: Request, req: FollowUpRequest):
     """推荐追问方向接口"""
     try:
         from src.tools.followup_optimizer import get_follow_up_optimizer
@@ -420,8 +531,9 @@ def suggest_followup(req: FollowUpRequest):
         raise _internal_error("推荐追问方向", e)
 
 
+@limiter.limit(RATE_LIMIT_PER_TOKEN)
 @app.post("/research/multi-role-review", response_model=Dict[str, Any])
-def review(req: ReviewRequest):
+def review(request: Request, req: ReviewRequest):
     """多角色审查接口"""
     try:
         from src.tools.multi_role_reviewer import get_multi_role_reviewer
@@ -437,8 +549,9 @@ def review(req: ReviewRequest):
         raise _internal_error("多角色审查", e)
 
 
+@limiter.limit(RATE_LIMIT_PER_TOKEN)
 @app.post("/research/prd", response_model=Dict[str, Any])
-def generate_prd(req: PRDRequest):
+def generate_prd(request: Request, req: PRDRequest):
     """从竞品分析生成PRD文档"""
     try:
         from src.tools.prd_generator import PRDGenerator
@@ -451,8 +564,9 @@ def generate_prd(req: PRDRequest):
         raise _internal_error("PRD生成", e)
 
 
+@limiter.limit(RATE_LIMIT_PER_TOKEN)
 @app.post("/research/prd-from-query", response_model=Dict[str, Any])
-async def prd_from_query(req: ResearchRequest):
+async def prd_from_query(request: Request, req: ResearchRequest):
     """PRD一体化接口：输入查询，自动执行竞品分析+PRD生成
 
     工作流：
@@ -638,9 +752,26 @@ async def _run_research_task(task_id: str, req: TaskRequest):
             TaskArtifact(artifact_type="report", content=result["report_final"], report_id=result.get("report_id"))
         )
 
+    # Audit log research completion/failure
+    audit = get_audit_logger()
+    if result["status"] == "completed":
+        audit.log(AuditEvent.RESEARCH_COMPLETE, None, {
+            "task_id": task_id,
+            "quality_score": result.get("quality_score"),
+            "quality_grade": result.get("quality_grade"),
+            "competitors_count": len(result.get("competitors", [])),
+        })
+    else:
+        audit.log(AuditEvent.RESEARCH_FAIL, None, {
+            "task_id": task_id,
+            "termination_reason": result.get("termination_reason"),
+            "quality_score": result.get("quality_score"),
+        }, "warning")
 
+
+@limiter.limit(RATE_LIMIT_PER_TOKEN)
 @app.post("/research/tasks", response_model=Dict[str, Any])
-async def create_task(req: TaskRequest):
+async def create_task(request: Request, req: TaskRequest):
     """创建异步调研任务，立即返回 task_id"""
     task_id = str(uuid4())
     store = get_task_store()
@@ -657,6 +788,15 @@ async def create_task(req: TaskRequest):
         message="任务已创建，正在排队执行",
     )
     await store.add_event(task_id, created_event)
+
+    # Audit log research start
+    user_id = getattr(request.state, "user_id", None)
+    get_audit_logger().log(AuditEvent.RESEARCH_START, user_id, {
+        "task_id": task_id,
+        "query": req.query[:200],
+        "target_urls_count": len(req.urls),
+        "target_sites_count": len(req.target_sites),
+    })
 
     asyncio.create_task(_run_research_task(task_id, req))
 
@@ -703,7 +843,7 @@ async def stream_task_events(task_id: str, request: Request):
             if await request.is_disconnected():
                 break
             try:
-                event = await asyncio.wait_for(q.get(), timeout=30)
+                event = await asyncio.wait_for(q.get(), timeout=SSE_KEEPALIVE_SECONDS)
                 yield f"id: {event.id}\nevent: {event.event}\ndata: {json.dumps(event.to_dict(), ensure_ascii=False)}\n\n"
             except asyncio.TimeoutError:
                 yield f": keepalive\n\n"
@@ -719,16 +859,130 @@ async def stream_task_events(task_id: str, request: Request):
     )
 
 
+@limiter.limit(RATE_LIMIT_PER_TOKEN)
 @app.get("/research/history", response_model=List[Dict[str, Any]])
-def list_history():
-    """列出本地历史报告。"""
-    return [_report_payload(path) for path in _report_files()[:100]]
+def list_history(request: Request):
+    items: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+
+    try:
+        db = get_report_db()
+        for r in db.list_reports(limit=100):
+            seen.add(r["id"])
+            items.append({
+                "id": r["id"],
+                "title": r["user_query"][:120] if r["user_query"] else r["id"],
+                "date": r["created_at"],
+                "created_at": r["created_at"],
+                "grade": r["quality_grade"] or "B",
+                "score": r["quality_score"],
+                "task_id": r["task_id"],
+            })
+    except Exception as exc:
+        logger.warning("Failed to list reports from SQLite, falling back to files: %s", exc)
+
+    for path in _report_files():
+        if path.stem not in seen:
+            items.append(_report_payload(path, include_markdown=False))
+
+    return sorted(items, key=lambda item: item.get("created_at", ""), reverse=True)[:100]
+
+    """列出本地历史报告（从SQLite读取）。"""
 
 
+@limiter.limit(RATE_LIMIT_PER_TOKEN)
 @app.get("/research/history/{report_id}", response_model=Dict[str, Any])
-def get_history_report(report_id: str):
+def get_history_report(request: Request, report_id: str):
     """读取单份历史报告。"""
     return _load_report_payload(report_id)
+
+
+@app.get("/research/compare/{report_id1}/{report_id2}", response_model=Dict[str, Any])
+def compare_reports(request: Request, report_id1: str, report_id2: str):
+    """对比两个报告版本的差异"""
+    db = get_report_db()
+    report1 = db.get_report(report_id1)
+    report2 = db.get_report(report_id2)
+
+    if not report1 or not report2:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    from src.tools.report_comparator import compare_reports as compare
+    content1 = report1.get("report_content", "")
+    content2 = report2.get("report_content", "")
+
+    diff = compare(content1, content2)
+    diff["report1"] = {"id": report_id1, "created_at": report1["created_at"]}
+    diff["report2"] = {"id": report_id2, "created_at": report2["created_at"]}
+    return diff
+
+
+@limiter.limit(RATE_LIMIT_PER_TOKEN)
+@app.post("/research/export")
+async def export_report(request: Request, req: ExportRequest):
+    """将报告导出为 PDF/Word/HTML 格式"""
+    if req.content_type == "prd":
+        raise HTTPException(
+            status_code=501,
+            detail="PRD 尚未支持后端导出，请在报告页使用「复制当前」功能获取 PRD 内容"
+        )
+
+    # Report content is stored on the file system (authoritative source)
+    # Fall back to DB only if the file does not exist
+    report_path = _report_path(req.report_id)
+    if report_path.exists():
+        content = report_path.read_text(encoding="utf-8")
+    else:
+        db = get_report_db()
+        report = db.get_report(req.report_id)
+        if not report:
+            raise HTTPException(status_code=404, detail="报告不存在")
+        content = report.get("report_content", "")
+        if not content:
+            raise HTTPException(status_code=404, detail="报告内容不存在")
+
+    # Note: PRD is stored in the frontend task store cache and is not
+    # persisted on the backend. For PRD export, use the frontend's
+    # native markdown download (copy) functionality.
+
+    # Determine suffix and mime type
+    suffix_map = {"pdf": ".pdf", "word": ".docx", "html": ".html"}
+    mime_map = {"pdf": "application/pdf", "word": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "html": "text/html"}
+    suffix = suffix_map[req.format]
+    mime = mime_map[req.format]
+
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp_path = tmp.name
+
+    if req.format == "pdf":
+        from src.tools.export import export_to_pdf
+        export_to_pdf(content, tmp_path)
+    elif req.format == "word":
+        from src.tools.export import export_to_word
+        export_to_word(content, tmp_path)
+    elif req.format == "html":
+        from src.tools.export import export_to_html
+        export_to_html(content, tmp_path)
+
+    filename = f"report_{req.report_id}{suffix}"
+    response = FileResponse(tmp_path, media_type=mime, filename=filename)
+
+    # Schedule temp file cleanup after response is fully sent
+    async def cleanup_later():
+        await asyncio.sleep(2)
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+    asyncio.create_task(cleanup_later())
+
+    return response
+
+
+@app.get("/research/versions/{report_id}", response_model=List[Dict[str, Any]])
+def get_report_versions(request: Request, report_id: str):
+    """获取报告的所有版本"""
+    db = get_report_db()
+    return db.get_report_versions(report_id)
 
 
 @app.delete("/research/history/{report_id}", response_model=Dict[str, Any])
@@ -747,6 +1001,55 @@ def get_settings():
     return _safe_settings_payload()
 
 
+@app.get("/settings/all", response_model=Dict[str, Any])
+def get_all_settings(request: Request):
+    """获取所有运行时配置（通过配置管理器，支持热更新）"""
+    cm = get_config_manager()
+    return cm.get_public_config()
+
+
+@app.post("/settings/{key}", response_model=Dict[str, Any])
+def update_setting(request: Request, key: str, value: str):
+    """更新单个配置项（仅允许热更新配置项）"""
+    cm = get_config_manager()
+
+    if not cm.is_hot_reloadable(key):
+        raise HTTPException(status_code=403, detail=f"Configuration key '{key}' does not support hot reload. Requires server restart.")
+
+    old_value = cm.get(key)
+
+    # Type conversion based on the value
+    try:
+        if value.isdigit():
+            new_value = int(value)
+        elif value.replace(".", "", 1).isdigit():
+            new_value = float(value)
+        elif value.lower() in ("true", "false"):
+            new_value = value.lower() == "true"
+        else:
+            new_value = value
+    except ValueError:
+        new_value = value
+
+    cm.set(key, new_value)
+    return {"key": key, "old_value": old_value, "new_value": new_value, "hot_reloadable": True}
+
+
+@app.post("/settings/reload", response_model=Dict[str, Any])
+def reload_settings(request: Request):
+    """重新从环境变量加载所有配置"""
+    cm = get_config_manager()
+    cm.reload()
+    return {"status": "ok", "message": "Configuration reloaded from environment"}
+
+
+@app.get("/settings/hot-reloadable", response_model=Dict[str, Any])
+def get_hot_reloadable_keys(request: Request):
+    """获取支持热更新的配置项列表"""
+    cm = get_config_manager()
+    return {"hot_reloadable_keys": list(cm.HOT_RELOADABLE_KEYS)}
+
+
 @app.get("/sync/status", response_model=Dict[str, Any])
 def sync_status():
     """文档同步平台连接状态。"""
@@ -754,13 +1057,45 @@ def sync_status():
         "status": "success",
         "platforms": {
             "feishu": {"configured": bool(FEISHU_APP_ID and FEISHU_APP_SECRET)},
-            "tencent": {"configured": bool(TENCENT_APP_ID and TENCENT_APP_SECRET)},
+            "tencent": {"configured": bool(TENCENT_APP_ID and TENCENT_APP_SECRET), "experimental": True},
         },
     }
 
 
+@app.get("/llm/status", response_model=Dict[str, Any])
+def llm_status():
+    """LLM 提供商状态和熔断器状态"""
+    from src.llm import get_provider_status
+
+    get_audit_logger().log(AuditEvent.LLM_CALL, None, {
+        "endpoint": "llm.status",
+        "provider": LLM_PROVIDER,
+    })
+    return {
+        "status": "success",
+        "providers": get_provider_status(),
+        "current_provider": LLM_PROVIDER,
+        "fallback_provider": os.getenv("LLM_FALLBACK_PROVIDER", ""),
+    }
+
+
+@app.post("/llm/circuit/reset", response_model=Dict[str, Any])
+def llm_circuit_reset(provider: Optional[str] = None):
+    """重置熔断器"""
+    from src.llm.circuit_breaker import reset_all_circuit_breakers, get_circuit_breaker
+
+    if provider:
+        breaker = get_circuit_breaker(provider.lower())
+        breaker.reset()
+        return {"status": "success", "message": f"Circuit breaker for {provider} has been reset"}
+    else:
+        reset_all_circuit_breakers()
+        return {"status": "success", "message": "All circuit breakers have been reset"}
+
+
+@limiter.limit(RATE_LIMIT_PER_TOKEN)
 @app.post("/sync/feishu", response_model=Dict[str, Any])
-def sync_feishu(req: SyncRequest):
+def sync_feishu(request: Request, req: SyncRequest):
     """同步报告到飞书文档。"""
     if not (FEISHU_APP_ID and FEISHU_APP_SECRET):
         raise HTTPException(status_code=400, detail="飞书文档未配置")
@@ -770,11 +1105,18 @@ def sync_feishu(req: SyncRequest):
     result = doc_sync_manager.sync_to_feishu(content, title)
     if "error" in result:
         raise HTTPException(status_code=502, detail="飞书同步失败，请查看服务端日志")
+    user_id = getattr(request.state, "user_id", None)
+    get_audit_logger().log(AuditEvent.DOC_SYNC, user_id, {
+        "platform": "feishu",
+        "title": title[:100],
+        "report_id": req.report_id,
+    })
     return {"status": "success", "result": result}
 
 
+@limiter.limit(RATE_LIMIT_PER_TOKEN)
 @app.post("/sync/tencent", response_model=Dict[str, Any])
-def sync_tencent(req: SyncRequest):
+def sync_tencent(request: Request, req: SyncRequest):
     """同步报告到腾讯文档。"""
     if not (TENCENT_APP_ID and TENCENT_APP_SECRET):
         raise HTTPException(status_code=400, detail="腾讯文档未配置")
@@ -784,7 +1126,52 @@ def sync_tencent(req: SyncRequest):
     result = doc_sync_manager.sync_to_tencent(content, title)
     if "error" in result:
         raise HTTPException(status_code=502, detail="腾讯文档同步失败，请查看服务端日志")
+    user_id = getattr(request.state, "user_id", None)
+    get_audit_logger().log(AuditEvent.DOC_SYNC, user_id, {
+        "platform": "tencent",
+        "title": title[:100],
+        "report_id": req.report_id,
+    })
     return {"status": "success", "result": result}
+
+
+# ============ Authentication Endpoints ============
+
+@app.post("/auth/register", response_model=Dict[str, Any])
+def register(req: UserRegister):
+    """Register a new user"""
+    db = get_user_db()
+    user_id = db.create_user(req.username, req.email, req.password)
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Username or email already exists")
+    access_token = create_access_token({"sub": user_id, "username": req.username})
+    get_audit_logger().log(AuditEvent.USER_REGISTER, user_id, {"username": req.username})
+    return {"user_id": user_id, "access_token": access_token, "token_type": "bearer"}
+
+
+@app.post("/auth/login", response_model=Dict[str, Any])
+def login(req: UserLogin):
+    """User login"""
+    db = get_user_db()
+    user_id = db.authenticate(req.username, req.password)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    access_token = create_access_token({"sub": user_id, "username": req.username})
+    get_audit_logger().log(AuditEvent.USER_LOGIN, user_id, {"username": req.username})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@app.get("/auth/me", response_model=UserResponse)
+def get_me(request: Request):
+    """Get current user info"""
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    db = get_user_db()
+    user = db.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return UserResponse(**user)
 
 
 @app.get("/health")

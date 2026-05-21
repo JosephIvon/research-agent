@@ -13,7 +13,12 @@ from src.config.settings import (
     VERIFICATION_PASS_THRESHOLD,
     VERIFICATION_WARN_THRESHOLD,
     MAX_RETRIES,
-    MAX_FETCH_URLS
+    MAX_FETCH_URLS,
+    CRAWL_MAX_CONCURRENCY,
+    CRAWL_MIN_CONCURRENCY,
+    CRAWL_REQUEST_INTERVAL,
+    MIN_COMPETITORS_FOR_COMPARISON,
+    LLM_MAX_CONTENT_CHARS
 )
 from src.security.url_validation import UnsafeURL, validate_fetch_url, validate_fetch_urls
 from src.workflow.task_store import _sanitize_payload
@@ -21,6 +26,8 @@ import asyncio
 import json
 import re
 import logging
+
+from src.crawler.concurrency import get_concurrency_controller
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -113,7 +120,7 @@ class CoordinatorAgent:
             },
             {
                 "role": "user",
-                "content": f"""来源: {url}\n内容:\n{raw_content[:8000]}"""
+                "content": f"""来源: {url}\n内容:\n{raw_content[:LLM_MAX_CONTENT_CHARS]}"""
             }
         ]
 
@@ -189,7 +196,7 @@ class CopywriterAgent:
     ) -> str:
         """生成结构化报告，支持竞品对比"""
 
-        if competitors and len(competitors) >= 2:
+        if competitors and len(competitors) >= MIN_COMPETITORS_FOR_COMPARISON:
             comparison_analyzer = ComparisonAnalyzer(competitors)
             comparison_section = comparison_analyzer.generate_full_comparison_section()
 
@@ -432,7 +439,7 @@ class MVPWorkflow:
             state["verification_warnings"] = verification_result["warnings"]
 
             successful_competitors = [c for c in state["competitors"] if c["status"] == "success"]
-            state["comparison_passed"] = len(successful_competitors) >= 2
+            state["comparison_passed"] = len(successful_competitors) >= MIN_COMPETITORS_FOR_COMPARISON
 
             quality_report = QualityScorer(state["competitors"]).evaluate()
             state["quality_score"] = quality_report.overall_score
@@ -469,6 +476,9 @@ class MVPWorkflow:
 
             state["sync_results"]["local_file"] = self._save_report(state["report_final"])
             state["report_id"] = Path(state["sync_results"]["local_file"]).stem
+
+            # Persist report metadata to SQLite
+            self._persist_to_sqlite(state)
 
             self._emit(
                 "artifact_ready", "report_generate", "completed",
@@ -602,7 +612,7 @@ class MVPWorkflow:
         login_url: Optional[str] = None,
         custom_selectors: Optional[Dict[str, List[str]]] = None
     ) -> List[Dict[str, Any]]:
-        """并行抓取多个竞品页面，限制并发数"""
+        """并行抓取多个竞品页面，限制并发数（动态调整）"""
         site_configs = [
             item if isinstance(item, dict) else {
                 "url": item,
@@ -614,10 +624,21 @@ class MVPWorkflow:
         if not site_configs:
             return []
 
-        semaphore = asyncio.Semaphore(min(3, len(site_configs)))
+        controller = get_concurrency_controller()
+
+        async def _adjustment_loop():
+            """后台定期调整并发数"""
+            while True:
+                await asyncio.sleep(5.0)
+                await controller.check_and_adjust()
+
+        adjustment_task = asyncio.create_task(_adjustment_loop())
 
         async def _limited_fetch(site: Dict[str, Any]) -> Dict[str, Any]:
+            semaphore = controller.get_semaphore()
             async with semaphore:
+                # Rate limiting per site
+                await asyncio.sleep(CRAWL_REQUEST_INTERVAL)
                 return await self._fetch_single_competitor(
                     site["url"],
                     site.get("auth_credentials"),
@@ -627,6 +648,12 @@ class MVPWorkflow:
 
         tasks = [_limited_fetch(site) for site in site_configs]
         results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        adjustment_task.cancel()
+        try:
+            await adjustment_task
+        except asyncio.CancelledError:
+            pass
 
         competitors = []
         for i, result in enumerate(results):
@@ -712,6 +739,80 @@ class MVPWorkflow:
             f.write(content)
 
         return filepath
+
+    def _persist_to_sqlite(self, state: Dict[str, Any]):
+        """Persist report metadata to SQLite for indexing."""
+        try:
+            from src.storage import get_report_db
+            import hashlib
+            db = get_report_db()
+
+            user_query = state.get("user_query")
+            # Compute query hash for version linking
+            query_hash = hashlib.sha256(user_query.encode()).hexdigest()[:16] if user_query else None
+
+            # Check if there's an existing report for this query
+            existing_report_id = None
+            if query_hash:
+                latest = db.get_latest_version(query_hash)
+                if latest:
+                    existing_report_id = latest["id"]
+
+            report_id = state.get("report_id")
+            parent_version_id = existing_report_id if existing_report_id and existing_report_id != report_id else None
+
+            if parent_version_id:
+                # This is a new version - use save_report_version
+                db.save_report_version(
+                    report_id=report_id,
+                    task_id=state.get("task_id"),
+                    user_query=user_query,
+                    report_content=state.get("report_final"),
+                    quality_score=state.get("quality_score"),
+                    quality_grade=state.get("quality_grade"),
+                    version_number=1,  # Will be auto-incremented by link_report_version
+                    parent_version_id=parent_version_id,
+                    metadata={
+                        "competitors": [
+                            {"name": c.get("name"), "url": c.get("url")}
+                            for c in state.get("competitors", [])
+                            if c.get("status") == "success"
+                        ],
+                        "missing_dimensions": state.get("missing_dimensions", []),
+                        "verification_score": state.get("verification_score"),
+                    },
+                )
+                db.link_report_version(query_hash, report_id, parent_version_id)
+            else:
+                # First version - save normally then link
+                db.save_report(
+                    report_id=report_id,
+                    task_id=state.get("task_id"),
+                    user_query=user_query,
+                    report_content=state.get("report_final"),
+                    quality_score=state.get("quality_score"),
+                    quality_grade=state.get("quality_grade"),
+                    metadata={
+                        "competitors": [
+                            {"name": c.get("name"), "url": c.get("url")}
+                            for c in state.get("competitors", [])
+                            if c.get("status") == "success"
+                        ],
+                        "missing_dimensions": state.get("missing_dimensions", []),
+                        "verification_score": state.get("verification_score"),
+                    },
+                )
+                if query_hash:
+                    db.link_report_version(query_hash, report_id, None)
+
+            db.save_task(
+                task_id=state.get("task_id"),
+                user_query=user_query,
+                status=state.get("status"),
+                report_id=report_id,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to persist to SQLite: {e}")
 
     async def _sync_documents(self, state: Dict[str, Any], sync_targets: List[str]) -> Dict[str, Any]:
         """同步到外部文档平台"""

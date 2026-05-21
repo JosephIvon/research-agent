@@ -1,6 +1,7 @@
 """多角色审查模块 - 从开发/测试/运营视角审查报告"""
 from typing import List, Dict, Any, Optional
 from src.llm import get_llm_client, LLMClient
+from src.config.settings import LLM_MAX_CONTENT_CHARS
 
 
 class MultiRoleReviewer:
@@ -76,7 +77,7 @@ class MultiRoleReviewer:
                 "role": "user",
                 "content": f"""请审查以下报告：
 
-{report_content[:4000]}
+{report_content[:LLM_MAX_CONTENT_CHARS]}
 
 请从{role_info['name']}的角度给出审查意见。"""
             }

@@ -5,16 +5,30 @@ services:
     ports:
       - "127.0.0.1:8888:8080"
     volumes:
-      - ./searxng-data:/etc/searxng:ro
+      - ./searxng-settings.yml:/etc/searxng/settings.yml:ro
     environment:
+      SEARXNG_SETTINGS_PATH: /etc/searxng/settings.yml
       SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://localhost:8888/}
       SEARXNG_SECRET: ${SEARXNG_SECRET:?set SEARXNG_SECRET in .env}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/"]
       interval: 30s
       timeout: 10s
       retries: 3
+    networks:
+      - research-agent-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     networks:
       - research-agent-network
 
@@ -41,7 +55,12 @@ services:
       - APP_PORT=8080
       - API_MAX_BODY_BYTES=${API_MAX_BODY_BYTES:-1048576}
       - API_AUTH_TOKEN=${API_AUTH_TOKEN:-}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
+      - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES:-1440}
       - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost,127.0.0.1,research-agent}
+      # Redis 配置
+      - REDIS_URL=redis://redis:6379/0
+      - TASK_STORE_BACKEND=${TASK_STORE_BACKEND:-redis}
       # SearXNG 配置
       - SEARXNG_URL=http://searxng:8080
       - SEARCH_PROVIDER=${SEARCH_PROVIDER:-searxng}
@@ -57,6 +76,8 @@ services:
       retries: 3
     depends_on:
       searxng:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - research-agent-network

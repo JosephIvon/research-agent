@@ -30,16 +30,15 @@ api.interceptors.response.use(
       ? detail.map(item => item.msg).join('；')
       : (detail || error.message || '请求失败')
     ElMessage.error(message)
-    if (error.response?.status === 401 && window.location.pathname !== '/settings') {
-      window.location.assign('/settings')
+    if (error.response?.status === 401 && !['/login', '/settings'].includes(window.location.pathname)) {
+      const redirect = encodeURIComponent(`${window.location.pathname}${window.location.search}`)
+      window.location.assign(`/login?redirect=${redirect}`)
     }
     return Promise.reject(error)
   }
 )
 
 export const researchApi = {
-  competitive: (params) => api.post('/research/competitive', params),
-
   followup: (params) => api.post('/research/followup', params),
 
   suggestFollowup: (params) => api.post('/research/suggest-followup', params),
@@ -77,6 +76,12 @@ export const syncApi = {
 
 export const settingsApi = {
   get: () => api.get('/settings')
+}
+
+export const authApi = {
+  register: (params) => api.post('/auth/register', params),
+  login: (params) => api.post('/auth/login', params),
+  me: () => api.get('/auth/me')
 }
 
 export default api

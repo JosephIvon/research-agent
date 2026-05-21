@@ -1,6 +1,7 @@
 """PRD生成器模块 - 从竞品分析报告生成PRD文档"""
 from typing import Optional
 from src.llm import get_llm_client, LLMClient
+from src.config.settings import LLM_MAX_CONTENT_CHARS
 
 
 class PRDGenerator:
@@ -67,7 +68,7 @@ class PRDGenerator:
                 "role": "user",
                 "content": f"""基于以下竞品分析报告，生成PRD：
 
-{report_content[:4000]}
+{report_content[:LLM_MAX_CONTENT_CHARS]}
 
 调研主题：{query}"""
             }
@@ -101,7 +102,7 @@ class PRDGenerator:
                 "role": "user",
                 "content": f"""基于以下竞品分析报告，提取功能需求：
 
-{report_content[:3000]}
+{report_content[:LLM_MAX_CONTENT_CHARS]}
 
 调研主题：{query}"""
             }

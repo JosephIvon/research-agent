@@ -1,11 +1,17 @@
 """任务状态管理和事件发布模块"""
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 from uuid import uuid4
 import asyncio
+import json
 import logging
+
+import redis.asyncio as redis
+
+from src.config.settings import REDIS_URL, TASK_STORE_BACKEND
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +57,10 @@ class TaskEvent:
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "TaskEvent":
+        return cls(**d)
+
 
 @dataclass
 class TaskArtifact:
@@ -66,6 +76,10 @@ class TaskArtifact:
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "TaskArtifact":
+        return cls(**d)
 
 
 @dataclass
@@ -116,6 +130,15 @@ class TaskState:
         }
         return result
 
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "TaskState":
+        artifacts = {k: TaskArtifact.from_dict(v) for k, v in d.get("artifacts", {}).items()}
+        events = [TaskEvent.from_dict(e) for e in d.get("events", [])]
+        d = dict(d)
+        d["artifacts"] = artifacts
+        d["events"] = events
+        return cls(**d)
+
 
 class EventEmitter:
     """事件发布器，可选callback，线程安全"""
@@ -154,10 +177,41 @@ class EventEmitter:
             q.put_nowait(event)
 
 
-class TaskStore:
+class PersistenceBackend(ABC):
+    """抽象持久化后端接口"""
+
+    @abstractmethod
+    async def create(self, task_id: str, user_query: str, deliverables: Optional[Dict[str, bool]] = None) -> Optional[TaskState]:
+        pass
+
+    @abstractmethod
+    async def get(self, task_id: str) -> Optional[TaskState]:
+        pass
+
+    @abstractmethod
+    async def update(self, task_id: str, **kwargs) -> Optional[TaskState]:
+        pass
+
+    @abstractmethod
+    async def add_event(self, task_id: str, event: TaskEvent) -> Optional[TaskState]:
+        pass
+
+    @abstractmethod
+    async def set_artifact(self, task_id: str, key: str, artifact: TaskArtifact) -> Optional[TaskState]:
+        pass
+
+    @abstractmethod
+    async def list_tasks(self) -> List[TaskState]:
+        pass
+
+    @abstractmethod
+    async def close(self):
+        pass
+
+
+class InMemoryTaskStore(PersistenceBackend):
     """
-    进程内任务存储。
-    代码结构预留替换 Redis/数据库的接口。
+    进程内任务存储（基于内存字典）。
     """
 
     def __init__(self):
@@ -170,7 +224,7 @@ class TaskStore:
         task_id: str,
         user_query: str,
         deliverables: Optional[Dict[str, bool]] = None,
-    ) -> TaskState:
+    ) -> Optional[TaskState]:
         async with self._lock:
             ts = TaskState(
                 task_id=task_id,
@@ -248,14 +302,202 @@ class TaskStore:
         emitter = self.get_or_create_emitter(task_id)
         return emitter.subscribe()
 
+    async def close(self):
+        pass
 
-_task_store: Optional[TaskStore] = None
+
+class RedisTaskStore(PersistenceBackend):
+    """
+    Redis-backed 任务存储。
+    使用 Redis hash 存储 TaskState，list 存储 events，pub/sub 事件分发。
+    """
+
+    def __init__(self, redis_url: str = REDIS_URL):
+        self._redis_url = redis_url
+        self._client: Optional[redis.Redis] = None
+        self._pubsub: Optional[redis.client.PubSub] = None
+        self._emitters: Dict[str, EventEmitter] = {}
+        self._lock = asyncio.Lock()
+        self._listener_task: Optional[asyncio.Task] = None
+        self._subscribers: Dict[str, asyncio.Queue] = {}
+
+    async def _get_client(self) -> redis.Redis:
+        if self._client is None:
+            self._client = redis.from_url(self._redis_url, decode_responses=True)
+        return self._client
+
+    def _state_key(self, task_id: str) -> str:
+        return f"task:{task_id}:state"
+
+    def _events_key(self, task_id: str) -> str:
+        return f"task:{task_id}:events"
+
+    def _artifacts_key(self, task_id: str) -> str:
+        return f"task:{task_id}:artifacts"
+
+    def _channel(self, task_id: str) -> str:
+        return f"task_events:{task_id}"
+
+    def _task_index_key(self) -> str:
+        return "task:index"
+
+    async def create(
+        self,
+        task_id: str,
+        user_query: str,
+        deliverables: Optional[Dict[str, bool]] = None,
+    ) -> Optional[TaskState]:
+        client = await self._get_client()
+        async with self._lock:
+            ts = TaskState(
+                task_id=task_id,
+                status=TaskStatus.PENDING,
+                created_at=datetime.now().isoformat(timespec="seconds"),
+                updated_at=datetime.now().isoformat(timespec="seconds"),
+                user_query=user_query,
+                deliverables=deliverables or {"report": True, "prd": False},
+            )
+            data = json.dumps(ts.to_dict())
+            pipe = client.pipeline()
+            pipe.hset(self._state_key(task_id), mapping={"data": data})
+            pipe.sadd(self._task_index_key(), task_id)
+            await pipe.execute()
+            return ts
+
+    async def get(self, task_id: str) -> Optional[TaskState]:
+        client = await self._get_client()
+        data = await client.hget(self._state_key(task_id), "data")
+        if not data:
+            return None
+        return TaskState.from_dict(json.loads(data))
+
+    async def update(self, task_id: str, **kwargs) -> Optional[TaskState]:
+        ts = await self.get(task_id)
+        if not ts:
+            return None
+        if "status" in kwargs and kwargs["status"] is not None:
+            ts.status = TaskStatus(kwargs["status"])
+        if "current_stage" in kwargs:
+            ts.current_stage = kwargs["current_stage"]
+        if "current_message" in kwargs:
+            ts.current_message = kwargs["current_message"]
+        if "updated_at" not in kwargs:
+            ts.updated_at = datetime.now().isoformat(timespec="seconds")
+        if "report_id" in kwargs:
+            ts.report_id = kwargs["report_id"]
+        if "errors" in kwargs:
+            ts.errors = kwargs["errors"]
+        if "crawl_results" in kwargs:
+            ts.crawl_results = kwargs["crawl_results"]
+        if "quality_score" in kwargs:
+            ts.quality_score = kwargs["quality_score"]
+        if "quality_grade" in kwargs:
+            ts.quality_grade = kwargs["quality_grade"]
+        if "missing_dimensions" in kwargs:
+            ts.missing_dimensions = kwargs["missing_dimensions"] or []
+        client = await self._get_client()
+        await client.hset(self._state_key(task_id), "data", json.dumps(ts.to_dict()))
+        return ts
+
+    async def add_event(self, task_id: str, event: TaskEvent) -> Optional[TaskState]:
+        ts = await self.get(task_id)
+        if not ts:
+            return None
+        ts.events.append(event)
+        ts.updated_at = datetime.now().isoformat(timespec="seconds")
+        client = await self._get_client()
+        pipe = client.pipeline()
+        pipe.hset(self._state_key(task_id), "data", json.dumps(ts.to_dict()))
+        pipe.rpush(self._events_key(task_id), json.dumps(event.to_dict()))
+        await pipe.execute()
+        await client.publish(self._channel(task_id), json.dumps(event.to_dict()))
+        return ts
+
+    async def set_artifact(self, task_id: str, key: str, artifact: TaskArtifact) -> Optional[TaskState]:
+        ts = await self.get(task_id)
+        if not ts:
+            return None
+        ts.artifacts[key] = artifact
+        ts.updated_at = datetime.now().isoformat(timespec="seconds")
+        client = await self._get_client()
+        await client.hset(self._state_key(task_id), "data", json.dumps(ts.to_dict()))
+        return ts
+
+    async def list_tasks(self) -> List[TaskState]:
+        client = await self._get_client()
+        task_ids = await client.smembers(self._task_index_key())
+        tasks = []
+        for task_id in task_ids:
+            ts = await self.get(task_id)
+            if ts:
+                tasks.append(ts)
+        return tasks
+
+    def get_or_create_emitter(self, task_id: str) -> EventEmitter:
+        if task_id not in self._emitters:
+            self._emitters[task_id] = EventEmitter()
+        return self._emitters[task_id]
+
+    def subscribe_task(self, task_id: str) -> asyncio.Queue:
+        emitter = self.get_or_create_emitter(task_id)
+        return emitter.subscribe()
+
+    async def _start_listener(self):
+        """Start background listener for pubsub messages."""
+        if self._listener_task and not self._listener_task.done():
+            return
+
+        async def listener():
+            client = await self._get_client()
+            pubsub = client.pubsub()
+            await pubsub.psubscribe("task_events:*")
+            try:
+                async for message in pubsub.listen():
+                    if message["type"] in {"message", "pmessage"}:
+                        try:
+                            data = json.loads(message["data"])
+                            event = TaskEvent.from_dict(data)
+                            task_id = event.task_id
+                            if task_id in self._emitters:
+                                await self._emitters[task_id].emit(event)
+                        except Exception as e:
+                            logger.warning(f"Failed to process pubsub message: {e}")
+            except asyncio.CancelledError:
+                pass
+            finally:
+                await pubsub.punsubscribe("task_events:*")
+                await pubsub.close()
+
+        self._listener_task = asyncio.create_task(listener())
+
+    async def close(self):
+        if self._listener_task:
+            self._listener_task.cancel()
+            try:
+                await self._listener_task
+            except asyncio.CancelledError:
+                pass
+        if self._client:
+            await self._client.close()
+            self._client = None
 
 
-def get_task_store() -> TaskStore:
+_task_store: Optional[PersistenceBackend] = None
+
+
+def get_task_store() -> PersistenceBackend:
     global _task_store
     if _task_store is None:
-        _task_store = TaskStore()
+        if TASK_STORE_BACKEND == "redis":
+            _task_store = RedisTaskStore()
+        else:
+            _task_store = InMemoryTaskStore()
+    if isinstance(_task_store, RedisTaskStore):
+        try:
+            if not _task_store._listener_task or _task_store._listener_task.done():
+                asyncio.create_task(_task_store._start_listener())
+        except RuntimeError:
+            logger.warning("Redis task listener will start when get_task_store is called inside an event loop")
     return _task_store
 
 

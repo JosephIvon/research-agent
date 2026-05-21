@@ -4,7 +4,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 from typing import List, Optional, Dict
 from urllib.parse import urljoin, urlparse, urlunparse
-from src.config.settings import TIMEOUT_SECONDS, MAX_RETRIES
+from src.config.settings import TIMEOUT_SECONDS, MAX_RETRIES, CRAWL_REQUEST_INTERVAL
 from src.security.url_validation import validate_fetch_url
 import asyncio
 
@@ -12,10 +12,10 @@ import asyncio
 class WebCrawler:
     """网页内容抓取工具"""
 
-    def __init__(self, request_interval: float = 1.0):
+    def __init__(self, request_interval: float = None):
         self.browser = None
         self.context = None
-        self.request_interval = request_interval
+        self.request_interval = request_interval if request_interval is not None else CRAWL_REQUEST_INTERVAL
         self.default_selectors = {
             "username": [
                 'input[name="username"]', 'input[name="user"]', 'input[name="login"]',
