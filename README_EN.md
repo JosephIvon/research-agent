@@ -19,29 +19,68 @@ Helps product managers and market researchers quickly complete competitive analy
 | 🔄 Multi-role Review | Development/testing/operations perspective review |
 | 📤 Doc Sync | One-click sync to Feishu/Tencent Docs |
 
+## Architecture
+
+```text
+Vue 3 + Element Plus
+        |
+        | REST / SSE
+        v
+FastAPI server
+        |
+        +-- Redis TaskStore
+        +-- SQLite report storage
+        +-- SearXNG / Bing / SerpAPI search
+        +-- Playwright crawler
+        +-- LLM client with retry, timeout and circuit breaker
+        +-- Export and document sync tools
+```
+
+## Workflow
+
+1. User signs up or logs in
+2. User enters research goal, target sites, and optional credentials
+3. Backend creates async task; frontend subscribes to SSE events
+4. System executes: search → crawl → extract → analyze → generate report
+5. Result page shows report, PRD, source status, follow-up, review, export, and sync
+
+The UI shows auditable workflow stages and source status, not private model reasoning.
+
 ## Quick Start
 
 ### Option 1: Docker (Recommended)
 
 ```bash
-git clone https://github.com/yourusername/research-agent.git
+git clone https://github.com/JosephIvon/research-agent.git
 cd research-agent
 cp .env.example .env
-# Edit .env, fill in MINIMAX_API_KEY, and replace SEARXNG_SECRET
-docker compose up -d
-# Visit http://localhost:3000
+# Edit .env: set at least MINIMAX_API_KEY, JWT_SECRET_KEY, and SEARXNG_SECRET
+docker compose up -d --build
 ```
+
+Open:
+
+- Frontend: http://localhost:3000
+- API health check: http://localhost:8080/health
+- SearXNG: http://localhost:8888
 
 ### Option 2: Local Development
 
 ```bash
 # Backend
-pip install uv && uv sync
-cp .env.example .env
+uv sync
 uv run python server.py
 
 # Frontend (new terminal)
-cd frontend && yarn install && yarn dev
+cd frontend
+yarn install --frozen-lockfile
+yarn dev
+```
+
+For local Redis and SearXNG:
+
+```bash
+docker compose up -d redis searxng
 ```
 
 ## Supported LLM Providers
@@ -69,40 +108,119 @@ Switch: `LLM_PROVIDER=deepseek`
 | Variable | Description |
 |----------|-------------|
 | `MINIMAX_API_KEY` | Default LLM API key |
-| `SEARXNG_SECRET` | Production SearXNG secret, required by Docker startup |
+| `JWT_SECRET_KEY` | JWT signing secret; **required in production** |
+| `SEARXNG_SECRET` | SearXNG secret; **required in production** |
+| `SEARCH_PROVIDER` | Search provider, defaults to `searxng` |
+| `REDIS_URL` | Redis connection URL |
+| `TASK_STORE_BACKEND` | Task storage backend, `redis` in Docker |
+| `ALLOWED_HOSTS` | Trusted backend hosts |
+| `CORS_ALLOWED_ORIGINS` | Allowed frontend origins |
 | `API_AUTH_TOKEN` | Optional API Bearer token, recommended for public deployments |
-| `SEARCH_PROVIDER` | Defaults to `searxng`; can switch to `bing` or `serpapi` |
+| `LLM_CONNECT_TIMEOUT` | LLM connection timeout (default: 10s) |
+| `LLM_READ_TIMEOUT` | LLM read timeout (default: 120s) |
+
+## Common Commands
+
+```bash
+# Backend tests
+uv run pytest tests/ -q --ignore=tests/e2e/
+
+# Frontend tests and build
+cd frontend
+yarn test
+yarn build
+
+# Validate Docker Compose config
+docker compose --env-file .env.example config
+```
+
+E2E tests require a running backend:
+
+```bash
+E2E_API_URL=http://localhost:8080 uv run pytest tests/e2e/ -q
+```
+
+Full external search and LLM path requires real credentials. Enable with `E2E_RUN_FULL_FLOW=1`.
 
 ## Project Structure
 
 ```
 research-agent/
-├── frontend/            # Vue 3 Frontend UI
+├── frontend/              # Vue 3 Frontend UI
 ├── src/
-│   ├── llm/            # Multi-LLM Provider Abstraction
-│   ├── crawler/        # Playwright Web Crawler
-│   ├── tools/          # Search, Scoring, Follow-up, PRD
-│   ├── sync/           # Feishu/Tencent Doc Sync
-│   └── workflow/       # 2-Agent Workflow
+│   ├── auth/             # JWT authentication & user management
+│   ├── config/           # Configuration management
+│   ├── crawler/          # Playwright web crawler
+│   ├── llm/              # Multi-LLM provider abstraction
+│   ├── logging/          # Audit logging
+│   ├── storage/          # SQLite report storage
+│   ├── sync/             # Feishu/Tencent Doc sync
+│   ├── tools/            # Search, scoring, follow-up, PRD
+│   └── workflow/         # Research workflow orchestration
+├── tests/                # Test suite
 ├── docker-compose.yml
-└── LICENSE
+└── README.md
 ```
 
 ## API Endpoints
 
-| Endpoint | Description |
-|----------|-------------|
-| POST /research/competitive | Competitive analysis |
-| POST /research/followup | Follow-up questions |
-| POST /research/prd | PRD generation |
-| POST /research/prd-from-query | All-in-one (research→PRD) |
-| GET /research/history | Report history list |
-| GET/DELETE /research/history/{id} | Read or delete a history report |
-| GET /settings | Runtime configuration status |
-| GET /sync/status | Doc sync configuration status |
-| POST /sync/feishu | Sync to Feishu Docs |
-| POST /sync/tencent | Sync to Tencent Docs |
-| GET /health | Health check |
+### Authentication
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/auth/register` | POST | Register and return access token |
+| `/auth/login` | POST | Login and return access token |
+| `/auth/me` | GET | Get current user info |
+
+### Research
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/research/tasks` | POST | Create async research task |
+| `/research/tasks/{task_id}` | GET | Get task status |
+| `/research/tasks/{task_id}/events` | GET | SSE task event stream |
+| `/research/competitive` | POST | Synchronous competitive analysis |
+| `/research/followup` | POST | Follow-up questions |
+| `/research/prd` | POST | PRD generation |
+| `/research/prd-from-query` | POST | All-in-one (research→PRD) |
+| `/research/history` | GET | List saved reports |
+| `/research/history/{id}` | GET | Get report by ID |
+| `/research/history/{id}` | DELETE | Delete report |
+| `/research/compare/{id1}/{id2}` | GET | Compare report versions |
+| `/research/versions/{id}` | GET | Get report version chain |
+| `/research/export` | POST | Export PDF, Word or HTML |
+
+### Settings & Sync
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/settings` | GET | Get runtime settings summary |
+| `/sync/feishu` | POST | Sync to Feishu Docs |
+| `/sync/tencent` | POST | Sync to Tencent Docs |
+
+### Monitoring
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/llm/status` | GET | LLM provider circuit breaker status |
+| `/llm/circuit/reset` | POST | Reset LLM circuit breaker |
+
+## Production Checklist
+
+- [ ] Replace every placeholder secret in `.env`, especially `JWT_SECRET_KEY` and `SEARXNG_SECRET`
+- [ ] Set production `ALLOWED_HOSTS` and `CORS_ALLOWED_ORIGINS`
+- [ ] Persist and back up Redis, SQLite data and generated report files
+- [ ] Put the API behind HTTPS and a reverse proxy; avoid exposing raw backend ports
+- [ ] Run tests, frontend build and Compose config validation before release
+- [ ] Configure rate limiting appropriate for your traffic
+
+## Documentation
+
+- [README.md](./README.md) - Chinese documentation (中文文档)
+- This file - English documentation
+
+> **Note**: Both documentation files are maintained in sync. Last updated: 2026-05-21.
 
 ## License
 
