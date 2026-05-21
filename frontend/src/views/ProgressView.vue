@@ -199,10 +199,6 @@ async function executeRun() {
       onError: () => syncRun()
     })
     syncRun()
-    // In sync mode, finalRun has report_id. In SSE mode, report_id is set via store update.
-    if (result?.report_id) {
-      setTimeout(openReport, 900)
-    }
   } catch (e) {
     syncRun()
     ElMessage.error(e?.message || '任务执行失败')

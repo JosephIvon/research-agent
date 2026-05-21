@@ -17,6 +17,8 @@ output/
 
 frontend/node_modules/
 frontend/dist/
+frontend/.yarn-verify-node_modules/
+frontend/.empty-delete/
 
 .DS_Store
 Thumbs.db

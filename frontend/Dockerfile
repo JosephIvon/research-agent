@@ -5,7 +5,7 @@ WORKDIR /app
 COPY package.json yarn.lock ./
 RUN corepack enable \
   && corepack prepare yarn@1.22.22 --activate \
-  && yarn install --frozen-lockfile
+  && yarn install --frozen-lockfile --network-timeout 60000
 
 COPY . .
 RUN yarn build

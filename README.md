@@ -1,147 +1,298 @@
-# 智能调研助手 (Research Agent)
+# Research Agent
 
-AI 驱动的竞品调研工具。输入自然语言，自动完成搜索、抓取、分析、报告全流程。
+智能竞品调研助手 / AI competitive research assistant.
 
-## 一句话定位
+---
 
-帮助产品经理、市场调研人员快速完成竞品分析，无需编写代码，5分钟生成专业报告。
+## 中文
 
-## 核心功能
+### 项目定位
 
-| 功能 | 说明 |
-|------|------|
-| 🔍 智能搜索 | 支持 SearXNG/Bing/SerpAPI，自动检索竞品信息 |
-| 🕷️ 网页抓取 | 登录场景、内容提取、SSRF 防护 |
-| 📊 竞品对比 | 多产品横向对比、功能/定价/用户画像 |
-| ✅ 质量评估 | 数据质量评分 (A-F)，缺失维度标注 |
-| 💬 追问扩展 | 基于报告追问，深入特定维度 |
-| 📄 PRD 生成 | 一键从竞品报告生成产品需求文档 |
-| 🔄 多角色审查 | 开发/测试/运营视角评审 |
-| 📤 文档同步 | 飞书、腾讯文档一键同步 |
+Research Agent 面向产品、市场和创业团队。你输入调研问题、可选竞品网站和登录凭据，系统自动完成搜索、抓取、分析、报告生成和 PRD 生成，并在前端展示可审计的任务进度。
 
-## 产品体验
+它解决的是：非技术人员想快速理解竞品、提炼产品机会、形成可交付文档，但不想手工搜索、截图、整理表格和写长报告。
 
-- 首页只需要填写调研问题、竞品网站和必要的登录凭据，默认生成竞品报告和 PRD。
-- 提交后进入“AI 调研驾驶舱”，展示理解需求、确认范围、搜索、登录抓取、信息提取、报告生成、PRD 生成等用户可理解的过程记录。
-- 任务完成后进入“结果中心”，在同一页面查看竞品报告、PRD、来源状态、追问、多角色审查和同步入口。
-- 系统不会展示模型私密思考链，但会展示可审计的工作阶段、来源状态和数据质量提示。
+### 核心能力
 
-## 快速开始
+- 竞品调研：支持自然语言需求、多个竞品网站、每站独立登录凭据。
+- 实时进度：任务队列 + SSE，展示需求理解、搜索、抓取、提取、报告和 PRD 生成阶段。
+- 报告交付：竞品报告、PRD、追问、多角色审查、报告版本对比。
+- 数据来源：默认 SearXNG，支持 Bing/SerpAPI 降级；Playwright 抓取网页内容。
+- 安全基线：JWT 登录、Legacy Token 兼容、CORS/Host 收紧、速率限制、SSRF 防护、审计日志。
+- 持久化：Redis 任务状态，SQLite 报告与版本数据，本地输出目录。
+- 导出同步：PDF、Word、HTML 导出；飞书与腾讯文档同步入口。
 
-### 方式一：Docker 一键启动（推荐）
+### 技术架构
 
-```bash
-git clone https://github.com/yourusername/research-agent.git
-cd research-agent
-cp .env.example .env
-# 编辑 .env，填入 MINIMAX_API_KEY，并替换 SEARXNG_SECRET
-docker compose up -d
-# 访问 http://localhost:3000
+```text
+Vue 3 + Element Plus
+        |
+        | REST / SSE
+        v
+FastAPI server
+        |
+        +-- Redis TaskStore
+        +-- SQLite report storage
+        +-- SearXNG / Bing / SerpAPI search
+        +-- Playwright crawler
+        +-- LLM client with retry, timeout and circuit breaker
+        +-- Export and document sync tools
 ```
 
-### 方式二：本地开发
+### 业务流程
+
+1. 用户注册或登录。
+2. 在首页输入调研目标，可补充多个竞品网站和账号密码。
+3. 后端创建异步任务，前端通过 SSE 订阅进度。
+4. 系统执行搜索、登录抓取、信息提取、竞品分析和 PRD 生成。
+5. 任务完成后进入结果页，查看报告、PRD、来源状态、追问、审查、导出和同步。
+
+系统展示的是可审计的工作阶段和来源状态，不展示模型私密思考链。
+
+### 快速开始
+
+#### Docker 启动
+
+```bash
+cp .env.example .env
+# 编辑 .env：至少设置 MINIMAX_API_KEY、JWT_SECRET_KEY、SEARXNG_SECRET
+docker compose up -d --build
+```
+
+访问：
+
+- 前端：http://localhost:3000
+- 后端健康检查：http://localhost:8080/health
+- SearXNG：http://localhost:8888
+
+#### 本地开发
 
 ```bash
 # 后端
-pip install uv && uv sync
-cp .env.example .env
+uv sync
 uv run python server.py
 
-# 前端（新窗口）
-cd frontend && yarn install && yarn dev
+# 前端
+cd frontend
+yarn install --frozen-lockfile
+yarn dev
 ```
 
-## 支持的 LLM 提供商
+本地开发如需 Redis 和 SearXNG：
 
-| 提供商 | 模型 | 说明 |
-|--------|------|------|
-| Minimax | MiniMax-M2.5 | 默认 |
-| DeepSeek | deepseek-chat | 可选 |
-| 豆包 | Doubao-3.5 | 可选 |
-| 智谱 GLM | glm-4 | 可选 |
-| OpenAI | gpt-4o | 可选 |
+```bash
+docker compose up -d redis searxng
+```
 
-切换方式：`LLM_PROVIDER=deepseek`
-
-## 支持的搜索提供商
-
-| 提供商 | 说明 |
-|--------|------|
-| SearXNG | 默认，免费自托管 |
-| Bing | 降级方案，无需配置 |
-| SerpAPI | 付费 SaaS |
-
-## 关键配置
+### 关键配置
 
 | 变量 | 说明 |
-|------|------|
+| --- | --- |
 | `MINIMAX_API_KEY` | 默认 LLM 调用密钥 |
-| `SEARXNG_SECRET` | SearXNG 生产密钥，Docker 启动必填 |
-| `API_AUTH_TOKEN` | 可选 API Bearer Token，公网部署建议开启 |
-| `SEARCH_PROVIDER` | 默认 `searxng`，可切换 `bing` 或 `serpapi` |
+| `JWT_SECRET_KEY` | JWT 签名密钥，生产环境必须替换 |
+| `SEARXNG_SECRET` | SearXNG 服务密钥，生产环境必须替换 |
+| `SEARCH_PROVIDER` | 搜索提供方，默认 `searxng` |
+| `REDIS_URL` | Redis 连接地址 |
+| `TASK_STORE_BACKEND` | 任务存储后端，Docker 默认 `redis` |
+| `ALLOWED_HOSTS` | 后端可信 Host |
+| `CORS_ALLOWED_ORIGINS` | 允许访问 API 的前端来源 |
 
-## 项目结构
+### 常用命令
 
+```bash
+# 后端测试
+uv run pytest tests/ -q --ignore=tests/e2e/
+
+# 前端测试与构建
+cd frontend
+yarn test
+yarn build
+
+# 检查 Docker Compose 配置
+docker compose --env-file .env.example config
 ```
-research-agent/
-├── frontend/            # Vue 3 前端 UI
-├── src/
-│   ├── llm/            # 多 LLM 提供商抽象层
-│   ├── crawler/        # Playwright 网页抓取
-│   ├── tools/          # 搜索、评分、追问、PRD 生成
-│   ├── sync/           # 飞书/腾讯文档同步
-│   └── workflow/       # 2-Agent 工作流
-├── docker-compose.yml
-└── LICENSE
+
+端到端测试需要正在运行的后端：
+
+```bash
+E2E_API_URL=http://localhost:8080 uv run pytest tests/e2e/ -q
 ```
 
-## API 接口
+完整外部搜索和 LLM 链路依赖真实密钥，可设置 `E2E_RUN_FULL_FLOW=1` 手动开启。
 
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/research/competitive` | POST | 竞品分析 |
-| `/research/followup` | POST | 追问 |
-| `/research/prd` | POST | PRD 生成 |
-| `/research/prd-from-query` | POST | 一体化（调研→PRD） |
+### 主要 API
+
+| Endpoint | Method | 说明 |
+| --- | --- | --- |
+| `/auth/register` | POST | 注册并返回访问令牌 |
+| `/auth/login` | POST | 登录并返回访问令牌 |
+| `/research/tasks` | POST | 创建异步调研任务 |
+| `/research/tasks/{task_id}` | GET | 查询任务状态 |
+| `/research/tasks/{task_id}/events` | GET | SSE 任务事件流 |
+| `/research/competitive` | POST | 同步竞品分析接口 |
+| `/research/prd-from-query` | POST | 调研并生成 PRD |
 | `/research/history` | GET | 历史报告列表 |
-| `/research/history/{id}` | GET/DELETE | 读取或删除历史报告 |
-| `/settings` | GET | 运行配置状态 |
-| `/sync/status` | GET | 文档同步配置状态 |
+| `/research/export` | POST | 导出 PDF、Word 或 HTML |
+| `/research/compare/{id1}/{id2}` | GET | 报告版本对比 |
+| `/settings` | GET | 运行配置摘要 |
 | `/sync/feishu` | POST | 同步到飞书文档 |
 | `/sync/tencent` | POST | 同步到腾讯文档 |
 | `/health` | GET | 健康检查 |
 
-### 竞品分析请求体
+### 上线检查
 
-`/research/competitive` 和 `/research/prd-from-query` 支持两种指定竞品的方式：
-
-- `urls`: 兼容旧调用方，只传公开页面 URL；若同时传全局 `login_url` 和 `auth_credentials`，会作为这些 URL 的共享登录凭据。
-- `target_sites`: 推荐前端和新调用方使用。每个竞品网站可以单独声明 `url`、`login_url` 和 `auth_credentials`，用于多个需要不同账号密码的网站对比。
-
-```json
-{
-  "query": "我想做一个多模态 AI 接口聚合平台，现在需要分析竞品",
-  "enable_search": true,
-  "target_sites": [
-    {
-      "url": "https://example-a.com/product",
-      "login_url": "https://example-a.com/login",
-      "auth_credentials": {
-        "username": "demo@example.com",
-        "password": "example-password"
-      }
-    },
-    {
-      "url": "https://example-b.com/pricing"
-    }
-  ]
-}
-```
-
-## 许可证
-
-MIT - 允许商用、修改、私有闭源
+- 替换 `.env` 中所有占位密钥，尤其是 `JWT_SECRET_KEY` 和 `SEARXNG_SECRET`。
+- 配置真实域名下的 `ALLOWED_HOSTS` 和 `CORS_ALLOWED_ORIGINS`。
+- 确认 Redis、SQLite 输出目录和报告文件目录有持久化备份。
+- 使用 HTTPS 和反向代理，不让后端 API 直接暴露到公网裸端口。
+- 运行测试、前端构建和 Compose 配置检查。
 
 ---
 
-**有问题？** 欢迎提交 Issue 或 Pull Request
+## English
+
+### What It Does
+
+Research Agent is built for product, marketing and startup teams. Give it a research question, optional competitor URLs and login credentials, and it will search, crawl, analyze, generate a competitive report and produce a PRD with visible task progress.
+
+It helps non-technical users turn scattered competitor information into useful product decisions and deliverable documents.
+
+### Core Features
+
+- Competitive research with natural-language input, multiple target sites and per-site credentials.
+- Real-time task progress through a queue and SSE events.
+- Report, PRD, follow-up questions, multi-role review and version comparison.
+- Search through SearXNG by default, with Bing/SerpAPI fallback support.
+- Web crawling through Playwright.
+- Security baseline with JWT auth, legacy token compatibility, CORS/Host restrictions, rate limiting, SSRF protection and audit logs.
+- Redis-backed task state and SQLite-backed report/version storage.
+- PDF, Word and HTML export, plus Feishu and Tencent Docs sync entry points.
+
+### Architecture
+
+```text
+Vue 3 + Element Plus
+        |
+        | REST / SSE
+        v
+FastAPI server
+        |
+        +-- Redis TaskStore
+        +-- SQLite report storage
+        +-- SearXNG / Bing / SerpAPI search
+        +-- Playwright crawler
+        +-- LLM client with retry, timeout and circuit breaker
+        +-- Export and document sync tools
+```
+
+### Workflow
+
+1. The user signs up or logs in.
+2. The user enters a research goal, target sites and optional credentials.
+3. The backend creates an async task; the frontend subscribes to SSE events.
+4. The system searches, crawls, extracts, analyzes and generates report artifacts.
+5. The result page shows the report, PRD, source status, follow-up, review, export and sync actions.
+
+The UI shows auditable workflow stages and source status, not private model reasoning.
+
+### Quick Start
+
+#### Docker
+
+```bash
+cp .env.example .env
+# Edit .env: set at least MINIMAX_API_KEY, JWT_SECRET_KEY and SEARXNG_SECRET
+docker compose up -d --build
+```
+
+Open:
+
+- Frontend: http://localhost:3000
+- API health check: http://localhost:8080/health
+- SearXNG: http://localhost:8888
+
+#### Local Development
+
+```bash
+# Backend
+uv sync
+uv run python server.py
+
+# Frontend
+cd frontend
+yarn install --frozen-lockfile
+yarn dev
+```
+
+For local Redis and SearXNG:
+
+```bash
+docker compose up -d redis searxng
+```
+
+### Key Configuration
+
+| Variable | Description |
+| --- | --- |
+| `MINIMAX_API_KEY` | Default LLM API key |
+| `JWT_SECRET_KEY` | JWT signing secret; required in production |
+| `SEARXNG_SECRET` | SearXNG secret; required in production |
+| `SEARCH_PROVIDER` | Search provider, defaults to `searxng` |
+| `REDIS_URL` | Redis connection URL |
+| `TASK_STORE_BACKEND` | Task storage backend, `redis` in Docker |
+| `ALLOWED_HOSTS` | Trusted backend hosts |
+| `CORS_ALLOWED_ORIGINS` | Allowed frontend origins |
+
+### Common Commands
+
+```bash
+# Backend tests
+uv run pytest tests/ -q --ignore=tests/e2e/
+
+# Frontend tests and build
+cd frontend
+yarn test
+yarn build
+
+# Validate Docker Compose config
+docker compose --env-file .env.example config
+```
+
+E2E tests require a running backend:
+
+```bash
+E2E_API_URL=http://localhost:8080 uv run pytest tests/e2e/ -q
+```
+
+The full external search and LLM path requires real credentials. Enable it manually with `E2E_RUN_FULL_FLOW=1`.
+
+### Main API
+
+| Endpoint | Method | Purpose |
+| --- | --- | --- |
+| `/auth/register` | POST | Register and return an access token |
+| `/auth/login` | POST | Log in and return an access token |
+| `/research/tasks` | POST | Create an async research task |
+| `/research/tasks/{task_id}` | GET | Get task status |
+| `/research/tasks/{task_id}/events` | GET | Stream task events through SSE |
+| `/research/competitive` | POST | Run synchronous competitive research |
+| `/research/prd-from-query` | POST | Research and generate a PRD |
+| `/research/history` | GET | List saved reports |
+| `/research/export` | POST | Export PDF, Word or HTML |
+| `/research/compare/{id1}/{id2}` | GET | Compare report versions |
+| `/settings` | GET | Get runtime settings summary |
+| `/sync/feishu` | POST | Sync to Feishu Docs |
+| `/sync/tencent` | POST | Sync to Tencent Docs |
+| `/health` | GET | Health check |
+
+### Production Checklist
+
+- Replace every placeholder secret in `.env`, especially `JWT_SECRET_KEY` and `SEARXNG_SECRET`.
+- Set production `ALLOWED_HOSTS` and `CORS_ALLOWED_ORIGINS`.
+- Persist and back up Redis, SQLite data and generated report files.
+- Put the API behind HTTPS and a reverse proxy; avoid exposing raw backend ports.
+- Run tests, frontend build and Compose config validation before release.
+
+## License
+
+MIT

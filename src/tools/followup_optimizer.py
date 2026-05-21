@@ -1,6 +1,7 @@
 """追问优化模块 - 支持生成报告后追问补充特定维度分析"""
 from typing import List, Dict, Any, Optional
 from src.llm import get_llm_client, LLMClient
+from src.config.settings import LLM_MAX_CONTENT_CHARS
 
 
 class FollowUpOptimizer:
@@ -71,7 +72,7 @@ class FollowUpOptimizer:
                 "content": f"""原始调研主题：{original_query}
 
 已有报告内容：
-{report_content[:3000]}
+{report_content[:LLM_MAX_CONTENT_CHARS]}
 
 {'数据质量评估：' + str(quality_report) if quality_report else ''}
 
@@ -126,7 +127,7 @@ class FollowUpOptimizer:
                 "content": f"""原始调研主题：{original_query}
 
 已有报告：
-{report_content[:3000]}
+{report_content[:LLM_MAX_CONTENT_CHARS]}
 
 请深入扩展"{dimension_desc}"这一维度。"""
             }
@@ -156,7 +157,7 @@ class FollowUpOptimizer:
                 "content": f"""原始调研主题：{original_query}
 
 已有报告：
-{report_content[:3000]}
+{report_content[:LLM_MAX_CONTENT_CHARS]}
 
 追问问题：{question}
 

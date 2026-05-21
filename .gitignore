@@ -31,6 +31,9 @@ sdist/
 var/
 wheels/
 *.egg-info/
+*.db
+*.sqlite3
+*.sqlite
 .installed.cfg
 *.egg
 .pytest_cache/
@@ -48,6 +51,8 @@ ENV/
 
 # ============== Node.js / Frontend ==============
 node_modules/
+frontend/.yarn-verify-node_modules/
+frontend/.empty-delete/
 package-lock.json
 yarn.lock
 !frontend/yarn.lock
@@ -105,9 +110,6 @@ deploy-config.sh
 *.p12
 secrets/
 credentials/
-
-# ============== SearXNG ==============
-searxng-settings.yml
 
 # ============== Research Agent Specific ==============
 # Crawler cache

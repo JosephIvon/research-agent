@@ -1,0 +1,37 @@
+use_default_settings: true
+
+general:
+  instance_name: "Research Agent Search"
+
+search:
+  safe_search: 1
+  autocomplete: ""
+  default_lang: "zh-CN"
+  formats:
+    - html
+    - json
+
+engines:
+  - name: google
+    engine: google
+    weight: 2
+  - name: bing
+    engine: bing
+    weight: 1
+  - name: duckduckgo
+    engine: duckduckgo
+    weight: 1
+  - name: wikipedia
+    engine: wikipedia
+    weight: 1
+
+outgoing:
+  request_timeout: 10
+  max_request_timeout: 15
+  useragent_suffix: "research-agent"
+
+server:
+  # docker-compose requires SEARXNG_SECRET and the official image reads it at runtime.
+  secret_key: "CHANGE_ME_SET_SEARXNG_SECRET_IN_ENV"
+  limiter: false
+  image_proxy: false

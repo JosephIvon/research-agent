@@ -11,6 +11,141 @@ function normalizeBearerToken(token) {
   return token.startsWith('Bearer ') ? token : `Bearer ${token}`
 }
 
+/**
+ * Creates an EventSource-like interface that works across all browsers.
+ * Uses native EventSource if available and supports fetch+ReadableStream,
+ * otherwise falls back to XMLHttpRequest-based polling.
+ */
+export function createEventSource(url, options = {}) {
+  const { headers = {}, withCredentials = false, onopen, onmessage, onerror } = options;
+
+  // Check if native EventSource with SSE support is available
+  const hasNativeSSE = typeof EventSource !== 'undefined' &&
+    typeof ReadableStream !== 'undefined' &&
+    typeof fetch === 'function';
+
+  if (hasNativeSSE) {
+    // Use native EventSource for modern browsers
+    return createNativeEventSource(url, headers, onopen, onmessage, onerror);
+  } else {
+    // Fallback to polling for older browsers (Safari < 15, older mobile browsers)
+    return createPolyfillEventSource(url, headers, withCredentials, onmessage, onerror);
+  }
+}
+
+function createNativeEventSource(url, headers, onopen, onmessage, onerror) {
+  // Current implementation - wrap in EventSource-like interface
+  let eventSource;
+  let reconnectAttempts = 0;
+  const maxReconnectAttempts = 5;
+  const reconnectDelay = 3000;
+
+  function connect() {
+    eventSource = new EventSource(url, { withCredentials: false });
+
+    eventSource.onopen = () => {
+      reconnectAttempts = 0;
+      if (onopen) onopen();
+    };
+
+    eventSource.onmessage = (event) => {
+      if (onmessage) onmessage(event.data, event);
+    };
+
+    eventSource.onerror = (error) => {
+      eventSource.close();
+      if (onerror) onerror(error);
+
+      if (reconnectAttempts < maxReconnectAttempts) {
+        reconnectAttempts++;
+        globalThis.setTimeout(connect, reconnectDelay * reconnectAttempts);
+      }
+    };
+  }
+
+  connect();
+
+  return {
+    close: () => eventSource?.close(),
+    url,
+  };
+}
+
+function createPolyfillEventSource(url, headers, withCredentials, onmessage, onerror) {
+  // Simple polling-based polyfill
+  // Polls the same SSE endpoint every 1 second
+  let lastEventId = null;
+  let intervalId = null;
+  let running = true;
+  const pollInterval = 1000; // 1 second
+
+  async function poll() {
+    if (!running) return;
+
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.setRequestHeader('Accept', 'text/event-stream');
+      xhr.setRequestHeader('Cache-Control', 'no-cache');
+      if (lastEventId) {
+        xhr.setRequestHeader('Last-Event-ID', lastEventId);
+      }
+      if (withCredentials) {
+        xhr.withCredentials = true;
+      }
+
+      Object.entries(headers).forEach(([key, value]) => {
+        xhr.setRequestHeader(key, value);
+      });
+
+      xhr.onprogress = () => {
+        if (!running) return;
+        const lines = xhr.responseText.split('\n');
+        let eventType = null;
+        let data = [];
+
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            eventType = line.slice(7);
+          } else if (line.startsWith('data: ')) {
+            data.push(line.slice(6));
+          } else if (line === '') {
+            // End of event
+            if (data.length > 0) {
+              const dataStr = data.join('\n');
+              if (eventType === 'TASK_COMPLETED' || eventType === 'TASK_FAILED') {
+                lastEventId = eventType;
+              }
+              if (onmessage) onmessage(dataStr, { type: eventType || 'message' });
+            }
+            data = [];
+            eventType = null;
+          }
+        }
+      };
+
+      xhr.onerror = () => {
+        if (onerror) onerror(new Error('XHR polling error'));
+      };
+
+      xhr.send();
+    } catch (error) {
+      if (onerror) onerror(error);
+    }
+  }
+
+  poll();
+  intervalId = globalThis.setInterval(poll, pollInterval);
+
+  return {
+    close: () => {
+      running = false;
+      if (intervalId) globalThis.clearInterval(intervalId);
+    },
+    url,
+  };
+}
+
 export function createAuthorizedEventSource(url, options = {}) {
   const fetchImpl = options.fetchImpl || globalThis.fetch?.bind(globalThis)
   const getToken = options.getToken || storedAuthToken

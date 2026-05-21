@@ -38,6 +38,33 @@
   --space-2xl: 48px;
 }
 
+/* Dark theme */
+.dark {
+  --primary: #818CF8;
+  --primary-hover: #6366F1;
+
+  --success: #34D399;
+  --warning: #FBBF24;
+  --error: #F87171;
+
+  --bg-page: #0F172A;
+  --bg-card: #1E293B;
+  --bg-hover: #334155;
+
+  --text-primary: #F1F5F9;
+  --text-secondary: #94A3B8;
+  --text-muted: #64748B;
+
+  --border: #334155;
+  --border-focus: #818CF8;
+
+  --grade-a: #34D399;
+  --grade-b: #22D3EE;
+  --grade-c: #FBBF24;
+  --grade-d: #FB923C;
+  --grade-f: #F87171;
+}
+
 * {
   margin: 0;
   padding: 0;

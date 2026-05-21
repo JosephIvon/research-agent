@@ -10,7 +10,7 @@ from server import app
 
 
 class TestTaskQueue:
-    def test_create_task_returns_task_id_immediately(self, monkeypatch):
+    def test_create_task_returns_task_id_immediately(self, monkeypatch, auth_headers):
         """创建任务立即返回 task_id，不等待工作流完成"""
         captured_tasks = {}
 
@@ -37,6 +37,7 @@ class TestTaskQueue:
                 "urls": ["https://example.com"],
                 "deliverables": {"report": True, "prd": False},
             },
+            headers=auth_headers,
         )
 
         assert response.status_code == 200
@@ -45,7 +46,7 @@ class TestTaskQueue:
         assert body["status"] == "pending"
         assert len(body["task_id"]) > 0
 
-    def test_get_task_returns_status_and_events(self, monkeypatch):
+    def test_get_task_returns_status_and_events(self, monkeypatch, auth_headers):
         """GET /research/tasks/{task_id} 返回状态、事件历史、artifacts"""
         task_store = server.get_task_store()
         asyncio.run(task_store.create("test-task-001", "test query", {"report": True, "prd": True}))
@@ -65,7 +66,7 @@ class TestTaskQueue:
         ))
 
         client = TestClient(app)
-        response = client.get("/research/tasks/test-task-001")
+        response = client.get("/research/tasks/test-task-001", headers=auth_headers)
 
         assert response.status_code == 200
         body = response.json()
@@ -74,9 +75,9 @@ class TestTaskQueue:
         assert len(body["events"]) == 1
         assert body["events"][0]["event"] == "task_created"
 
-    def test_get_task_returns_404_for_nonexistent(self):
+    def test_get_task_returns_404_for_nonexistent(self, auth_headers):
         client = TestClient(app)
-        response = client.get("/research/tasks/nonexistent-task")
+        response = client.get("/research/tasks/nonexistent-task", headers=auth_headers)
         assert response.status_code == 404
 
     def test_sse_stream_receives_events(self, monkeypatch):
@@ -178,14 +179,14 @@ class TestEventPayloadSecurity:
         assert "password" not in sanitized
         assert "secret123" not in str(sanitized)
 
-    def test_task_status_does_not_expose_credentials(self, monkeypatch):
+    def test_task_status_does_not_expose_credentials(self, monkeypatch, auth_headers):
         """任务状态接口不返回账号密码"""
         task_store = server.get_task_store()
         task_id = "creds-test-task"
         asyncio.run(task_store.create(task_id, "creds test", {"report": True, "prd": False}))
 
         client = TestClient(app)
-        response = client.get(f"/research/tasks/{task_id}")
+        response = client.get(f"/research/tasks/{task_id}", headers=auth_headers)
 
         assert response.status_code == 200
         body = response.json()
@@ -195,7 +196,7 @@ class TestEventPayloadSecurity:
 
 
 class TestBackwardCompatibility:
-    def test_research_competitive_still_works(self, monkeypatch):
+    def test_research_competitive_still_works(self, monkeypatch, auth_headers):
         """旧接口 /research/competitive 仍然可用"""
         class FakeWorkflow:
             async def run(self, **kwargs):
@@ -219,6 +220,7 @@ class TestBackwardCompatibility:
         response = client.post(
             "/research/competitive",
             json={"query": "test", "enable_search": False, "urls": ["https://example.com"]},
+            headers=auth_headers,
         )
 
         assert response.status_code == 200
@@ -226,7 +228,7 @@ class TestBackwardCompatibility:
         assert body["status"] == "success"
         assert "report" in body
 
-    def test_research_prd_still_works(self, monkeypatch):
+    def test_research_prd_still_works(self, monkeypatch, auth_headers):
         """旧接口 /research/prd 仍然可用"""
         monkeypatch.setattr("src.tools.prd_generator.PRDGenerator.generate_from_competitive_report", lambda self, report, query: "# PRD Document")
 
@@ -234,6 +236,7 @@ class TestBackwardCompatibility:
         response = client.post(
             "/research/prd",
             json={"report_content": "# Report", "query": "test query"},
+            headers=auth_headers,
         )
 
         assert response.status_code == 200
@@ -241,7 +244,7 @@ class TestBackwardCompatibility:
         assert body["status"] == "success"
         assert "prd" in body
 
-    def test_research_prd_from_query_still_works(self, monkeypatch):
+    def test_research_prd_from_query_still_works(self, monkeypatch, auth_headers):
         """旧接口 /research/prd-from-query 仍然可用"""
         class FakeWorkflow:
             async def run(self, **kwargs):
@@ -266,6 +269,7 @@ class TestBackwardCompatibility:
         response = client.post(
             "/research/prd-from-query",
             json={"query": "test query", "enable_search": False, "urls": ["https://example.com"]},
+            headers=auth_headers,
         )
 
         assert response.status_code == 200

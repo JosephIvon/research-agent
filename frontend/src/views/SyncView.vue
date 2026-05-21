@@ -20,7 +20,7 @@
 
           <div class="platform-card card" :class="{ connected: tencentConnected }">
             <div class="platform-icon">📊</div>
-            <div class="platform-name">腾讯文档</div>
+            <div class="platform-name">腾讯文档 <el-tag size="small" type="warning">实验性</el-tag></div>
             <div class="platform-status">{{ tencentConnected ? '● 已连接' : '○ 未连接' }}</div>
             <el-button v-if="!tencentConnected" type="primary" @click="connectTencent">连接</el-button>
             <el-button v-else @click="syncToTencent">同步</el-button>

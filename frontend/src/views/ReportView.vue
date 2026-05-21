@@ -9,14 +9,25 @@
         <span class="report-title">结果中心</span>
       </div>
       <div class="header-actions">
+        <ThemeToggle />
         <el-button @click="copyReport">
           <el-icon><DocumentCopy /></el-icon>
           复制当前
         </el-button>
-        <el-button @click="exportReport">
-          <el-icon><Download /></el-icon>
-          导出当前
-        </el-button>
+        <el-dropdown trigger="click" @command="handleExportFormat">
+          <el-button type="primary">
+            <el-icon><Download /></el-icon>
+            导出
+            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="pdf">导出 PDF</el-dropdown-item>
+              <el-dropdown-item command="word">导出 Word</el-dropdown-item>
+              <el-dropdown-item command="html">导出 HTML</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </header>
 
@@ -188,13 +199,17 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
+  ArrowDown,
   ArrowLeft,
   ChatDotRound,
   DocumentCopy,
   Download,
+  Moon,
+  Sunny,
   Upload,
   View
 } from '@element-plus/icons-vue'
+import ThemeToggle from '../components/ThemeToggle.vue'
 import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
 import { RadarChart } from 'echarts/charts'
@@ -345,6 +360,48 @@ function exportReport() {
   a.download = activeArtifactFilename.value
   a.click()
   URL.revokeObjectURL(url)
+}
+
+async function handleExportFormat(format) {
+  if (!report.value?.id) {
+    ElMessage.warning('报告尚未加载完成')
+    return
+  }
+  try {
+    const contentType = activeTab.value === 'prd' ? 'prd' : 'report'
+    const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || '/api'}/research/export`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(getAuthHeaders())
+      },
+      body: JSON.stringify({
+        report_id: report.value.id,
+        format,
+        content_type: contentType
+      })
+    })
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: '导出失败' }))
+      throw new Error(err.detail || '导出失败')
+    }
+    const blob = await response.blob()
+    const filename = response.headers.get('content-disposition')?.match(/filename=(.+)/)?.[1] || `report.${format}`
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename.replace(/"/g, '')
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success(`已导出 ${format.toUpperCase()}`)
+  } catch (e) {
+    ElMessage.error(e.message || '导出失败，请稍后重试')
+  }
+}
+
+function getAuthHeaders() {
+  const token = sessionStorage.getItem('auth_token')
+  return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
 async function generatePRD() {

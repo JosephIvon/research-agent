@@ -1,0 +1,81 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+      - name: Install dependencies
+        run: uv sync --dev
+      - name: Backend tests
+        run: uv run pytest tests/ -v --ignore=tests/e2e/
+      - name: Frontend tests
+        working-directory: frontend
+        run: npm test
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Compose
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y docker.io docker-compose
+
+      - name: Start services with Docker Compose
+        run: |
+          # Start SearXNG and Redis (required for backend)
+          docker-compose up -d searxng redis
+
+          # Wait for services to be healthy
+          sleep 10
+
+          # Start backend (without frontend - E2E tests API directly)
+          docker-compose up -d research-agent
+
+          # Wait for backend to be ready
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health 2>/dev/null; then
+              echo "Backend is ready"
+              break
+            fi
+            echo "Waiting for backend... attempt $i"
+            sleep 2
+          done
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Run E2E tests
+        run: uv run pytest tests/e2e/ -v
+        env:
+          E2E_API_URL: http://localhost:8080
+          E2E_FRONTEND_URL: http://localhost:3000
+
+      - name: Cleanup
+        if: always()
+        run: docker-compose down -v
+
+  docker-build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker
+        run: docker-compose build

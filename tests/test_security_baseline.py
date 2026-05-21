@@ -55,17 +55,18 @@ def test_base_url_normalization_preserves_non_v1_suffix():
     assert OpenAICompatibleClient._normalize_base_url("https://api.example.com/v2") == "https://api.example.com/v2"
 
 
-def test_research_request_rejects_private_url_before_workflow_runs():
+def test_research_request_rejects_private_url_before_workflow_runs(auth_headers):
     client = TestClient(app)
     response = client.post(
         "/research/competitive",
         json={"query": "test", "urls": ["http://127.0.0.1:8080/health"], "enable_search": False},
+        headers=auth_headers,
     )
 
     assert response.status_code == 422
 
 
-def test_competitive_request_accepts_per_site_credentials(monkeypatch):
+def test_competitive_request_accepts_per_site_credentials(monkeypatch, auth_headers):
     import src.workflow.mvp_workflow as workflow_module
 
     captured = {}
@@ -96,6 +97,7 @@ def test_competitive_request_accepts_per_site_credentials(monkeypatch):
                 {"url": "https://93.184.216.34/product-b"},
             ],
         },
+        headers=auth_headers,
     )
 
     assert response.status_code == 200
@@ -146,16 +148,16 @@ def test_optional_bearer_auth_protects_research_endpoints(monkeypatch):
     assert public.status_code == 200
 
 
-def test_history_endpoint_reads_only_report_files(monkeypatch, tmp_path):
+def test_history_endpoint_reads_only_report_files(monkeypatch, tmp_path, auth_headers):
     monkeypatch.setattr(server, "OUTPUT_DIR", str(tmp_path))
     report_path = tmp_path / "research_report_20260517_120000.md"
     report_path.write_text("# Smoke Report\n\n上线检查内容", encoding="utf-8")
     (tmp_path / "notes.md").write_text("ignored", encoding="utf-8")
 
     client = TestClient(app)
-    list_response = client.get("/research/history")
-    detail_response = client.get("/research/history/research_report_20260517_120000")
-    traversal_response = client.get("/research/history/../notes")
+    list_response = client.get("/research/history", headers=auth_headers)
+    detail_response = client.get("/research/history/research_report_20260517_120000", headers=auth_headers)
+    traversal_response = client.get("/research/history/../notes", headers=auth_headers)
 
     assert list_response.status_code == 200
     assert list_response.json()[0]["id"] == "research_report_20260517_120000"

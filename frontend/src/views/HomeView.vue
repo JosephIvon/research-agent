@@ -6,14 +6,16 @@
           <el-icon><DataAnalysis /></el-icon>
         </div>
         <div>
-          <span class="title">智能调研助手</span>
-          <span class="subtitle">竞品分析工作台</span>
+          <span class="title">{{ t('message.app_name') }}</span>
+          <span class="subtitle">{{ t('message.app_subtitle') }}</span>
         </div>
       </div>
       <div class="header-right">
-        <el-button text @click="$router.push('/reports')">历史报告</el-button>
-        <el-button text @click="$router.push('/sync')">同步</el-button>
-        <el-button text @click="$router.push('/settings')">设置</el-button>
+        <ThemeToggle />
+        <el-button text @click="$router.push('/reports')">{{ t('message.history') }}</el-button>
+        <el-button text @click="$router.push('/sync')">{{ t('message.sync') }}</el-button>
+        <el-button text @click="$router.push('/settings')">{{ t('message.settings') }}</el-button>
+        <LanguageSwitcher />
       </div>
     </header>
 
@@ -21,15 +23,15 @@
       <section class="workspace">
         <div class="workspace-main">
           <section class="brief-panel">
-            <div class="section-kicker">新建调研</div>
-            <h1>定义问题和竞品范围</h1>
-            <p>输入调研目标，指定要对比的网站。每个网站都可以单独配置登录页和账号密码。</p>
+            <div class="section-kicker">{{ t('message.home_title') }}</div>
+            <h1>{{ t('message.home_brief_heading') }}</h1>
+            <p>{{ t('message.home_brief_desc') }}</p>
 
             <el-input
               v-model="query"
               type="textarea"
               :rows="5"
-              placeholder="例如：我想做一个多模态 AI 接口聚合平台，现在需要分析竞品的能力矩阵、定价策略和接入体验"
+              :placeholder="t('message.query_placeholder')"
               resize="none"
               class="query-input"
             />
@@ -53,15 +55,15 @@
           <section class="targets-panel">
             <div class="panel-heading">
               <div>
-                <div class="section-kicker">竞品网站</div>
-                <h2>指定对比对象</h2>
+                <div class="section-kicker">{{ t('message.competitor_urls') }}</div>
+                <h2>{{ t('message.specify_competitors') }}</h2>
               </div>
               <el-button
                 :disabled="competitorSites.length >= MAX_SITES"
                 @click="addSite"
               >
                 <el-icon><Plus /></el-icon>
-                添加网站
+                {{ t('message.add_competitor') }}
               </el-button>
             </div>
 
@@ -126,15 +128,15 @@
             <button type="button" class="advanced-toggle" @click="showAdvanced = !showAdvanced">
               <span>
                 <el-icon><Setting /></el-icon>
-                高级选项
+                {{ t('message.advanced_options') }}
               </span>
               <el-icon><component :is="showAdvanced ? ArrowUp : ArrowDown" /></el-icon>
             </button>
             <div v-show="showAdvanced" class="advanced-content">
               <div class="advanced-row">
                 <div>
-                  <strong>自动搜索补充竞品</strong>
-                  <p>没有指定网站时建议开启；已经输入明确竞品时可关闭，避免混入无关站点。</p>
+                  <strong>{{ t('message.enable_search') }}</strong>
+                  <p>{{ t('message.auto_search_hint') }}</p>
                 </div>
                 <el-switch v-model="enableAutoSearch" />
               </div>
@@ -144,31 +146,31 @@
 
         <aside class="run-panel">
           <div class="run-card">
-            <div class="section-kicker">本次任务</div>
+            <div class="section-kicker">{{ t('message.task_this_run') }}</div>
             <dl>
               <div>
-                <dt>指定网站</dt>
+                <dt>{{ t('message.specified_sites') }}</dt>
                 <dd>{{ filledSiteCount }} / {{ MAX_SITES }}</dd>
               </div>
               <div>
-                <dt>需登录</dt>
+                <dt>{{ t('message.needs_login') }}</dt>
                 <dd>{{ loginSiteCount }}</dd>
               </div>
               <div>
-                <dt>自动搜索</dt>
-                <dd>{{ enableAutoSearch ? '开启' : '关闭' }}</dd>
+                <dt>{{ t('message.auto_search') }}</dt>
+                <dd>{{ enableAutoSearch ? t('message.on') : t('message.off') }}</dd>
               </div>
             </dl>
 
             <div class="deliverable-panel">
-              <div class="deliverable-title">本次交付</div>
+              <div class="deliverable-title">{{ t('message.this_deliverable') }}</div>
               <label class="deliverable-option locked">
                 <span class="option-icon">
                   <el-icon><Document /></el-icon>
                 </span>
                 <span>
-                  <strong>竞品分析报告</strong>
-                  <em>默认生成，包含结论、来源和质量提示</em>
+                  <strong>{{ t('message.competitor_report') }}</strong>
+                  <em>{{ t('message.report_default_desc') }}</em>
                 </span>
                 <el-checkbox :model-value="true" disabled />
               </label>
@@ -177,8 +179,8 @@
                   <el-icon><DocumentChecked /></el-icon>
                 </span>
                 <span>
-                  <strong>PRD 产品需求文档</strong>
-                  <em>报告完成后自动继续生成</em>
+                  <strong>{{ t('message.prd_product_doc') }}</strong>
+                  <em>{{ t('message.prd_auto_generate') }}</em>
                 </span>
                 <el-checkbox v-model="deliverables.prd" />
               </label>
@@ -192,7 +194,7 @@
               @click="startResearch"
             >
               <el-icon><Search /></el-icon>
-              开始调研
+              {{ t('message.start_research') }}
             </el-button>
           </div>
         </aside>
@@ -204,6 +206,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from '../i18n'
 import { ElMessage } from 'element-plus'
 import {
   ArrowDown,
@@ -223,7 +226,11 @@ import {
   Tools,
   User
 } from '@element-plus/icons-vue'
+import LanguageSwitcher from '../i18n/LanguageSwitcher.vue'
+import ThemeToggle from '../components/ThemeToggle.vue'
 import { useResearchStore } from '../stores/research'
+
+const { t } = useI18n()
 
 const MAX_SITES = 10
 

@@ -395,43 +395,14 @@ export const useResearchStore = defineStore('research', () => {
     return payload?.run
   }
 
-  async function createTask(taskParams) {
-    isLoading.value = true
-    try {
-      const result = await researchApi.competitive(taskParams)
-      const report = normalizeReport(result, taskParams)
-      currentTask.value = {
-        id: report.id,
-        status: result.status === 'success' ? 'completed' : 'failed',
-        result: report,
-        createdAt: new Date()
-      }
-      cacheReport(report)
-      return currentTask.value
-    } finally {
-      isLoading.value = false
-    }
-  }
-
   async function runResearchRun(id, callbacks = {}) {
     const run = getResearchRun(id)
     if (!run) {
       throw new Error('任务不存在')
     }
 
-    if (run.task_id) {
-      isLoading.value = true
-      updateResearchRun(id, {
-        status: 'running',
-        error: null,
-        started_at: run.started_at || new Date().toISOString()
-      })
-
-      connectTaskSSE(id, run.task_id, callbacks, {
-        onComplete: finalizeAsyncRun,
-        onError: ({ runId, event, callbacks }) => handleTaskStreamError(runId, event, callbacks)
-      })
-      return { sseConnected: true }
+    if (!run.task_id) {
+      throw new Error('任务缺少后端 task_id，无法连接 SSE。请通过 createAsyncTask 创建任务。')
     }
 
     isLoading.value = true
@@ -441,70 +412,11 @@ export const useResearchStore = defineStore('research', () => {
       started_at: run.started_at || new Date().toISOString()
     })
 
-    try {
-      emitRunEvent(id, 'understand', 'running', '正在理解你的调研目标，并拆解要比较的关键维度。', callbacks)
-      emitRunEvent(id, 'scope', 'running', '正在确认竞品范围、登录配置和自动搜索策略。', callbacks)
-      if (run.params?.enable_search !== false) {
-        emitRunEvent(id, 'search', 'running', '正在检索公开资料，补充定价、文档和评价来源。', callbacks)
-      }
-      emitRunEvent(id, 'crawl', 'running', '正在登录并抓取竞品页面，可能需要等待网站响应。', callbacks)
-
-      const result = await researchApi.competitive(run.params)
-      let report = normalizeReport(result, run.params)
-      report.run_id = id
-      cacheReport(report)
-
-      const successCount = Array.isArray(result.competitors)
-        ? result.competitors.filter(item => item.status === 'success').length
-        : 0
-      emitRunEvent(id, 'extract', 'success', `已整理 ${successCount} 个可用竞品来源，正在沉淀关键维度。`, callbacks)
-      emitRunEvent(id, 'report', result.status === 'success' ? 'success' : 'warning', result.status === 'success'
-        ? '竞品分析报告已生成。'
-        : '已生成数据质量提示，需要补充资料后报告会更完整。', callbacks)
-
-      if (run.deliverables?.prd) {
-        if (result.status === 'success' && report.markdown) {
-          emitRunEvent(id, 'prd', 'running', '正在把竞品洞察转成产品需求文档。', callbacks)
-          const prdResult = await researchApi.prd({
-            report_content: report.markdown,
-            query: report.query || run.params.query || '竞品分析'
-          })
-          report = {
-            ...report,
-            prd: prdResult.prd || prdResult.content || '',
-            prd_created_at: new Date().toISOString()
-          }
-          cacheReport(report)
-          emitRunEvent(id, 'prd', 'success', 'PRD 已生成，并已归档到结果中心。', callbacks)
-        } else {
-          emitRunEvent(id, 'prd', 'warning', '当前数据质量不足，PRD 已暂缓生成。补充竞品资料后可重新生成。', callbacks)
-        }
-      }
-
-      emitRunEvent(id, 'finish', 'success', '交付物已整理完成，正在进入结果中心。', callbacks)
-      const finalRun = updateResearchRun(id, {
-        status: result.status === 'success' ? 'completed' : 'needs_input',
-        report_id: report.id,
-        completed_at: new Date().toISOString()
-      })
-      currentTask.value = {
-        id: report.id,
-        status: finalRun.status,
-        result: report,
-        createdAt: new Date(run.created_at)
-      }
-      return finalRun
-    } catch (error) {
-      emitRunEvent(id, 'finish', 'error', '任务执行失败，请检查设置或稍后重试。', callbacks)
-      updateResearchRun(id, {
-        status: 'failed',
-        error: error?.message || '任务执行失败',
-        completed_at: new Date().toISOString()
-      })
-      throw error
-    } finally {
-      isLoading.value = false
-    }
+    connectTaskSSE(id, run.task_id, callbacks, {
+      onComplete: finalizeAsyncRun,
+      onError: ({ runId, event, callbacks }) => handleTaskStreamError(runId, event, callbacks)
+    })
+    return { sseConnected: true }
   }
 
   async function getReport(id) {
@@ -566,7 +478,6 @@ export const useResearchStore = defineStore('research', () => {
     taskHistory,
     taskRuns,
     isLoading,
-    createTask,
     createResearchRun,
     createAsyncTask,
     getResearchRun,
