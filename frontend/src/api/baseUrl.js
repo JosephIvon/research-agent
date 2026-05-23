@@ -1,4 +1,4 @@
-const DEFAULT_API_BASE_URL = '/api'
+const DEFAULT_API_BASE_URL = ''
 
 export function resolveApiBaseUrl(rawBaseUrl = '', isDev = false) {
   const raw = String(rawBaseUrl || '').trim()
