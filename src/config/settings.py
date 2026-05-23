@@ -139,6 +139,10 @@ ALLOWED_HOSTS = [
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 
+# 初始管理员账号（容器首次启动时自动创建）
+INITIAL_ADMIN_USERNAME = os.getenv("INITIAL_ADMIN_USERNAME", "admin")
+INITIAL_ADMIN_PASSWORD = os.getenv("INITIAL_ADMIN_PASSWORD", "")
+
 # Config center
 CONFIG_HOT_RELOAD_ENABLED = _get_bool("CONFIG_HOT_RELOAD_ENABLED", True)
 

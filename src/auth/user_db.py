@@ -6,6 +6,8 @@ from typing import Optional, List, Dict
 import os
 import uuid
 from src.auth.jwt_auth import get_password_hash, verify_password, create_access_token
+from src.config.settings import INITIAL_ADMIN_USERNAME, INITIAL_ADMIN_PASSWORD
+
 
 def get_user_db_path():
     path = os.getenv("USER_DB_PATH", "users.db")
@@ -13,6 +15,7 @@ def get_user_db_path():
         return path
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     return os.path.join(project_root, path)
+
 
 def init_user_db():
     conn = sqlite3.connect(get_user_db_path())
@@ -28,6 +31,29 @@ def init_user_db():
         )
     """)
     conn.commit()
+    conn.close()
+    _ensure_initial_admin()
+
+
+def _ensure_initial_admin():
+    if not INITIAL_ADMIN_USERNAME or not INITIAL_ADMIN_PASSWORD:
+        return
+    conn = sqlite3.connect(get_user_db_path())
+    cursor = conn.execute("SELECT id FROM users WHERE username = ?", (INITIAL_ADMIN_USERNAME,))
+    if cursor.fetchone():
+        conn.close()
+        return
+    user_id = str(uuid.uuid4())
+    password_hash = get_password_hash(INITIAL_ADMIN_PASSWORD)
+    now = datetime.now().isoformat()
+    try:
+        conn.execute(
+            "INSERT INTO users (id, username, email, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, INITIAL_ADMIN_USERNAME, f"{INITIAL_ADMIN_USERNAME}@local", password_hash, "admin", now)
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        pass
     conn.close()
 
 class UserDB:

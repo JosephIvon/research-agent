@@ -58,6 +58,8 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
       - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES:-1440}
       - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost,127.0.0.1,research-agent}
+      - INITIAL_ADMIN_USERNAME=${INITIAL_ADMIN_USERNAME:-admin}
+      - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD:-}
       # Redis 配置
       - REDIS_URL=redis://redis:6379/0
       - TASK_STORE_BACKEND=${TASK_STORE_BACKEND:-redis}
