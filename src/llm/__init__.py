@@ -98,6 +98,46 @@ class LLMClient(ABC):
         的状态机，在多线程下正是需要的。
         """
         return await asyncio.to_thread(self.chat_completion, messages, **kwargs)
+
+    def chat_completion_raw(
+        self,
+        messages: List[Dict[str, str]],
+        model: Optional[str] = None,
+        temperature: float = 0.2,
+        max_tokens: int = 4096,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: str = "auto",
+    ) -> Dict[str, Any]:
+        """完整结构化返回：{content, tool_calls(全部,含 id), finish_reason, usage}。
+
+        chat_completion 只回正文或**第一个** tool_call，拿不到 tool_call_id，
+        无法回填合法的 tool 消息——ReAct 循环（src/agent/runner.py）必须用本方法。
+        默认实现包装 chat_completion（无真实 usage，token 由调用方估算）；
+        OpenAI 兼容客户端覆写为带 usage 的完整解析。
+        """
+        result = self.chat_completion(
+            messages, model=model, temperature=temperature,
+            max_tokens=max_tokens, tools=tools, tool_choice=tool_choice,
+        )
+        if isinstance(result, dict) and result.get("type") == "tool_call":
+            call = dict(result)
+            call.setdefault("id", "call_0")
+            return {
+                "content": None,
+                "tool_calls": [call],
+                "finish_reason": "tool_calls",
+                "usage": {"prompt_tokens": None, "completion_tokens": None},
+            }
+        return {
+            "content": result if isinstance(result, str) else None,
+            "tool_calls": [],
+            "finish_reason": "stop" if result else None,
+            "usage": {"prompt_tokens": None, "completion_tokens": None},
+        }
+
+    async def achat_completion_raw(self, messages: List[Dict[str, str]], **kwargs):
+        """chat_completion_raw 的线程池异步包装（同 achat_completion 的理由）。"""
+        return await asyncio.to_thread(self.chat_completion_raw, messages, **kwargs)
     
     @abstractmethod
     def extract_structured_data(
@@ -303,6 +343,98 @@ class OpenAICompatibleClient(LLMClient):
             # 记录最终错误
             logger.error(f"[{self.provider_name}] chat_completion failed: {e}")
             raise LLMError(f"[{self.provider_name}] chat_completion failed: {e}") from e
+
+    def chat_completion_raw(
+        self,
+        messages: List[Dict[str, str]],
+        model: Optional[str] = None,
+        temperature: float = 0.2,
+        max_tokens: int = 4096,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: str = "auto",
+        timeout=None,
+    ) -> Dict[str, Any]:
+        """完整返回：正文 + **全部** tool_calls（含 id）+ 真实 usage。
+
+        与 chat_completion 共享重试/熔断/退避策略，但解析层保留完整
+        assistant message——降维成"首个 tool_call"会丢 tool_call_id 与
+        单轮多调用，ReAct 协议回填 tool 消息时两者都必须在。
+        """
+        if not self._circuit_breaker.is_available:
+            raise CircuitBreakerError(
+                f"Circuit breaker is {self._circuit_breaker.state.value}"
+            )
+
+        request_timeout = timeout or self._timeout
+
+        def _do_request_raw():
+            last_error = None
+            for attempt in range(self.max_retries):
+                try:
+                    params = {
+                        "model": model or self.default_model,
+                        "messages": messages,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "timeout": request_timeout,
+                    }
+                    if tools:
+                        params["tools"] = tools
+                        params["tool_choice"] = tool_choice
+
+                    response = self.client.chat.completions.create(**params)
+
+                    def _usage():
+                        u = getattr(response, "usage", None)
+                        return {
+                            "prompt_tokens": getattr(u, "prompt_tokens", None) if u else None,
+                            "completion_tokens": getattr(u, "completion_tokens", None) if u else None,
+                        }
+
+                    if not response.choices:
+                        return {"content": None, "tool_calls": [], "finish_reason": None,
+                                "usage": _usage()}
+
+                    message = response.choices[0].message
+                    tool_calls = [
+                        {
+                            "id": tc.id,
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        }
+                        for tc in (message.tool_calls or [])
+                    ]
+                    return {
+                        "content": message.content,
+                        "tool_calls": tool_calls,
+                        "finish_reason": getattr(response.choices[0], "finish_reason", None),
+                        "usage": _usage(),
+                    }
+                except Exception as e:
+                    last_error = e
+                    if not self._is_retryable_error(e):
+                        raise
+                    if attempt < self.max_retries - 1:
+                        backoff = self._calculate_backoff(attempt)
+                        logger.info(
+                            f"[{self.provider_name}] raw retry {attempt + 1}/{self.max_retries} "
+                            f"after {backoff:.2f}s: {type(e).__name__}"
+                        )
+                        time.sleep(backoff)
+                        continue
+            raise LLMRetryableError(
+                f"[{self.provider_name}] All {self.max_retries} retries failed: {last_error}"
+            )
+
+        try:
+            return self._circuit_breaker.call(_do_request_raw)
+        except CircuitBreakerError:
+            raise
+        except LLMRetryableError:
+            raise
+        except Exception as e:
+            logger.error(f"[{self.provider_name}] chat_completion_raw failed: {e}")
+            raise LLMError(f"[{self.provider_name}] chat_completion_raw failed: {e}") from e
 
     def stream_completion(
         self,
@@ -514,6 +646,13 @@ class ScriptedLLMClient(LLMClient):
     @staticmethod
     def _validate(script: Dict[str, List[Any]]) -> None:
         """构造期就拒绝非法条目——让坏脚本在测试启动时炸，而不是跑到一半。"""
+        def _check_call(entry: Any, intent: str) -> None:
+            if not (isinstance(entry, dict) and entry.get("type") == "tool_call" and entry.get("name")):
+                raise ValueError(
+                    f"fake 脚本意图 {intent!r} 的 tool_call 必须含 type='tool_call' 与 name，"
+                    f"实际: {entry!r}"
+                )
+
         for intent, entries in script.items():
             if not isinstance(entries, list) or not entries:
                 raise ValueError(f"fake 脚本意图 {intent!r} 必须是非空列表")
@@ -521,22 +660,25 @@ class ScriptedLLMClient(LLMClient):
                 if isinstance(entry, str):
                     continue
                 if isinstance(entry, dict) and entry.get("type") == "tool_call":
+                    _check_call(entry, intent)
+                    continue
+                if isinstance(entry, dict) and entry.get("type") == "tool_calls":
+                    calls = entry.get("calls")
+                    if not isinstance(calls, list) or not calls:
+                        raise ValueError(
+                            f"fake 脚本意图 {intent!r} 的 tool_calls 条目需要非空 calls 列表"
+                        )
+                    for call in calls:
+                        _check_call(call, intent)
                     continue
                 raise ValueError(
-                    f"fake 脚本意图 {intent!r} 的条目必须是 str 或 "
-                    f"{{'type': 'tool_call', ...}}，实际: {entry!r}"
+                    f"fake 脚本意图 {intent!r} 的条目必须是 str、"
+                    f"{{'type': 'tool_call', ...}} 或 {{'type': 'tool_calls', 'calls': [...]}}，"
+                    f"实际: {entry!r}"
                 )
 
-    def chat_completion(
-        self,
-        messages: List[Dict[str, str]],
-        model: Optional[str] = None,
-        temperature: float = 0.2,
-        max_tokens: int = 4096,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: str = "auto",
-        timeout=None,
-    ) -> Union[str, Dict[str, Any], None]:
+    def _next_entry(self, messages, tools):
+        """取当前意图的下一个脚本条目并记录调用。chat_completion 与 raw 共用。"""
         intent = detect_llm_intent(messages)
         if intent is None or intent not in self._script:
             available = ", ".join(sorted(self._script))
@@ -550,6 +692,43 @@ class ScriptedLLMClient(LLMClient):
             {"intent": intent, "step": step, "messages": messages, "tools": tools}
         )
         return entry
+
+    def chat_completion(
+        self,
+        messages: List[Dict[str, str]],
+        model: Optional[str] = None,
+        temperature: float = 0.2,
+        max_tokens: int = 4096,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: str = "auto",
+        timeout=None,
+    ) -> Union[str, Dict[str, Any], None]:
+        entry = self._next_entry(messages, tools)
+        # legacy 单返回路径降维取首个（raw 路径保留全部）
+        if isinstance(entry, dict) and entry.get("type") == "tool_calls":
+            return entry["calls"][0]
+        return entry
+
+    def chat_completion_raw(self, messages, model=None, temperature=0.2, max_tokens=4096,
+                            tools=None, tool_choice="auto", timeout=None) -> Dict[str, Any]:
+        """脚本版 raw：tool_call 自动补 id（call_<序号>），多调用条目原样展开。"""
+        entry = self._next_entry(messages, tools)
+        none_usage = {"prompt_tokens": None, "completion_tokens": None}
+        if isinstance(entry, dict) and entry.get("type") == "tool_call":
+            call = dict(entry)
+            call.setdefault("id", f"call_{len(self.calls)}")
+            return {"content": None, "tool_calls": [call], "finish_reason": "tool_calls",
+                    "usage": none_usage}
+        if isinstance(entry, dict) and entry.get("type") == "tool_calls":
+            calls = []
+            for i, call in enumerate(entry["calls"]):
+                call = dict(call)
+                call.setdefault("id", f"call_{len(self.calls)}_{i}")
+                calls.append(call)
+            return {"content": None, "tool_calls": calls, "finish_reason": "tool_calls",
+                    "usage": none_usage}
+        return {"content": entry if isinstance(entry, str) else None, "tool_calls": [],
+                "finish_reason": "stop" if entry else None, "usage": none_usage}
 
     def stream_completion(
         self,
