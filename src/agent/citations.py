@@ -33,6 +33,17 @@ CITATION_RE = re.compile(rf"\[e:([0-9a-f]{{{EVIDENCE_ID_LEN}}})\]")
 # 报告正文中出现的 URL
 URL_RE = re.compile(r"https?://[^\s)\]\"'<>`|]+")
 
+# 机器附录豁免区：附录（如「数据完整度评估」）由确定性代码生成，其中的数字
+# （5.6/10、进度条、数据条数）来自程序计算而非模型的事实主张。把它纳入引用
+# 校验会把所有带附录的报告误判为低可信——fake 全流程实测抓到过这个误伤：
+# 一份引用全绿的报告，因附录里的进度条数字被判出 4 处 uncited_claim。
+MACHINE_APPENDIX_RE = re.compile(r"<!--machine-appendix-->.*?<!--/machine-appendix-->", re.DOTALL)
+
+
+def strip_machine_appendices(report: str) -> str:
+    """剔除机器附录，返回应纳入引用校验的报告主体。"""
+    return MACHINE_APPENDIX_RE.sub("", report or "")
+
 # 数值 token：支持千分位与小数。不匹配年份以外的中文数字（汉字数字归一化易误伤，
 # 例如"第一"不是可核验的数值主张）。
 NUMBER_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
@@ -231,8 +242,11 @@ def verify_report(
 
     violations: List[Dict[str, Any]] = []
 
+    # 附录（数据完整度等）是程序算出来的，不是模型主张：校验只看主体
+    body = strip_machine_appendices(report)
+
     # --- 引用有效性：报告里引用的 id 必须存在 ---
-    all_cited = CITATION_RE.findall(report or "")
+    all_cited = CITATION_RE.findall(body)
     unknown_ids = sorted({eid for eid in all_cited if store.get(eid) is None})
     citation_validity = (
         1.0 if not all_cited else (len(all_cited) - len(unknown_ids)) / len(all_cited)
@@ -244,7 +258,7 @@ def verify_report(
         })
 
     # --- 覆盖度与扎根性：逐句判定含数值的事实主张 ---
-    claims = iter_claims(report or "")
+    claims = iter_claims(body)
     cited_claims = 0
     grounded_claims = 0
     for sentence, numbers in claims:
@@ -277,7 +291,7 @@ def verify_report(
     grounding = 1.0 if not cited_claims else grounded_claims / cited_claims
 
     # --- 幻觉 URL：报告出现的 URL 必须属于实际抓取来源 ---
-    report_urls = {u.rstrip(".,;，。；") for u in URL_RE.findall(report or "")}
+    report_urls = {u.rstrip(".,;，。；") for u in URL_RE.findall(body)}
     hallucinated_urls = sorted(report_urls - store.urls)
 
     passed = (

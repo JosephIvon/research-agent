@@ -215,7 +215,9 @@ class QualityScorer:
         if len(report.data_sources) > 10:
             section += f"- ... 以及其他 {len(report.data_sources) - 10} 个来源\n"
 
-        return section
+        # 机器附录标记：本节由确定性代码生成，引用校验（agent.citations）会
+        # 跳过标记内内容——这里的数字来自程序计算，不是模型的事实主张。
+        return f"<!--machine-appendix-->\n{section}<!--/machine-appendix-->"
 
 
 def calculate_report_quality(competitors: List[Dict[str, Any]]) -> QualityReport:
