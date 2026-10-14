@@ -14,6 +14,7 @@ Two test intents, kept apart on purpose (see tests/e2e/conftest.py):
 An unreachable backend or missing credentials produces a *tagged* skip
 (``E2E-NO-BACKEND`` / ``E2E-NO-CREDENTIALS``), never a quiet pass.
 """
+import json
 import pytest
 import time
 import requests
@@ -76,16 +77,17 @@ def test_sse_connection(live_backend):
     sse_headers = {**headers, "Accept": "text/event-stream"}
     with requests.get(sse_url, headers=sse_headers, stream=True, timeout=30) as resp:
         assert resp.status_code == 200
-        buffer = ""
+        buffer = b""
         for chunk in resp.iter_content(chunk_size=256):
             if chunk:
-                buffer += chunk.decode("utf-8")
-                # SSE events are separated by blank lines (\n\n)
-                while "\n\n" in buffer:
-                    block, buffer = buffer.split("\n\n", 1)
+                buffer += chunk
+                # 字节层切块再解码（同 test_full_research_flow 的理由：chunk 边界
+                # 可能切断 UTF-8 字符，逐块 decode 会随机 UnicodeDecodeError）
+                while b"\n\n" in buffer:
+                    block, buffer = buffer.split(b"\n\n", 1)
                     event_type = None
                     data_lines = []
-                    for line in block.split("\n"):
+                    for line in block.decode("utf-8", errors="replace").split("\n"):
                         if line.startswith("event: "):
                             event_type = line[7:].strip()
                         elif line.startswith("data: "):
@@ -135,55 +137,84 @@ def test_full_research_flow(real_service_credentials, live_backend):
 
     # Poll SSE until completion
     sse_url = f"{live_backend}/research/tasks/{task_id}/events"
-    max_wait = 300  # 5 minutes
+    # 真模型全链路比"快速失败"路径慢一个量级：decompose + extract 各一次 LLM
+    # 调用，report_generate 是 16384 max_tokens 的推理模型生成（单次实测可达
+    # 1-3 分钟），引用校验不过还要再重生成一次。300s 对快速失败够用、对"真出
+    # 报告"不够——CI 实测走到 report_generate 后 5 分钟没等到终态。
+    # 放宽到 900s（GitHub Actions 默认 job 超时 360 分钟，无冲突），并把收到的
+    # stage 顺序记成时间线，万一再超时 annotation 能直接指出卡在哪一步。
+    max_wait = 900  # 15 minutes
     start = time.time()
     final_data = None
     completed = False
     terminal_error = None
+    last_error_seen = None
     graceful_degraded = False
+    timeline: list = []  # "elapsed_s:event/stage" 序列，诊断用
 
     sse_headers = {**headers, "Accept": "text/event-stream"}
     with requests.get(sse_url, headers=sse_headers, stream=True, timeout=max_wait) as resp:
         assert resp.status_code == 200
-        buffer = ""
+        # 字节层缓冲 + 在 \n\n 处切块：chunk 边界可能切断 UTF-8 多字节字符，
+        # 逐块 decode 会随机抛 UnicodeDecodeError（实测 chunk_size=256 下
+        # 真实触发过）。切完的整块再解码，字符必然完整。
+        buffer = b""
         for chunk in resp.iter_content(chunk_size=256):
-            elapsed = time.time() - start
-            if elapsed > max_wait:
+            if time.time() - start > max_wait:
                 break
             if chunk:
-                buffer += chunk.decode("utf-8")
+                buffer += chunk
                 # SSE events are separated by blank lines (\n\n)
-                while "\n\n" in buffer:
-                    block, buffer = buffer.split("\n\n", 1)
+                while b"\n\n" in buffer:
+                    block, buffer = buffer.split(b"\n\n", 1)
                     event_type = None
                     data_lines = []
-                    for line in block.split("\n"):
+                    for line in block.decode("utf-8", errors="replace").split("\n"):
                         if line.startswith("event: "):
                             event_type = line[7:].strip()
                         elif line.startswith("data: "):
                             data_lines.append(line[6:].strip())
                     if data_lines and event_type:
                         data_str = "\n".join(data_lines)
+                        try:
+                            event_obj = json.loads(data_str)
+                        except ValueError:
+                            event_obj = {}
+                        stage = event_obj.get("stage", "?")
+                        timeline.append(f"{time.time() - start:.0f}s:{event_type}/{stage}")
                         # 任务级终止事件才算结果。
                         # 可接受的终点（产品"诚实降级"设计）：
-                        #   completed                              → 报告产出
-                        #   error + stage=verify + 数据质量不足     → 明确说明缺什么，非静默失败
-                        # 不可接受的终点：其余 error（流程中途崩溃/未到终点）
+                        #   completed                                       → 报告产出
+                        #   error + stage=verify + 质量/数据不足            → 明确说明缺什么，非静默失败
+                        # 不可接受的终点：
+                        #   error 且 payload 未标 recoverable               → 流程中途崩溃，立即停，不再傻等
+                        #   error 但 payload.recoverable=True（如抓取失败）  → 产品设计会继续，记录后继续等终态
                         if event_type == "completed":
                             final_data = data_str
                             completed = True
                             break
                         elif event_type == "error":
-                            if '"stage": "verify"' in data_str and "数据质量不足" in data_str:
+                            is_degradation = (
+                                stage == "verify"
+                                and ("数据质量不足" in data_str or "抽取数据不足" in data_str)
+                            )
+                            recoverable = bool((event_obj.get("payload") or {}).get("recoverable"))
+                            if is_degradation:
                                 graceful_degraded = True
-                            else:
+                                break
+                            last_error_seen = data_str
+                            if not recoverable:
                                 terminal_error = data_str
-                if completed or graceful_degraded:
+                                break
+                if completed or graceful_degraded or terminal_error:
                     break
 
-    if not completed and not graceful_degraded and time.time() - start >= max_wait:
-        pytest.fail(f"Task did not reach a terminal state within {max_wait} seconds")
-    assert completed or graceful_degraded, \
-        f"真链路未跑通：completed={completed} degraded={graceful_degraded} 最后错误: {terminal_error}"
+    if not completed and not graceful_degraded:
+        elapsed = time.time() - start
+        timeline_str = " -> ".join(timeline) if timeline else "(未收到任何事件)"
+        pytest.fail(
+            f"真链路未到终态（已等 {elapsed:.0f}s / 上限 {max_wait}s）"
+            f"；事件时间线: {timeline_str}；最后错误: {terminal_error or last_error_seen}"
+        )
     if completed:
         assert final_data is not None
