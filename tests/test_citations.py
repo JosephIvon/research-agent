@@ -464,6 +464,61 @@ def test_format_violations_tolerates_missing_kind():
     assert "某句" in text
 
 
+def test_additive_derivations_are_no_longer_admitted(discount_store):
+    """**收紧后的契约**：推导只剩乘除，证据数之间的加减一律不算推导。
+
+    为什么砍掉（实测数据，不是直觉）：
+
+        分布              加减可用      只乘除
+        整十整百           23.5%         5.9%
+        SaaS 常见定价       4.5%         0.0%
+        证据数附近的扰动     6.2%         0.0%
+        均匀 1..300         7.3%         1.0%
+
+    漏放行的数字几乎全来自加减：`500 = (99-49)×10`、`600 = (99-49)×12`、
+    `50 = 99-49`。而模型编造数字最常用的恰恰是"整十整百"——那里原本漏掉四成。
+
+    语义依据：换算的本质是乘除（8 折 = ×8/10、年化 = ×12）。
+    `99 - 49 = 50` 不是"从证据推导出的量"，是两个不相关的价格相减恰好等于目标——
+    这是巧合。同样的巧合正是那句「以 **50** 人团队…年化 23,520 美元」里
+    那个假前提的来源，砍掉加减等于把它从根上拔掉，而不是靠层数上限侥幸挡住。
+    """
+    p = cite(discount_store, "pricing")
+    for number in (50, 500, 600):
+        result = verify_report(f"定价 {number} 美元/席位/月 {p}\n", discount_store)
+        assert result["violation_count"] > 0, \
+            f"{number} 由证据数加减凑出，加减收紧后必须仍被拦"
+        assert result["derived_claims"] == [], f"{number} 不该再被记成推导"
+        assert result["passed"] is False
+
+
+def test_multiplicative_derivations_survive_the_tightening(discount_store):
+    """收紧不能误伤核心场景：8 折折算这类**换算**必须照旧通过。"""
+    p = cite(discount_store, "pricing")
+    report = (f"标准版 49 美元/席位/月，年付折算后 39.2 美元/席位/月，"
+              f"企业版 79.2 美元/席位/月 {p}\n")
+    result = verify_report(report, discount_store)
+
+    assert result["grounding"] == 1.0
+    assert sorted(d["value"] for d in result["derived_claims"]) == ["39.2", "79.2"]
+    assert result["passed"] is True
+
+
+def test_no_operator_table_can_reintroduce_addition():
+    """接线守卫：运算表里不得再出现 + / -。
+
+    按契约断言而不是搜字符串：真正把关的是 `_DERIVATION_OPS` 这张表，
+    源码里到处都有加减号，靠文本匹配只会误判。所以这里直接断言表的形状，
+    收益侧的对照实验放在 `test_dropping_addition_cuts_leakage_and_adds_nothing`
+    ——那张表会被真的装回去跑一遍扫描，验证它确实漏得更多。
+    """
+    from src.agent import citations as mod
+
+    assert all(op not in ("+", "-") for op, _fn in mod._DERIVATION_OPS), \
+        "加减不得回到推导运算表——它就是漏放行的主要来源"
+    assert len(mod._DERIVATION_OPS) == 2, "推导运算应当只剩乘、除两个"
+
+
 # --------------------------------------------------------------------------
 # 违规清单与重生成反馈
 # --------------------------------------------------------------------------
@@ -649,24 +704,11 @@ def test_near_miss_value_is_not_a_derivation(discount_store):
     assert result["derived_claims"] == []
 
 
-def test_single_step_derivations_from_the_design_doc_are_recognised():
-    """方案文档举的两个例子恰好都只有**一层**运算，反推式的两层实现必须单独兜住它们。
-
-    `20% -> 35%` 写「提升 15 个百分点」是 `35 - 20`；`$10/月` 写 `$120/年` 是 `10 × 12`。
-    只做两层反推会把这两个正确推导判成编造，正是本项要修的老毛病。
+def test_single_step_multiplication_from_the_design_doc_is_recognised():
+    """方案文档举的 `$10/月` 写 `$120/年`（`10 × 12`）恰好只有**一层**运算，
+    反推式的两层实现必须单独兜住它。只做两层反推会把这个正确推导判成编造，
+    正是本项要修的老毛病。
     """
-    growth = EvidenceStore.from_extracted_data([{
-        "key": "adoption",
-        "value": "客户增长率由 20% 提升至 35%。",
-        "source_url": "https://acme.test/adoption",
-    }])
-    ev = cite(growth, "adoption")
-    result = verify_report(f"同期客户增长率提升 15 个百分点 {ev}\n", growth)
-
-    assert result["grounding"] == 1.0
-    assert [d["value"] for d in result["derived_claims"]] == ["15"]
-    assert "35" in result["derived_claims"][0]["expression"]
-
     price = EvidenceStore.from_extracted_data([{
         "key": "pricing",
         "value": "标准版定价 $10/席位/月。",
@@ -677,6 +719,29 @@ def test_single_step_derivations_from_the_design_doc_are_recognised():
 
     assert result["grounding"] == 1.0
     assert [d["value"] for d in result["derived_claims"]] == ["120"]
+
+
+def test_percentage_point_difference_is_no_longer_admitted_as_a_derivation():
+    """**有意收窄的能力，不是回归**：方案文档举的 `20%→35%` 写「提升 15 个百分点」
+    是 `35 - 20`，推导运算表禁掉加减之后不再算推导，按无据处理。
+
+    取舍与依据写在 `src/agent/citations.py` 的 `_DERIVATION_OPS` 注释里：
+    可复现的消融口径下 1..1000 漏放行从 5.00% 降到 0.80%，且新增放行 0 个。
+
+    这里钉的是**当前取舍**，不是"永远别变"：哪天要恢复加减，把本测试反过来即可，
+    那是个能被 review 看见的动作——而不是悄悄在注释里改一行。
+    """
+    growth = EvidenceStore.from_extracted_data([{
+        "key": "adoption",
+        "value": "客户增长率由 20% 提升至 35%。",
+        "source_url": "https://acme.test/adoption",
+    }])
+    ev = cite(growth, "adoption")
+    result = verify_report(f"同期客户增长率提升 15 个百分点 {ev}\n", growth)
+
+    assert result["grounding"] == 0.0
+    assert result["passed"] is False
+    assert result["derived_claims"] == []
 
 
 def test_two_constants_in_one_expression_are_not_a_derivation(discount_store):
@@ -779,15 +844,26 @@ _NARROW_CONSTANTS = {10.0: "十进制", 12.0: "月数"}
 # 不只钉"两者相等"这个关系——变异测试证实：把对照组的 wide 改窄，
 # `wide_leaks == narrow_leaks` 就会恒真，保护整个失效。钉住具体数字之后，
 # 改窄或改宽都会红；要改就得连这串数字一起改，那是个能被 review 看见的动作。
-_WIDE_ONLY_LEAKS = {701, 751, 800, 849, 899}
+#
+# 原本是 5 个（701/751/800/849/899），其中四个靠加减凑出来；推导表禁掉加减后
+# 只剩 `800 = 8 × 100`——这恰好说明 100 这个常数剩下的唯一功能就是放行"证据数×百"
+# 这种编造值，是它唯一的漏放行来源。
+_WIDE_ONLY_LEAKS = {800}
 
 
-def _leaked_numbers(constants, hi):
-    """在给定常数集下，1..hi 里有多少编造数字会被"推导"放过（不含证据原有数字）。"""
+def _leaked_numbers(constants, hi, ops=None):
+    """在给定常数集（与可选运算表）下，1..hi 里有多少编造数字会被"推导"放过。
+
+    `ops` 默认用生产运算表。传别的表是为了做消融对照——`test_dropping_addition...`
+    靠它把"禁加减"这个决定的收益当场跑出来，而不是只在注释里写个数字。
+    """
     import src.agent.citations as mod
 
     original = mod.DERIVATION_CONSTANTS
+    original_ops = mod._DERIVATION_OPS
     mod.DERIVATION_CONSTANTS = dict(constants)
+    if ops is not None:
+        mod._DERIVATION_OPS = tuple(ops)
     try:
         store = EvidenceStore.from_extracted_data([{
             "key": "pricing",
@@ -803,6 +879,35 @@ def _leaked_numbers(constants, hi):
                 and verify_report(f"定价为 {n} 美元/席位/月{p}", store)["violation_count"] == 0}
     finally:
         mod.DERIVATION_CONSTANTS = original
+        mod._DERIVATION_OPS = original_ops
+
+
+def test_dropping_addition_cuts_leakage_and_adds_nothing():
+    """把"禁加减"这个决定钉成**当场可复现**的对照，而不是只写在注释里的数字。
+
+    这里把含加减的旧运算表临时装回去跑同一套扫描，与生产表逐个数字对比：
+      1. 只乘除必须是旧表的**子集**——收紧不放行任何原本被拦的数字；
+      2. 漏放行数量要降到旧表的一半以下——收紧确实有用，不是白挨一刀。
+
+    引用 `_derivation_add/_derivation_sub` 是刻意的：它们因此是对照组的一部分，
+    而不是死代码。真要删，得先把这条测试一起删，那是个能被 review 看见的动作。
+    """
+    import src.agent.citations as mod
+
+    mul_div = mod._DERIVATION_OPS
+    with_addition = mul_div + (
+        ("+", mod._derivation_add),
+        ("-", mod._derivation_sub),
+    )
+    assert [op for op, _ in mul_div] == ["×", "÷"], "对照组的前提：生产表确实是只乘除"
+
+    strict = _leaked_numbers(_NARROW_CONSTANTS, 1000, ops=mul_div)
+    loose = _leaked_numbers(_NARROW_CONSTANTS, 1000, ops=with_addition)
+
+    assert strict <= loose, f"禁加减反而放行了新数字：{sorted(strict - loose)}"
+    assert len(strict) * 2 < len(loose), (
+        f"收紧收益消失了：只乘除漏 {len(strict)} 个，含加减漏 {len(loose)} 个"
+    )
 
 
 def test_dropping_100_and_1000_cost_nothing_and_only_tightens():
