@@ -303,6 +303,15 @@ def run_cases(manifest: Dict[str, Any], only: Optional[List[str]] = None) -> Lis
                     "mode": mode,
                     "status": run_out["state"].get("status"),
                     "termination_reason": run_out["state"].get("termination_reason"),
+                    # 排障带出：分母/推导句直接决定 grounding，CI annotation 可见
+                    "citation_debug": {
+                        k: run_out["state"].get("citation_report", {}).get(k)
+                        for k in ("claims_checked", "citations_seen",
+                                  "derived_claim_count", "citation_coverage")
+                    },
+                    "derived_claims": (run_out["state"].get("citation_report", {}) or {}).get(
+                        "derived_claims", []
+                    )[:2],
                     "metrics": metrics,
                 })
             except Exception as exc:

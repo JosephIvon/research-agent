@@ -74,15 +74,17 @@ def test_smoke_cross_source_case_cites_all_sources():
     assert case["status"] == "completed", case["termination_reason"]
 
     metrics = case["metrics"]
+    detail = json.dumps(
+        {k: v for k, v in case.items() if k not in ("metrics",)},
+        ensure_ascii=False, default=str,
+    )[:600]
     assert metrics["sources_total"] == 10
     assert metrics["sources_cited"] == metrics["sources_total"], \
-        f"跨来源综合丢了 {metrics['sources_total'] - metrics['sources_cited']} 个来源"
+        f"跨来源综合丢了 {metrics['sources_total'] - metrics['sources_cited']} 个来源；{detail}"
     assert metrics["source_citation_ratio"] == 1.0
     assert metrics["grounding"] >= 0.7 and metrics["dimension_coverage"] >= 0.85, \
-        f"低于 M7 触发阈值，应触发 RAG 消融实验；grounding={metrics.get('grounding')} " \
-        f"dimension={metrics.get('dimension_coverage')} " \
-        f"missing_dims={metrics.get('dimensions_missing')} " \
-        f"violations={json.dumps(case.get('citation_violations') or [], ensure_ascii=False)[:200]}"
+        f"低于 M7 触发阈值；grounding={metrics.get('grounding')} " \
+        f"dimension={metrics.get('dimension_coverage')} missing={metrics.get('dimensions_missing')}；{detail}"
 
 
 def test_gate_passes_on_current_baseline():
