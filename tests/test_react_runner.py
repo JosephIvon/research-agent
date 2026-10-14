@@ -572,5 +572,31 @@ def test_without_budget_the_extract_call_never_touches_usage(offline, monkeypatc
     # `if usage_sink is not None` 判定，显式传 None 与不传语义等价。
     assert seen, "extract_facts 根本没调 LLM，用例失去意义"
     assert all(not callable(sink) for sink in seen), (
-        f"无 budget 时不得传入可调用的 usage_sink，实测 {seen}"
+        f"无 budget 时不得传入可调用的 sink，实测 {seen}"
     )
+
+
+# --------------------------------------------------------------------------
+# STOP_REASONS 契约
+# --------------------------------------------------------------------------
+
+def test_stop_reasons_constant_stays_in_sync_with_the_runner():
+    """`STOP_REASONS` 此前全仓零引用，是一份没人核对的"契约文档"。
+
+    它列的是 runner 真正会产出的全部终止原因——多一个少一个都会让读代码的人
+    对终止路径产生误判（前端按 stop_reason 分支、评测按它归类）。这里把它钉成
+    可执行断言：常量里多写的、漏写的、拼错的都算失败。
+    """
+    import inspect
+    import re
+
+    from src.agent.trace import STOP_REASONS
+
+    runner_src = inspect.getsource(ReActRunner)
+    produced = set(re.findall(r'stop_reason\s*(?::\s*|=\s*)"([a-z_]+)"', runner_src))
+
+    assert produced, "没从 runner 源码里解析出任何 stop_reason 字面量，锚点失效"
+    extra = set(STOP_REASONS) - produced
+    missing = produced - set(STOP_REASONS)
+    assert not extra, f"STOP_REASONS 列了 runner 不会产出的值：{sorted(extra)}"
+    assert not missing, f"runner 会产出 STOP_REASONS 未登记的值：{sorted(missing)}"

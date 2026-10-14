@@ -218,9 +218,3 @@ class QualityScorer:
         # 机器附录标记：本节由确定性代码生成，引用校验（agent.citations）会
         # 跳过标记内内容——这里的数字来自程序计算，不是模型的事实主张。
         return f"<!--machine-appendix-->\n{section}<!--/machine-appendix-->"
-
-
-def calculate_report_quality(competitors: List[Dict[str, Any]]) -> QualityReport:
-    """便捷函数：计算报告质量"""
-    scorer = QualityScorer(competitors)
-    return scorer.evaluate()

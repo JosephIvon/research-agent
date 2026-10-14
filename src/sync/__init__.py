@@ -37,18 +37,5 @@ class DocSyncManager:
         except Exception as e:
             return {"platform": "tencent", "error": str(e)}
 
-    def sync_to_all(self, markdown_content: str, title: Optional[str] = None, platforms: Optional[list] = None) -> Dict[str, Any]:
-        """同步到多个平台"""
-        platforms = platforms or ["feishu", "tencent"]
-        results = {}
-
-        if "feishu" in platforms:
-            results["feishu"] = self.sync_to_feishu(markdown_content, title)
-
-        if "tencent" in platforms:
-            results["tencent"] = self.sync_to_tencent(markdown_content, title)
-
-        return results
-
 
 doc_sync_manager = DocSyncManager()

@@ -644,24 +644,6 @@ def _build_derivation(operands: Sequence[_Operand], index: Dict[float, List[_Der
     return None
 
 
-def derive_number(
-    token: str,
-    evidences: Sequence[Evidence],
-) -> Optional[Dict[str, Any]]:
-    """判定句中这个数字能否由**所引证据**的数值推导得出。是则返回推导记录，否则 None。
-
-    纯函数：不调 LLM、不读时钟、不用随机数，同样的 (token, evidences) 永远同样的结果。
-    操作数只能来自 `evidences` 的数值集合或 `DERIVATION_CONSTANTS`——
-    **不能**读整个 store，否则报告随便引一条证据就能把别处的数字借来当"前提"。
-    """
-    try:
-        target = float(token)
-    except ValueError:
-        return None
-    operands, index = _derivation_index(evidences)
-    return _probe_derivation(operands, index, target)
-
-
 def _derivation_index(
     evidences: Sequence[Evidence],
 ) -> Tuple[List[_Operand], Dict[float, List[_Derivation]]]:

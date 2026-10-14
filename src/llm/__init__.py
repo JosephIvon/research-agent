@@ -978,37 +978,6 @@ def get_llm_client(provider: Optional[str] = None) -> LLMClient:
     return client_class()
 
 
-def get_llm_client_with_fallback(
-    primary: Optional[str] = None,
-    fallback: Optional[str] = None
-) -> tuple[LLMClient, Optional[LLMClient]]:
-    """
-    获取主 LLM 客户端和备用客户端
-
-    Args:
-        primary: 主提供商名称
-        fallback: 备用提供商名称（默认使用 LLM_FALLBACK_PROVIDER）
-
-    Returns:
-        tuple: (主客户端, 备用客户端或None)
-    """
-    fallback_provider = fallback or LLM_FALLBACK_PROVIDER
-
-    primary_client = get_llm_client(primary or LLM_PROVIDER)
-    fallback_client = None
-
-    if fallback_provider and fallback_provider != (primary or LLM_PROVIDER).lower():
-        try:
-            fallback_class = _PROVIDERS.get(fallback_provider.lower())
-            if fallback_class:
-                fallback_client = fallback_class()
-        except ValueError:
-            logger.warning(f"Fallback provider {fallback_provider} is not configured")
-            fallback_client = None
-
-    return primary_client, fallback_client
-
-
 def list_available_providers() -> List[str]:
     """获取可用的LLM提供商列表"""
     return list(_PROVIDERS.keys())

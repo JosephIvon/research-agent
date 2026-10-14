@@ -189,9 +189,3 @@ def reset_all_circuit_breakers() -> None:
     with _breakers_lock:
         for breaker in _circuit_breakers.values():
             breaker.reset()
-
-
-def get_all_breaker_status() -> list[dict]:
-    """获取所有熔断器状态"""
-    with _breakers_lock:
-        return [breaker.get_status() for breaker in _circuit_breakers.values()]

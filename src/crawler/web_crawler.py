@@ -352,15 +352,6 @@ class WebCrawler:
         await route.continue_()
 
 
-def fetch_page_sync(
-    url: str,
-    auth_credentials: Optional[Dict[str, str]] = None,
-    login_url: Optional[str] = None
-) -> str:
-    """同步版本的页面抓取"""
-    return asyncio.run(_fetch_page_async(url, auth_credentials, login_url))
-
-
 async def _fetch_page_async(
     url: str,
     auth_credentials: Optional[Dict[str, str]] = None,
