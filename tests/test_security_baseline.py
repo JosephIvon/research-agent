@@ -146,15 +146,33 @@ def test_competitive_request_accepts_per_site_credentials(monkeypatch, auth_head
 
 @pytest.mark.asyncio
 async def test_fetch_all_competitors_uses_per_site_credentials(monkeypatch):
-    from src.workflow.mvp_workflow import MVPWorkflow
+    """每站的凭据必须**逐站**传下去，不能串味（alpha 的账号不能发给 beta）。
 
-    workflow = object.__new__(MVPWorkflow)
+    注意必须同时替换 `WebCrawler`：`_fetch_all_competitors` 现在整批共享一个
+    爬虫实例（`async with WebCrawler() as shared_crawler`），只替换
+    `_fetch_single_competitor` 拦不住上下文管理器——它会真的去启动 playwright，
+    本机没装浏览器时抛的是 BrowserType.launch 而不是一个能指明问题的断言失败。
+    """
+    from src.workflow import mvp_workflow as wf
+
+    workflow = object.__new__(wf.MVPWorkflow)
     calls = []
 
-    async def fake_fetch(url, auth_credentials=None, login_url=None, custom_selectors=None):
+    class _FakeCrawler:
+        """整批共享实例的替身：不碰 playwright，也不发起任何网络请求。"""
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    async def fake_fetch(url, auth_credentials=None, login_url=None,
+                         custom_selectors=None, crawler=None):
         calls.append((url, auth_credentials, login_url))
         return {"name": url, "url": url, "extracted_data": [], "status": "success", "error_message": None}
 
+    monkeypatch.setattr(wf, "WebCrawler", _FakeCrawler)
     monkeypatch.setattr(workflow, "_fetch_single_competitor", fake_fetch)
     await workflow._fetch_all_competitors([
         {

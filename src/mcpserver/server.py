@@ -133,15 +133,60 @@ async def _health(request):  # 挂载路径探测用，不暴露任何状态
     return JSONResponse({"service": "research-agent-mcp", "stateless": True})
 
 
+def mcp_sdk_available() -> bool:
+    """官方 MCP SDK 是否可用。供 server.py 的就绪探针与降级路径查询。"""
+    return _SDK_AVAILABLE
+
+
+MCP_UNAVAILABLE_REMEDY = "uv add 'mcp>=2.3' 后重启服务"
+
+
+def _unavailable_asgi_app():
+    """SDK 缺失时的占位子应用：任何 HTTP 请求回 503 + 可执行的修复建议。
+
+    **刻意不 raise**：`app.mount("/mcp", ...)` 写在 `server.py` 的模块顶层，
+    一旦这里抛异常，`import server` 就失败——实测把 5 个测试文件打成 collection
+    error，整个后端套件跑不起来。
+
+    MCP 是**可选的对外能力**（外部 MCP 客户端调搜索/抓取/报告）。它缺席时主链路
+    （报告生成、任务队列、引用校验）跟它毫无关系，让整个 API 为此起不来代价不对等。
+    可用性没有被藏起来：`/health/ready` 的 `mcp` 段如实报告，`/mcp` 本身回 503。
+    """
+    body = json.dumps({
+        "error": "mcp_unavailable",
+        "message": "mcp SDK 未安装，MCP 接口不可用",
+        "remedy": MCP_UNAVAILABLE_REMEDY,
+    }, ensure_ascii=False).encode("utf-8")
+
+    async def _app(scope, receive, send):
+        if scope.get("type") != "http":
+            return
+        await send({
+            "type": "http.response.start",
+            "status": 503,
+            "headers": [
+                (b"content-type", b"application/json; charset=utf-8"),
+                (b"content-length", str(len(body)).encode("ascii")),
+            ],
+        })
+        await send({"type": "http.response.body", "body": body})
+
+    return _app
+
+
 def create_mcp_asgi_app(registry: Optional[ToolRegistry] = None):
     """可挂载的 ASGI 子应用（streamable-http，无状态）。
 
     挂载到 FastAPI：`app.mount("/mcp", create_mcp_asgi_app())`。
     无状态模式不要求客户端维持会话 ID，契合"搜索/抓取/报告"的
     请求-响应形态；会话/生命周期由 SDK 的 streamable_http_app 管理。
+
+    SDK 缺失时**返回 503 占位子应用**而不是抛异常——理由见 `_unavailable_asgi_app`。
+    `create_mcp_server()` / `mcp_tool_definitions()` 仍照常 raise：调用它们意味着
+    代码里有个假设"SDK 一定在"，那属于编程错误，应该立刻炸。
     """
     if not _SDK_AVAILABLE:
-        raise RuntimeError("mcp SDK 未安装：uv add 'mcp>=2.3'")
+        return _unavailable_asgi_app()
 
     registry = registry or build_mcp_registry()
     server = create_mcp_server(registry)

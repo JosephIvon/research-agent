@@ -15,15 +15,19 @@
   URL 二次 SSRF 校验、超时、统一返回 `{ok, data, error, elapsed}` 全部继承。
 """
 from src.mcpserver.server import (
+    MCP_UNAVAILABLE_REMEDY,
     build_mcp_registry,
     create_mcp_asgi_app,
     create_mcp_server,
+    mcp_sdk_available,
     mcp_tool_definitions,
 )
 
 __all__ = [
+    "MCP_UNAVAILABLE_REMEDY",
     "build_mcp_registry",
     "create_mcp_server",
     "create_mcp_asgi_app",
+    "mcp_sdk_available",
     "mcp_tool_definitions",
 ]

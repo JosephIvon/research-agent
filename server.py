@@ -1366,6 +1366,13 @@ def health_ready():
 
     credential = assess_llm_credential()
     usable = credential.get("credential") in ("ok", "not_required")
+
+    # MCP 是**可选的对外能力**：SDK 缺席只让 /mcp 回 503，主链路不受影响
+    # （见 src/mcpserver/server.py 的 _unavailable_asgi_app）。所以就绪判定
+    # 仍只看 LLM，这里额外如实报告 MCP 状态——不报告才是隐瞒。
+    from src.mcpserver import mcp_sdk_available
+
+    mcp_available = mcp_sdk_available()
     payload = {
         "status": "ready" if usable else "not_ready",
         "service": "research-agent",
@@ -1373,6 +1380,10 @@ def health_ready():
             "provider": credential.get("provider") or LLM_PROVIDER,
             "credential": credential.get("credential"),
             "remedy": credential.get("message") or None,
+        },
+        "mcp": {
+            "available": mcp_available,
+            "remedy": None if mcp_available else "uv add 'mcp>=2.3' 后重启服务",
         },
     }
     if not usable:
