@@ -31,8 +31,8 @@ class ConfigManager:
         "SEARCH_MAX_RESULTS",
         "RATE_LIMIT_PER_IP",
         "RATE_LIMIT_PER_TOKEN",
-        "VERIFICATION_PASS_THRESHOLD",
-        "VERIFICATION_WARN_THRESHOLD",
+        "EXTRACTION_SOURCE_COVERAGE_MIN",
+        "EXTRACTION_MIN_EVIDENCE_ITEMS",
         "SEARCH_TIMEOUT",
         "CRAWL_MAX_CONCURRENCY",
         "CRAWL_MIN_CONCURRENCY",
@@ -62,9 +62,9 @@ class ConfigManager:
         self._config["RATE_LIMIT_PER_IP"] = os.getenv("RATE_LIMIT_PER_IP", "60/minute")
         self._config["RATE_LIMIT_PER_TOKEN"] = os.getenv("RATE_LIMIT_PER_TOKEN", "120/minute")
 
-        # Threshold settings
-        self._config["VERIFICATION_PASS_THRESHOLD"] = float(os.getenv("VERIFICATION_PASS_THRESHOLD", "7.0"))
-        self._config["VERIFICATION_WARN_THRESHOLD"] = float(os.getenv("VERIFICATION_WARN_THRESHOLD", "5.0"))
+        # 抽取质量门禁（原先是对 LLM 自评 confidence 求平均，已废弃）
+        self._config["EXTRACTION_SOURCE_COVERAGE_MIN"] = float(os.getenv("EXTRACTION_SOURCE_COVERAGE_MIN", "0.8"))
+        self._config["EXTRACTION_MIN_EVIDENCE_ITEMS"] = int(os.getenv("EXTRACTION_MIN_EVIDENCE_ITEMS", "3"))
 
         # Sync settings
         self._config["FEISHU_SYNC_ENABLED"] = bool(os.getenv("FEISHU_APP_ID") and os.getenv("FEISHU_APP_SECRET"))

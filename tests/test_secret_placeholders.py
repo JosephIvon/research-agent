@@ -9,10 +9,13 @@
    串在仓库里根本不存在，等于没校验）。
 
 settings 模块在 import 时就会 load_dotenv() 并 os.makedirs(OUTPUT_DIR)，
-"加载期是否抛错"受本进程已有环境与真实 .env 污染，只能在全新子进程里验证；
-子进程用 APP_ENV/JWT_SECRET_KEY 显式覆盖，load_dotenv 默认不覆盖已存在的
-环境变量，所以开发者本机的 .env 不会把断言变成假绿。user_db 相反，
-monkeypatch 隔离 DB 路径与模块级单例就够了。
+"加载期是否抛错"受本进程已有环境与真实 .env 污染，只能在全新子进程里验证。
+
+子进程一律带 PYTHON_DOTENV_DISABLED=1 把开发者本机的 .env 整个屏蔽掉。原先只靠
+"load_dotenv 默认不覆盖已存在的环境变量"——那只对**显式设了变量**的方向成立。
+一旦测的是"完全没设应当报错"（test_production_missing_jwt_secret_keeps_legacy_error），
+本机 .env 会把值补回来，断言直接翻红。同一个文件里的正向用例因此长期是
+CI 绿、本机红。user_db 相反，monkeypatch 隔离 DB 路径与模块级单例就够了。
 """
 import logging
 import os
@@ -35,10 +38,15 @@ PLACEHOLDER_SECRETS = [
 
 
 def _import_settings(env_overrides):
-    """在全新解释器里 import settings，返回 CompletedProcess。"""
+    """在全新解释器里 import settings，返回 CompletedProcess。
+
+    PYTHON_DOTENV_DISABLED=1 让 load_dotenv() 变空操作：本机 .env 里若恰好有
+    JWT_SECRET_KEY，"未设置应当报错"的断言会被它顶成假绿。
+    """
     env = {
         **os.environ,
         "PYTHONPATH": str(PROJECT_ROOT),
+        "PYTHON_DOTENV_DISABLED": "1",
         **env_overrides,
     }
     return subprocess.run(
@@ -78,7 +86,10 @@ def test_production_missing_jwt_secret_keeps_legacy_error():
         [sys.executable, "-c", "import src.config.settings"],
         capture_output=True,
         text=True,
-        env={**env, "PYTHONPATH": str(PROJECT_ROOT), "APP_ENV": "production"},
+        # 不屏蔽 .env 的话，本机开发用的 JWT_SECRET_KEY 会被 load_dotenv 补回来，
+        # 于是"没设应当报错"的断言翻红——CI 无 .env 所以那边一直是绿的。
+        env={**env, "PYTHONPATH": str(PROJECT_ROOT), "APP_ENV": "production",
+             "PYTHON_DOTENV_DISABLED": "1"},
         cwd=str(PROJECT_ROOT),
         timeout=120,
     )

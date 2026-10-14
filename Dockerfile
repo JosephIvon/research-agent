@@ -47,9 +47,11 @@ USER appuser
 # 暴露端口
 EXPOSE 8080
 
-# 健康检查
+# 健康检查。用**就绪**探针：缺 LLM 密钥时 /health 仍返 200，容器会被判为健康，
+# 直到用户点"开始调研"才 401。/health/ready 在依赖不可用时返回 503，
+# 让编排系统能据此摘流量或直接暴露配置问题。
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD curl -f http://localhost:8080/health/ready || exit 1
 
 # 启动命令
 CMD ["uv", "run", "python", "server.py"]

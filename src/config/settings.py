@@ -2,7 +2,7 @@
 import logging
 import os
 import re
-from typing import Optional
+from typing import Any, Dict, Optional
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,112 @@ def describe_weak_secret(key: str, value: str, min_length: int = SECRET_MIN_LENG
     if is_placeholder_secret(value):
         return f"{key} 仍是 .env.example 里的占位符"
     return f"{key} 长度不足 {min_length} 位（当前 {len(value.strip())} 位）"
+
+
+# ---------------------------------------------------------------------------
+# LLM provider 配置体检
+# ---------------------------------------------------------------------------
+# provider -> (密钥环境变量名, 最小长度)。
+# 只检查**被选中的那个** provider：其余没配是正常的（多 provider 部署本来就只用一个），
+# 把没配的全判成错误只会制造噪声。
+LLM_PROVIDER_KEYS = {
+    "minimax": ("MINIMAX_API_KEY", 32),
+    "deepseek": ("DEEPSEEK_API_KEY", 32),
+    "doubao": ("DOUBAO_API_KEY", 32),
+    "glm": ("GLM_API_KEY", 32),
+    "openai": ("OPENAI_API_KEY", 32),
+}
+
+# 不需要密钥的 provider：离线脚本化替身（M1 的 ScriptedLLMClient）与测试用 mock。
+# 加新 provider 时若既不在上面两张表里，会被 test_llm_config.py 判红——
+# 这是刻意的：漏登记等于让"缺密钥"这类错误静默通过。
+LLM_PROVIDERS_WITHOUT_KEY = {"fake", "scripted", "mock", "offline"}
+
+# 体检结论
+LLM_CREDENTIAL_OK = "ok"
+LLM_CREDENTIAL_MISSING = "missing"
+LLM_CREDENTIAL_PLACEHOLDER = "placeholder"
+LLM_CREDENTIAL_TOO_SHORT = "too_short"
+LLM_CREDENTIAL_NOT_REQUIRED = "not_required"
+LLM_CREDENTIAL_UNKNOWN_PROVIDER = "unknown_provider"
+
+
+def _llm_credential_value(env_key: str) -> str:
+    """读取 provider 密钥的实际取值。
+
+    **优先读模块常量**——`src/llm` 里的客户端用的是 `settings.MINIMAX_API_KEY` 这类
+    模块常量，而不是每次 `os.getenv`。若体检走 os.getenv 而客户端走常量，
+    两者一旦不一致（测试注入、运行期改 env），健康检查就会对真实使用的密钥说谎。
+    回落到 os.getenv 只是为了让函数在常量尚未定义时也能安全工作。
+    """
+    value = globals().get(env_key)
+    if value:
+        return str(value)
+    return os.getenv(env_key) or ""
+
+
+def assess_llm_credential(provider: Optional[str] = None) -> Dict[str, Any]:
+    """检查所选 LLM provider 的密钥配置是否可用。
+
+    **只做配置层检查，绝不发起网络请求**——它会被 `/health` 调用，
+    而健康检查不该有副作用、烧配额或在 provider 故障时把探针一起拖死。
+
+    返回的 dict 不含密钥值，只含判定结论，供日志与 `/health` 使用。
+    """
+    selected = (provider or LLM_PROVIDER or "").lower()
+    if not selected:
+        return {"provider": "", "credential": LLM_CREDENTIAL_MISSING, "message": "未指定 LLM_PROVIDER"}
+    if selected in LLM_PROVIDERS_WITHOUT_KEY:
+        return {
+            "provider": selected,
+            "credential": LLM_CREDENTIAL_NOT_REQUIRED,
+            "message": "该 provider 使用脚本化响应，无需密钥",
+        }
+    spec = LLM_PROVIDER_KEYS.get(selected)
+    if spec is None:
+        return {
+            "provider": selected,
+            "credential": LLM_CREDENTIAL_UNKNOWN_PROVIDER,
+            "message": f"未登记的 provider：{selected}",
+        }
+
+    env_key, min_length = spec
+    value = _llm_credential_value(env_key)
+    if not value.strip():
+        return {
+            "provider": selected,
+            "env_key": env_key,
+            "credential": LLM_CREDENTIAL_MISSING,
+            "message": f"{env_key} 未设置",
+        }
+    if is_placeholder_secret(value):
+        return {
+            "provider": selected,
+            "env_key": env_key,
+            "credential": LLM_CREDENTIAL_PLACEHOLDER,
+            "message": describe_weak_secret(env_key, value, min_length),
+        }
+    if len(value.strip()) < min_length:
+        return {
+            "provider": selected,
+            "env_key": env_key,
+            "credential": LLM_CREDENTIAL_TOO_SHORT,
+            "message": describe_weak_secret(env_key, value, min_length),
+        }
+    return {
+        "provider": selected,
+        "env_key": env_key,
+        "credential": LLM_CREDENTIAL_OK,
+        "message": "",
+    }
+
+
+def llm_credential_usable(provider: Optional[str] = None) -> bool:
+    """所选 provider 的密钥是否真的能用。"""
+    return assess_llm_credential(provider)["credential"] in (
+        LLM_CREDENTIAL_OK,
+        LLM_CREDENTIAL_NOT_REQUIRED,
+    )
 
 
 def _get_bool(key: str, default: bool = False) -> bool:
@@ -143,9 +249,16 @@ MIN_COMPETITORS_FOR_COMPARISON = _get_int("MIN_COMPETITORS_FOR_COMPARISON", 2)  
 
 SSE_KEEPALIVE_SECONDS = _get_int("SSE_KEEPALIVE_SECONDS", 30)  # SSE 心跳间隔（秒）
 
-# 核查阈值配置（可通过环境变量动态调整）
-VERIFICATION_PASS_THRESHOLD = _get_float("VERIFICATION_PASS_THRESHOLD", 7.0)
-VERIFICATION_WARN_THRESHOLD = _get_float("VERIFICATION_WARN_THRESHOLD", 5.0)
+# 抽取质量门禁（可通过环境变量动态调整）
+#
+# 原先这里是 VERIFICATION_PASS/WARN_THRESHOLD，对 LLM 自报 confidence 求平均后比较。
+# 该口径已废弃：confidence 是模型给自己的评分（缺省时由 extract_key_info 硬编码 0.8），
+# 实测对"全部 confidence=0.5"的脏数据依然放行，对"全部 0.8"的空壳数据给 8.0 分——
+# 它不是质量门禁，只是恒真的存在性检查。换成两项可确定性验证的属性：
+#   - 来源覆盖率：抽取出的数据里有多少条带得上可追溯的 source_url
+#   - 证据条数：够不够写出一份有依据的报告
+EXTRACTION_SOURCE_COVERAGE_MIN = _get_float("EXTRACTION_SOURCE_COVERAGE_MIN", 0.8)
+EXTRACTION_MIN_EVIDENCE_ITEMS = _get_int("EXTRACTION_MIN_EVIDENCE_ITEMS", 3)
 
 # 服务配置
 APP_ENV = os.getenv("APP_ENV", "development").lower()
@@ -188,6 +301,26 @@ if APP_ENV == "production" and set(ALLOWED_HOSTS) <= {
         "生产环境 ALLOWED_HOSTS 仅含回环/内部地址（%s）。若通过域名或外部 IP 访问，"
         "TrustedHostMiddleware 将返回 400；请在 .env 显式配置 ALLOWED_HOSTS。",
         ", ".join(ALLOWED_HOSTS),
+    )
+
+# ---------------------------------------------------------------------------
+# LLM 密钥可用性体检（放在 APP_ENV 定义之后，才能区分生产与非生产）
+# ---------------------------------------------------------------------------
+# 为什么必须在启动期拦：实测 `MINIMAX_API_KEY=YOUR_KEY_HERE` 时客户端**照常构造成功**，
+# 只在真正发请求时才 401——配置错误此前要等用户点"开始调研"才暴露。
+# 非生产只警告：开发与测试经常没有真实密钥，硬失败会挡住离线流程。
+_llm_credential = assess_llm_credential()
+if APP_ENV == "production":
+    if not llm_credential_usable():
+        raise ValueError(
+            f"LLM provider '{LLM_PROVIDER}' is not usable in production: "
+            f"{_llm_credential['message']}"
+        )
+elif not llm_credential_usable():
+    logger.warning(
+        "LLM provider '%s' 的密钥不可用：%s（仅生产环境会拒绝启动）",
+        LLM_PROVIDER,
+        _llm_credential["message"],
     )
 
 # 路径配置

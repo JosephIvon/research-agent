@@ -149,30 +149,82 @@ def test_passing_report_is_not_marked():
     assert "低可信标记" not in marked
 
 
+GAP_REPORT = (
+    "**容量评估**：付费层限速策略公开页面未披露，建议向厂商索取书面确认，"
+    "其中限速 60 次/分钟。\n"
+)
+ASSERTION_REPORT = "Acme 企业版定价 39 美元/席位/月。\n"
+
+
+def test_low_trust_mark_separates_gap_acknowledgement_from_accusations():
+    """真·无据断言和"已标注的信息缺口"必须分组。
+
+    混在一起时，用户读到的是系统在指控一篇诚实标注了缺口的报告——
+    真实 MiniMax 冒烟里被判 uncited 的正是缺口句。
+    """
+    store = EvidenceStore.from_extracted_data(EXTRACTED)
+    marked = _workflow_stub()._mark_low_trust(GAP_REPORT, verify_report(GAP_REPORT, store))
+
+    assert "信息缺口" in marked
+    assert "不需要" in marked or "无需修正" in marked
+    assert "需要修正" in marked or "无需修正" in marked, "必须明确说清哪些不用改"
+    assert GAP_REPORT in marked, "原文必须保留"
+
+
+def test_low_trust_mark_still_lists_real_assertions_under_repair():
+    workflow = _workflow_stub()
+    store = EvidenceStore.from_extracted_data(EXTRACTED)
+    marked = workflow._mark_low_trust(ASSERTION_REPORT, verify_report(ASSERTION_REPORT, store))
+
+    assert "需要修正" in marked
+    assert "未标注证据" in marked
+    assert "信息缺口" not in marked.split("---")[0], "纯断言场景不该出现缺口分组"
+
+
+def test_grouping_never_turns_a_failing_report_into_a_passing_one():
+    """底线：分组只改措辞。缺口句照样让报告不通过。"""
+    store = EvidenceStore.from_extracted_data(EXTRACTED)
+    gap_result = verify_report(GAP_REPORT, store)
+    assert gap_result["passed"] is False
+    assert gap_result["violation_count"] > 0
+
+    marked = _workflow_stub()._mark_low_trust(GAP_REPORT, gap_result)
+    assert "低可信标记" in marked, "缺口场景仍然必须挂标记"
+
+
 # --------------------------------------------------------------------------
 # 接线：守卫确实在交付路径上
 # --------------------------------------------------------------------------
 
 def test_citation_guard_is_wired_into_run():
-    """校验 + 一次重生成 + 低可信标记必须都在 run() 里，不能是没人调用的方法。"""
+    """校验 + 一次重生成 + 低可信标记必须都在 run() 里，不能是没人调用的方法。
+
+    断言必须精确到**调用点**：只断言 `"verify_report" in source` 会被"把函数体换成硬编码
+    假结果、但 import 还在"的变异蒙混过去——变异验证已经抓到过这种假绿。
+    """
     source = inspect.getsource(MVPWorkflow.run)
 
-    assert "verify_report" in source
+    # 两次真实校验调用（初稿 + 重生成后），而不是"源码里出现过这个名字"
+    assert source.count(
+        'verify_report, state["report_final"], evidence_store'
+    ) == 2, "初稿与重生成后都必须各跑一次真实校验"
+
     assert "format_violations" in source, "重生成必须带违规清单，否则模型不知道改什么"
-    assert "violations_feedback=" in source
-    assert "_mark_low_trust" in source, "不通过时必须显式标记，不能静默交付"
+    assert "violations_feedback=feedback," in source, "必须把违规清单真的传进重生成提示词"
+    assert "_mark_low_trust(state[\"report_final\"], citation_result)" in source, \
+        "不通过时必须显式标记，不能静默交付"
     assert "citation_trusted" in source
 
     # 顺序：必须先校验后落盘
     assert source.index("verify_report") < source.index("_save_report(")
-    # 重生成必须发生在落盘之前
-    assert source.index("violations_feedback=") < source.index("_save_report(")
+    assert source.index("violations_feedback=feedback,") < source.index("_save_report(")
 
 
 def test_run_marks_low_trust_before_saving_to_disk():
     """低可信标记要落在写文件之前——否则磁盘上的报告不带标记。"""
     source = inspect.getsource(MVPWorkflow.run)
-    assert source.index("_mark_low_trust") < source.index("_save_report(")
+    assert "_mark_low_trust(state[\"report_final\"], citation_result)" in source
+    assert source.index("_mark_low_trust(state[\"report_final\"], citation_result)") < source.index("_save_report(")
 
 
 def test_citation_check_happens_after_injection_guard_is_kept():
@@ -180,3 +232,28 @@ def test_citation_check_happens_after_injection_guard_is_kept():
     source = inspect.getsource(MVPWorkflow.run)
     assert "_enforce_report_output(state)" in source
     assert source.index("_enforce_report_output(state)") < source.index("_save_report(")
+
+
+def test_quality_section_is_labelled_completeness_not_trustworthiness():
+    """数据完整度章节不得再自称「质量评分」或「可信度」。
+
+    它只回答"抓到多少数据"，回答不了"结论对不对"——叫可信度就是用数据量冒充事实正确。
+    """
+    from src.tools.quality_scorer import QualityScorer
+
+    section = QualityScorer([]).generate_quality_section()
+
+    assert "数据完整度" in section
+    assert "不衡量结论正确性" in section, "必须当场声明能力边界"
+    assert "质量评分" not in section
+    assert "可信度评分" not in section
+
+
+def test_extraction_gate_is_not_called_trustworthiness():
+    """抽取门禁不得对外称作「可信度」。"""
+    source = inspect.getsource(MVPWorkflow.run)
+
+    assert "可信度评分" not in source, "旧措辞仍在把数据可追溯性说成可信度"
+    assert "不代表结论正确性" in source
+    assert "来源覆盖率" in source
+    assert "可信度由引用校验负责" in source, "必须写明职责边界：可信度归引用校验管"

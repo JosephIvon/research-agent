@@ -38,6 +38,10 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     environment:
+      # LLM_PROVIDER 必须显式透传：容器内 APP_ENV=production，settings 会 fail-closed
+      # 拒绝用占位/缺失密钥启动。CI 用 fake provider 零密钥启动，生产用真实 provider。
+      - LLM_PROVIDER=${LLM_PROVIDER:-minimax}
+      - LLM_FALLBACK_PROVIDER=${LLM_FALLBACK_PROVIDER:-}
       - MINIMAX_API_KEY=${MINIMAX_API_KEY}
       - MINIMAX_BASE_URL=${MINIMAX_BASE_URL}
       - MINIMAX_MODEL=${MINIMAX_MODEL}
@@ -72,7 +76,11 @@ services:
       - ./output:/app/output
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      # 用**就绪**探针而非存活探针：缺 LLM 密钥时 /health 仍返回 200，
+      # 那会让依赖本服务的 nginx/frontend 照常起来，直到用户点"开始调研"才 401。
+      # /health/ready 在密钥不可用时返回 503，配合下方 depends_on: service_healthy
+      # 让整个栈直接暴露配置问题，而不是半可用。
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
       interval: 30s
       timeout: 10s
       retries: 3

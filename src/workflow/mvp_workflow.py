@@ -3,15 +3,15 @@ from pathlib import Path
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 from uuid import uuid4
-from src.llm import get_llm_client, LLMClient
+from src.llm import get_llm_client, strip_thinking, LLMClient, LLMError
 from src.crawler.web_crawler import WebCrawler
 from src.tools.search_tool import SearchTool, get_search_tool
 from src.tools.comparison_tool import ComparisonAnalyzer, infer_competitor_name
 from src.tools.quality_scorer import QualityScorer
 from src.sync import doc_sync_manager
 from src.config.settings import (
-    VERIFICATION_PASS_THRESHOLD,
-    VERIFICATION_WARN_THRESHOLD,
+    EXTRACTION_MIN_EVIDENCE_ITEMS,
+    EXTRACTION_SOURCE_COVERAGE_MIN,
     MAX_RETRIES,
     MAX_FETCH_URLS,
     CRAWL_MAX_CONCURRENCY,
@@ -21,7 +21,13 @@ from src.config.settings import (
     LLM_MAX_CONTENT_CHARS
 )
 from src.security.url_validation import UnsafeURL, validate_fetch_url, validate_fetch_urls
-from src.agent.citations import EvidenceStore, format_violations, verify_report
+from src.agent.citations import (
+    CLAIM_KIND_GAP_ACK,
+    EvidenceStore,
+    NUMBER_RE,
+    format_violations,
+    verify_report,
+)
 from src.security.injection import (
     UNTRUSTED_NOTICE,
     collect_canaries,
@@ -45,10 +51,18 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_json_response(response: str):
-    """解析LLM返回的JSON，支持markdown代码块包装和无包装两种格式"""
+    """解析LLM返回的JSON，支持markdown代码块包装和无包装两种格式
+
+    这里再剥一次 `<think>` 是**第二道防线**：客户端层已经剥过，但只要将来新增的
+    LLM 客户端绕过那一层（或模型把推理塞进代码围栏之外），JSON 解析就会失败，
+    而失败会被 except 兜底成 `content_summary`——结构化数据静默全丢还不报错。
+    解析入口必须自己能扛住推理前缀。
+    """
     if not response:
         raise ValueError("Empty response")
-    text = response.strip()
+    text = strip_thinking(response)
+    if not text:
+        raise ValueError("Response contained only a thinking block")
     if text.startswith("```"):
         lines = text.split("\n")
         if len(lines) >= 3:
@@ -166,33 +180,96 @@ class CoordinatorAgent:
                 "confidence": 0.7
             }]
 
-    async def verify_consistency(self, extracted_data: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """基础一致性核查（合并到协调者，不单独拆agent）"""
+    async def assess_extracted_data(self, extracted_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """抽取质量评估——只测**可确定性验证**的属性。
+
+        刻意不再对 `confidence` 求平均。那个数是 LLM 给自己的评分：模型没返回时
+        由 `extract_key_info` 硬编码成 0.8，所以它衡量的是"模型有多自信"，不是
+        "抽出来的东西有多真"。实测旧口径的行为：
+
+            全部 confidence=0.8（空壳数据）  → 8.0 通过
+            全部 confidence=0.5（最脏数据）  → 5.0 通过
+            空列表                          → 0.0 不通过
+
+        即除了"一条都没有"，什么都放行——那不是门禁，是恒真的存在性检查。
+
+        改为两项真实可测的属性：
+        - **来源覆盖率**：多少条数据带得上可追溯的 source_url。没有来源的事实无法被引用校验
+        - **证据条数**：够不够写出一份有依据的报告
+        模型自评的 confidence 保留为**标注清楚的警告**，不参与门禁。
+        """
         if not extracted_data:
-            return {"score": 0.0, "passed": False, "warnings": []}
+            return {
+                "score": 0.0,
+                "passed": False,
+                "source_coverage": 0.0,
+                "evidence_count": 0,
+                "numeric_evidence_count": 0,
+                "warnings": ["没有抽取到任何数据，无法生成报告"],
+            }
 
-        confidences = [item.get("confidence", 0.5) for item in extracted_data]
-        avg_confidence = sum(confidences) / len(confidences) * 10
+        total = len(extracted_data)
+        with_source = sum(
+            1 for item in extracted_data
+            if isinstance(item, dict) and str(item.get("source_url", "") or "").strip()
+        )
+        numeric_count = sum(
+            1 for item in extracted_data
+            if isinstance(item, dict) and NUMBER_RE.search(str(item.get("value", "") or ""))
+        )
+        source_coverage = with_source / total
 
-        warnings = []
-        for item in extracted_data:
-            if item.get("confidence", 1.0) < 0.7:
-                warnings.append(f"低置信度信息: {item.get('key', 'unknown')}")
+        warnings: List[str] = []
+        if source_coverage < EXTRACTION_SOURCE_COVERAGE_MIN:
+            warnings.append(
+                f"{total - with_source}/{total} 条数据缺少来源链接，无法追溯"
+            )
+        if numeric_count == 0:
+            warnings.append("没有任何一条数据包含数值，报告将无法给出带数字的可核验结论")
+        low_confidence = sum(
+            1 for item in extracted_data
+            if isinstance(item, dict) and float(item.get("confidence", 1.0) or 0) < 0.7
+        )
+        if low_confidence:
+            # 措辞必须写明这是模型自评——它不是客观指标，只是提示抽取可能不稳
+            warnings.append(f"{low_confidence} 条数据的抽取置信度偏低（模型自评，非客观指标）")
 
-        score = round(avg_confidence, 1)
-
-        if score >= VERIFICATION_PASS_THRESHOLD:
-            passed = True
-        elif VERIFICATION_WARN_THRESHOLD <= score < VERIFICATION_PASS_THRESHOLD:
-            passed = True
-        else:
-            passed = False
+        passed = (
+            source_coverage >= EXTRACTION_SOURCE_COVERAGE_MIN
+            and total >= EXTRACTION_MIN_EVIDENCE_ITEMS
+        )
 
         return {
-            "score": score,
+            # score 保留是为了不破坏 SQLite metadata 与接口契约，但其含义已改为
+            # 「来源覆盖率 × 10」——它不再代表任何可信度。
+            "score": round(source_coverage * 10, 1),
             "passed": passed,
-            "warnings": warnings
+            "source_coverage": round(source_coverage, 3),
+            "evidence_count": total,
+            "numeric_evidence_count": numeric_count,
+            "warnings": warnings,
         }
+
+
+# 报告生成的 max_tokens 单独放大，不沿用 LLM 客户端的 4096 默认。
+#
+# 推理模型的 <think> 与正文**共用同一个预算**。实测（MiniMax-M3，同一提示词各 6 次，
+# temperature=0.1，夹具证据 4 条）：
+#
+#   max_tokens=4096  → finish_reason=length 2/6（33%），正文被砍到 954 / 671 字符；
+#                      completion_tokens 中位 3792
+#   max_tokens=16384 → finish_reason=length 0/6，  completion_tokens 中位 2788
+#
+# 两点值得注意：
+# 1. 被截断的报告**不是空的**——它看起来正常，���只少了结论和建议章节，
+#    比"空内容"更隐蔽。客户端的 `cleaned or None` 兜底完全拦不住这种情况。
+# 2. 调大预算**不增加成本**：16384 组的中位消耗反而更低（2788 vs 3792）。
+#    预算给足后模型不必在硬截断线上挣扎，只是**不被强制中断**。
+#
+# 样本量 N=6，2/6 vs 0/6 的 Fisher 单侧 p≈0.45，**统计上不显著**；
+# 但 `finish_reason="length"` 是服务端给出的硬信号，不是推断出来的。
+# 真正确认失败模式的是 smoke4 那次「正文为空」，频率低于本次 12 次采样的检出下限。
+REPORT_MAX_TOKENS = 16384
 
 
 class CopywriterAgent:
@@ -209,12 +286,18 @@ class CopywriterAgent:
         competitors: Optional[List[Dict[str, Any]]] = None,
         quality_report: Any = None,
         evidence_store: Optional[EvidenceStore] = None,
-        violations_feedback: str = ""
+        violations_feedback: str = "",
+        max_tokens: Optional[int] = None
     ) -> str:
         """生成结构化报告，支持竞品对比
 
         `evidence_store` 由调用方传入，以便报告生成完后用**同一份**证据做校验——
         这里如果自己重建，两边的 id 可能对不上，校验就会全量报 unknown_citation。
+
+        `max_tokens` 单独暴露：推理模型的 `<think>` 与正文**共用同一个预算**，
+        预算给小了会出现"推理吃满、正文被硬截断"的残缺报告（实测 4096 下 2/6 被
+        finish_reason=length 砍掉一半正文）。传 None 表示用 `REPORT_MAX_TOKENS`，
+        不是客户端默认值——客户端默认太小。
         """
         evidence_store = evidence_store or EvidenceStore.from_extracted_data(extracted_data)
         evidence_block = (
@@ -277,7 +360,7 @@ class CopywriterAgent:
 
 {evidence_block}
 
-可信度评分：{verification_info.get('score', 'N/A')}/10
+数据可追溯性：来源覆盖率 {verification_info.get('source_coverage', 0):.0%}，证据 {verification_info.get('evidence_count', 0)} 条
 警告信息：{'；'.join(verification_info.get('warnings', [])[:3]) or '无'}
 
 请生成结构化Markdown报告。{feedback_block}"""
@@ -312,14 +395,25 @@ class CopywriterAgent:
 
 {evidence_block}
 
-核查信息：可信度评分 {verification_info.get('score', 'N/A')}/10
+数据可追溯性：来源覆盖率 {verification_info.get('source_coverage', 0):.0%}，证据 {verification_info.get('evidence_count', 0)} 条
 警告：{'；'.join(verification_info.get('warnings', [])) or '无'}
 
 请输出结构化Markdown报告。{feedback_block}"""
                 }
             ]
 
-        response = await self.llm_client.achat_completion(prompt, temperature=0.1)
+        call_kwargs = {"temperature": 0.1, "max_tokens": max_tokens or REPORT_MAX_TOKENS}
+        response = await self.llm_client.achat_completion(prompt, **call_kwargs)
+
+        if not response or not str(response).strip():
+            # 推理模型可能把 max_tokens 全花在 <think> 上，正文一个字都没输出，
+            # 剥离层于是返回 None。这里必须显式失败而不是让空字符串流下去：
+            # 空报告会被 verify_report 平凡判为"四指标全过"（claims=[] → coverage=1.0），
+            # 然后顶着"引用校验通过"的标签交付给用户——静默失败比报错危险得多。
+            raise LLMError(
+                "报告生成返回空内容：模型输出只有推理块（可能被 max_tokens 截断），"
+                "没有得到正文"
+            )
 
         warning_parts = []
         if verification_info.get('warnings'):
@@ -422,22 +516,50 @@ class MVPWorkflow:
             return report
 
         violations = citation_result.get("violations") or []
-        lines = [
+        # 无引用句分两类呈现：**真·无据断言**是系统该指控的；**已识别缺口**是模型在
+        # 诚实标注"这项查不到"，把它和指控并列会让用户误以为报告在编造。
+        # 两类都仍然是违规、都仍然拉低了覆盖率——这里只改读起来像什么。
+        accusations = [v for v in violations
+                       if v.get("type") == "uncited_claim"
+                       and v.get("kind") == CLAIM_KIND_GAP_ACK]
+        real = [v for v in violations if v not in accusations]
+
+        head = (
             "> ⚠️ **低可信标记：本文未通过引用完整性校验**",
             f"> 引用覆盖 {citation_result['citation_coverage']:.0%}｜"
             f"扎根率 {citation_result['grounding']:.0%}｜"
             f"问题 {len(violations)} 处"
             "（已自动重生成一次仍未通过）",
-            ">",
-        ]
-        for item in violations[:8]:
-            lines.append(f"> - [{item.get('type')}] {item.get('detail')}")
-        if len(violations) > 8:
-            lines.append(f"> - ……另有 {len(violations) - 8} 处")
+        )
+        if accusations:
+            head = head[:-1] + (
+                f"> 其中 {len(accusations)} 处是**已主动标注的信息缺口**，"
+                "不是编造——这些内容公开渠道确实查不到",
+                ">",
+            )
+
+        lines = list(head)
+        if real:
+            lines.append("> 需要修正：")
+            for item in real[:8]:
+                lines.append(f"> - [{item.get('type')}] {item.get('detail')}")
+            if len(real) > 8:
+                lines.append(f"> - ……另有 {len(real) - 8} 处")
+        else:
+            lines.append("> 无需修正：全部问题均为已标注的信息缺口。")
+
+        if accusations:
+            lines.append(">")
+            lines.append("> 已标注的信息缺口（原文如实说明了查不到，不要求补引用）：")
+            for item in accusations[:4]:
+                lines.append(f"> - {item.get('detail')}")
+            if len(accusations) > 4:
+                lines.append(f"> - ……另有 {len(accusations) - 4} 处")
+
         lines.append("")
         lines.append("---")
         lines.append("")
-        return "\n".join(lines)
+        return "\n".join(lines) + report
 
     def _enforce_report_output(self, state: Dict[str, Any]) -> None:
         """报告出口的回声校验。
@@ -566,11 +688,14 @@ class MVPWorkflow:
             # Extract is implicit in the crawl data, nothing extra to call
 
             state["status"] = "verifying"
-            self._emit("verify", "verify", "running", "正在校验数据质量和一致性")
-            verification_result = await self.coordinator.verify_consistency(state["extracted_data"])
+            self._emit("verify", "verify", "running", "正在检查抽取数据的来源可追溯性")
+            verification_result = await self.coordinator.assess_extracted_data(state["extracted_data"])
             state["verification_score"] = verification_result["score"]
             state["verification_passed"] = verification_result["passed"]
             state["verification_warnings"] = verification_result["warnings"]
+            state["source_coverage"] = verification_result["source_coverage"]
+            state["evidence_count"] = verification_result["evidence_count"]
+            state["numeric_evidence_count"] = verification_result["numeric_evidence_count"]
 
             successful_competitors = [c for c in state["competitors"] if c["status"] == "success"]
             state["comparison_passed"] = len(successful_competitors) >= MIN_COMPETITORS_FOR_COMPARISON
@@ -582,15 +707,21 @@ class MVPWorkflow:
 
             state["status"] = "writing"
             if not state["verification_passed"]:
-                # 措辞必须是"抽取自评"，不能叫"可信度"——它只是模型对自己抽取结果的
-                # confidence 平均值，是循环论证。可信度由引用校验负责。
+                # 门禁现在只看两项可确定性验证的属性：来源覆盖率与证据条数。
+                # 绝不能再称作"可信度"——可信度由引用校验负责，这里管的是数据能不能追溯。
                 state["report_final"] = (
-                    f"❌ 调研失败：抽取自评分 {state['verification_score']}/10 低于阈值，无法生成报告。\n\n"
-                    "注：该分数是模型对自身抽取结果的平均置信度，**不代表结论正确性**。"
+                    f"❌ 调研中止：来源覆盖率 {state['source_coverage']:.0%}、"
+                    f"证据条数 {state['evidence_count']}，未达生成报告的最低要求。\n\n"
+                    + "\n".join(f"- {w}" for w in state["verification_warnings"])
+                    + "\n\n注：本项只衡量数据是否可追溯，**不代表结论正确性**。"
                 )
                 state["status"] = "failed"
-                state["termination_reason"] = "抽取置信度不足"
-                self._emit("error", "verify", "failed", f"抽取置信度不足：{state['verification_score']}/10")
+                state["termination_reason"] = "抽取数据不足或缺来源"
+                self._emit(
+                    "error", "verify", "failed",
+                    f"抽取数据不足：来源覆盖率 {state['source_coverage']:.0%}、"
+                    f"证据 {state['evidence_count']} 条",
+                )
                 return state
 
             if not quality_report.is_usable:
@@ -802,6 +933,9 @@ class MVPWorkflow:
             "verification_score": None,
             "verification_passed": None,
             "verification_warnings": [],
+            "source_coverage": None,
+            "evidence_count": 0,
+            "numeric_evidence_count": 0,
             "quality_score": None,
             "quality_grade": None,
             "missing_dimensions": [],

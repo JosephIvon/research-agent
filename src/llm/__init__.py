@@ -43,6 +43,34 @@ from src.llm.circuit_breaker import (
 
 logger = logging.getLogger(__name__)
 
+# 推理模型的思考块。MiniMax M3 等模型把思考过程内联在 content 里返回：
+#    <think>用户问的是定价，先找价格。</think>## 结论\n定价 49 美元
+#
+# 不剥离有两个后果：(1) 下游 json.loads 必然失败，结构化抽取静默降级；
+# (2) 思考内容被当成正文交付，并进入引用校验当成模型的事实主张。
+# 实测一次真实冒烟里思考占了输出的 66.6%（5894 字中 3927 字）。
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_THINK_OPEN_RE = re.compile(r"<think>", re.IGNORECASE)
+_THINK_TAG_RE = re.compile(r"</?think>", re.IGNORECASE)
+
+
+def strip_thinking(content: Optional[str]) -> str:
+    """剥离 `<think>…</think>` 推理块，返回纯正文。空/None 输入返回 ""。
+
+    未闭合的块按「截断」处理：`<think>` 之后全是推理，模型没来得及给答案，
+    此时返回空串——宁可让调用方知道没内容，也不要把思考当正文交出去。
+
+    已知取舍：正文里**字面讨论** `<think>` 标签（如讲解推理模型的文章）会被截断。
+    真实模型不会在正文里这么写，而误判的代价远小于泄露推理。
+    """
+    if not content:
+        return ""
+    text = _THINK_BLOCK_RE.sub("", content)
+    # 完整块移除后仍存在的 <think> 只可能是没闭合的（输出被 max_tokens 截断）
+    text = _THINK_OPEN_RE.split(text)[0]
+    text = _THINK_TAG_RE.sub("", text)
+    return text.strip()
+
 
 class LLMError(Exception):
     """LLM 调用基础异常"""
@@ -307,7 +335,11 @@ class OpenAICompatibleClient(LLMClient):
                         }
 
                     if message.content is not None:
-                        return message.content
+                        # 推理块在客户端边界剥离：下游拿到的永远是纯正文。
+                        # 全被剥掉（输出只有思考）时返回 None，让调用方走自己的
+                        # 空响应分支，而不是把空串当成有效内容。
+                        cleaned = strip_thinking(message.content)
+                        return cleaned or None
 
                     return None
 
@@ -405,7 +437,7 @@ class OpenAICompatibleClient(LLMClient):
                         for tc in (message.tool_calls or [])
                     ]
                     return {
-                        "content": message.content,
+                        "content": strip_thinking(message.content) or None,
                         "tool_calls": tool_calls,
                         "finish_reason": getattr(response.choices[0], "finish_reason", None),
                         "usage": _usage(),
@@ -471,7 +503,8 @@ class OpenAICompatibleClient(LLMClient):
                     if delta.content:
                         full_content += delta.content
 
-                return full_content
+                # 推理块跨多个 delta 到达，只能在拼接完之后整体剥离
+                return strip_thinking(full_content)
 
             except Exception as e:
                 last_error = e

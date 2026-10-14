@@ -113,7 +113,7 @@ if ALLOWED_HOSTS:
     )
 
 
-PUBLIC_PATHS = {"/", "/health", "/settings", "/sync/status", "/auth/register", "/auth/login"}
+PUBLIC_PATHS = {"/", "/health", "/health/ready", "/settings", "/sync/status", "/auth/register", "/auth/login"}
 if not IS_PRODUCTION:
     PUBLIC_PATHS.update({"/docs", "/redoc", "/openapi.json"})
 
@@ -1316,7 +1316,22 @@ def get_me(request: Request):
 
 @app.get("/health")
 def health():
-    """健康检查"""
+    """健康检查（存活探针）。
+
+    注意与 `/health/ready` 的分工：这里只回答"进程还活着吗"，**绝不因为
+    LLM 密钥缺失就改判 unhealthy**——CI 与 docker healthcheck 用的正是这个端点，
+    而它们本来就不持有真实密钥。用它判失败等于让探针天天假红。
+
+    配置就绪信息放在 `llm` 段里**如实呈现**，需要严格判定的人用 `/health/ready`。
+    """
+    from src.config.settings import (
+        LLM_FALLBACK_PROVIDER,
+        LLM_PROVIDER,
+        SEARCH_PROVIDER,
+        assess_llm_credential,
+    )
+
+    credential = assess_llm_credential()
     return {
         "status": "healthy",
         "service": "research-agent",
@@ -1326,8 +1341,43 @@ def health():
             "prd_generation": True,
             "followup_optimization": True,
             "multi_role_review": True
-        }
+        },
+        "llm": {
+            "provider": credential.get("provider"),
+            # 只报判定结论与建议动作，绝不回显密钥本身
+            "credential": credential.get("credential"),
+            "credential_usable": credential.get("credential") in ("ok", "not_required"),
+            "remedy": credential.get("message") or None,
+            "fallback_provider": LLM_FALLBACK_PROVIDER or None,
+        },
+        "search_provider": SEARCH_PROVIDER,
     }
+
+
+@app.get("/health/ready")
+def health_ready():
+    """就绪探针——回答"现在能不能真的干活"。
+
+    与 `/health` 分开是因为两者语义不同：存活看进程，就绪看依赖。
+    LLM 密钥不可用时返回 503，让编排系统能据此摘流量，而不是让用户点一次
+    "开始调研"才发现 401。
+    """
+    from src.config.settings import LLM_PROVIDER, assess_llm_credential
+
+    credential = assess_llm_credential()
+    usable = credential.get("credential") in ("ok", "not_required")
+    payload = {
+        "status": "ready" if usable else "not_ready",
+        "service": "research-agent",
+        "llm": {
+            "provider": credential.get("provider") or LLM_PROVIDER,
+            "credential": credential.get("credential"),
+            "remedy": credential.get("message") or None,
+        },
+    }
+    if not usable:
+        return JSONResponse(status_code=503, content=payload)
+    return payload
 
 
 @app.get("/")
