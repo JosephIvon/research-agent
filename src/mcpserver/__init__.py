@@ -21,6 +21,7 @@ from src.mcpserver.server import (
     create_mcp_server,
     mcp_sdk_available,
     mcp_tool_definitions,
+    mount_mcp,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "create_mcp_asgi_app",
     "mcp_sdk_available",
     "mcp_tool_definitions",
+    "mount_mcp",
 ]

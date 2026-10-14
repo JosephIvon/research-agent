@@ -1602,9 +1602,11 @@ for _route in app.routes:
 # 必须放在全部路由定义之后；鉴权由上方 enforce_auth 中间件统一把关——
 # /mcp 不在 PUBLIC_PATHS 白名单内，未认证请求在进入子应用前即被拦下。
 # 限流则由上面的 limit_mcp_endpoint 单独兜：SlowAPIMiddleware 够不到 mount 子应用。
-from src.mcpserver import create_mcp_asgi_app
+# mount_mcp 会把 MCP 子应用的 lifespan 聚合进主 app——Starlette 的 Mount
+# 不会执行子应用 lifespan，裸挂载的 /mcp 每个请求都炸 Task group 未初始化。
+from src.mcpserver import mount_mcp
 
-app.mount("/mcp", create_mcp_asgi_app())
+mount_mcp(app)
 
 
 if __name__ == "__main__":

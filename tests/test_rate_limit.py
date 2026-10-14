@@ -30,12 +30,17 @@ def limited_client(monkeypatch):
 
     `limiter.reset()` 是 slowapi 的公开清空接口，用它而不是去动 storage——
     计数字段是内部属性，改了就等于让测试依赖实现细节。
+
+    必须以 `with` 进入：/mcp 是挂载的 MCP streamable 子应用，其会话管理器
+    在 ASGI lifespan 里初始化——裸 TestClient 不跑 lifespan，请求会在
+    "Task group is not initialized" 上炸（本地与 CI 同红，实测踩过）。
     """
     monkeypatch.setattr(server, "_MCP_RATE_LIMIT", parse(TINY))
     server.limiter.reset()
     server.limiter.enabled = True
     try:
-        yield TestClient(server.app)
+        with TestClient(server.app) as client:
+            yield client
     finally:
         server.limiter.enabled = False
         server.limiter.reset()
@@ -107,9 +112,9 @@ def test_disabling_the_limiter_stops_all_of_it(auth_headers):
     """关掉限流后连打也不会 429——这是运维开关的兜底保证。"""
     server.limiter.enabled = False
     try:
-        client = TestClient(server.app)
-        codes = [client.get("/mcp/", headers=auth_headers).status_code for _ in range(8)]
-        assert 429 not in codes
+        with TestClient(server.app) as client:  # /mcp 需要 lifespan（见 limited_client 注释）
+            codes = [client.get("/mcp/", headers=auth_headers).status_code for _ in range(8)]
+            assert 429 not in codes
     finally:
         server.limiter.enabled = False
 

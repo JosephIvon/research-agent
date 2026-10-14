@@ -160,7 +160,7 @@ def _unavailable_asgi_app():
 def create_mcp_asgi_app(registry: Optional[ToolRegistry] = None):
     """可挂载的 ASGI 子应用（streamable-http，无状态）。
 
-    挂载到 FastAPI：`app.mount("/mcp", create_mcp_asgi_app())`。
+    挂载请用 `mount_mcp(app)`——它同时处理 lifespan 聚合（见其注释）。
     无状态模式不要求客户端维持会话 ID，契合"搜索/抓取/报告"的
     请求-响应形态；会话/生命周期由 SDK 的 streamable_http_app 管理。
 
@@ -178,3 +178,60 @@ def create_mcp_asgi_app(registry: Optional[ToolRegistry] = None):
         stateless_http=True,
         custom_starlette_routes=[Route("/status", _health, methods=["GET"])],
     )
+
+
+class _MountedMCPProxy:
+    """挂载目标代理：ASGI 调用转发给当前生命周期创建的 MCP 子应用。
+
+    Mount 需要静态目标，而 MCP 的 SessionManager 只允许 run() 一次——
+    多个测试会话（TestClient with）反复启停主 app lifespan 时，必须每次
+    生命周期**新建**子应用，这里持住"当前这一个"。
+    """
+
+    def __init__(self):
+        self._sub = None
+
+    def set(self, sub) -> None:
+        self._sub = sub
+
+    async def __call__(self, scope, receive, send):
+        sub = self._sub
+        if sub is None:
+            # 未经过 lifespan（裸调用）——现建一个，行为等同旧裸挂载
+            sub = create_mcp_asgi_app()
+            self._sub = sub
+        await sub(scope, receive, send)
+
+
+def mount_mcp(app, path: str = "/mcp"):
+    """把 MCP 子应用挂进 FastAPI，并**聚合其 lifespan**。
+
+    Starlette 的 Mount 不执行子应用的 lifespan——裸 `app.mount("/mcp", sub)`
+    挂上去后，MCP 会话管理器（task group）永远没人启动，任何请求都会
+    炸 "Task group is not initialized"（TestClient 与生产 uvicorn 同炸，实测）。
+
+    MCP 的 SessionManager 又**只允许 run() 一次**：进程内反复启停
+    lifespan（测试里多个 TestClient 会话）时必须每次新建子应用，因此
+    挂载目标是 _MountedMCPProxy，真正的子应用随每次 startup 重建。
+    SDK 缺席时子应用是无 lifespan 的 503 占位函数，重建无副作用。
+    """
+    from contextlib import asynccontextmanager
+
+    proxy = _MountedMCPProxy()
+    base = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def _combined(a):
+        sub = create_mcp_asgi_app()
+        proxy.set(sub)
+        sub_lifespan = getattr(getattr(sub, "router", None), "lifespan_context", None)
+        if sub_lifespan is None:
+            async with base(a):
+                yield
+        else:
+            async with sub_lifespan(sub), base(a):
+                yield
+
+    app.router.lifespan_context = _combined
+    app.mount(path, proxy)
+    return proxy
