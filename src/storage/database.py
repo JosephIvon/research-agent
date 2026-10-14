@@ -8,6 +8,26 @@ from typing import Optional, List, Dict, Any
 
 DATABASE_PATH = os.getenv("DATABASE_PATH", "research_agent.db")
 
+
+class _ReportNotInDB:
+    """哨兵：报告在数据库中没有记录（只有文件、或库被清空）。
+
+    必须与 `None`（无主报告）严格区分：
+      - None      → 报告在库但无归属，按策略仅 admin 可见
+      - 本哨兵     → 归属未知，同样仅 admin 可见，但语义不同，排障时能一眼看出原因
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<REPORT_NOT_IN_DB>"
+
+    def __bool__(self) -> bool:
+        return False
+
+
+REPORT_NOT_IN_DB = _ReportNotInDB()
+
 def get_db_path() -> str:
     """Get the database file path, relative to project root if not absolute."""
     if os.path.isabs(DATABASE_PATH):
@@ -23,6 +43,22 @@ def _get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _resolve_initial_admin_id() -> Optional[str]:
+    """尽力解析初始管理员 id；失败一律返回 None（存量数据保持无主）。"""
+    try:
+        from src.auth.user_db import get_user_db
+        from src.config.settings import INITIAL_ADMIN_USERNAME
+
+        if not INITIAL_ADMIN_USERNAME:
+            return None
+        user = get_user_db().get_user_by_username(INITIAL_ADMIN_USERNAME)
+        return user["id"] if user else None
+    except Exception as exc:  # 导入失败、users.db 不存在等都不应阻断启动
+        import logging
+        logging.getLogger(__name__).debug("无法解析初始管理员: %s", exc)
+        return None
 
 
 def init_db():
@@ -68,6 +104,16 @@ def init_db():
     finally:
         conn.close()
 
+    # 迁移必须在建表之后执行（依赖上面的表已存在）
+    conn = _get_connection()
+    try:
+        from src.storage.migrations import backfill_owner_users, migrate
+
+        migrate(conn)
+        backfill_owner_users(conn, _resolve_initial_admin_id())
+    finally:
+        conn.close()
+
 
 class ReportDB:
     """Async-like SQLite database interface for reports and tasks."""
@@ -89,6 +135,7 @@ class ReportDB:
         quality_score: Optional[float] = None,
         quality_grade: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Save or update a report record. Returns True if successful."""
         conn = self._conn()
@@ -99,8 +146,8 @@ class ReportDB:
 
             cursor.execute("""
                 INSERT INTO reports (id, task_id, user_query, report_content, quality_score,
-                                     quality_grade, created_at, updated_at, metadata_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                     quality_grade, created_at, updated_at, metadata_json, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     task_id = excluded.task_id,
                     user_query = excluded.user_query,
@@ -108,9 +155,10 @@ class ReportDB:
                     quality_score = excluded.quality_score,
                     quality_grade = excluded.quality_grade,
                     updated_at = excluded.updated_at,
-                    metadata_json = excluded.metadata_json
+                    metadata_json = excluded.metadata_json,
+                    user_id = COALESCE(excluded.user_id, reports.user_id)
             """, (report_id, task_id, user_query, report_content, quality_score,
-                  quality_grade, now, now, metadata_json))
+                  quality_grade, now, now, metadata_json, user_id))
             conn.commit()
             return True
         except Exception as e:
@@ -131,6 +179,7 @@ class ReportDB:
         version_number: int = 1,
         parent_version_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Save a report as a new version."""
         conn = self._conn()
@@ -142,8 +191,8 @@ class ReportDB:
             cursor.execute("""
                 INSERT INTO reports (id, task_id, user_query, report_content, quality_score,
                                      quality_grade, created_at, updated_at, metadata_json,
-                                     version_number, parent_report_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                     version_number, parent_report_id, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     task_id = excluded.task_id,
                     user_query = excluded.user_query,
@@ -153,9 +202,11 @@ class ReportDB:
                     updated_at = excluded.updated_at,
                     metadata_json = excluded.metadata_json,
                     version_number = excluded.version_number,
-                    parent_report_id = excluded.parent_report_id
+                    parent_report_id = excluded.parent_report_id,
+                    user_id = COALESCE(excluded.user_id, reports.user_id)
             """, (report_id, task_id, user_query, report_content, quality_score,
-                  quality_grade, now, now, metadata_json, version_number, parent_version_id))
+                  quality_grade, now, now, metadata_json, version_number,
+                  parent_version_id, user_id))
             conn.commit()
             return True
         except Exception as e:
@@ -178,18 +229,66 @@ class ReportDB:
         finally:
             conn.close()
 
-    def list_reports(self, limit: int = 100) -> List[Dict[str, Any]]:
-        """List all reports ordered by created_at descending."""
+    def list_reports(self, limit: int = 100, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List reports ordered by created_at descending.
+
+        user_id 为 None 时返回全部（仅供 admin / 迁移与运维使用）；
+        传入具体值则只返回该用户的报告。
+        """
         conn = self._conn()
         try:
             cursor = conn.cursor()
-            cursor.execute("""
-                SELECT id, task_id, user_query, quality_score, quality_grade, created_at
-                FROM reports
-                ORDER BY created_at DESC
-                LIMIT ?
-            """, (limit,))
+            if user_id is None:
+                cursor.execute("""
+                    SELECT id, task_id, user_query, quality_score, quality_grade, created_at
+                    FROM reports
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                """, (limit,))
+            else:
+                cursor.execute("""
+                    SELECT id, task_id, user_query, quality_score, quality_grade, created_at
+                    FROM reports
+                    WHERE user_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                """, (user_id, limit))
             return [dict(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    def delete_report(self, report_id: str) -> bool:
+        """删除报告记录。返回是否真的删掉了一行。"""
+        conn = self._conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM reports WHERE id = ?", (report_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+        except sqlite3.Error:
+            import logging
+            logging.getLogger(__name__).warning("删除报告记录失败 %s", report_id)
+            return False
+        finally:
+            conn.close()
+
+    def get_report_owner(self, report_id: str) -> Optional[Optional[str]]:
+        """返回报告归属用户。
+
+        - 报告存在且有归属 → 该 user_id
+        - 报告存在但无归属（存量/无主）→ None
+        - 报告在库中不存在 → 返回哨兵对象，调用方需与 None 区分
+
+        调用方应据此判定访问权；**无主报告一律按"仅 admin 可见"处理**。
+        """
+        conn = self._conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id FROM reports WHERE id = ?", (report_id,))
+            row = cursor.fetchone()
+            if row is None:
+                return REPORT_NOT_IN_DB
+            return row["user_id"]
         finally:
             conn.close()
 
@@ -200,6 +299,7 @@ class ReportDB:
         status: str,
         report_id: Optional[str] = None,
         deliverables: Optional[Dict[str, bool]] = None,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Save or update a task record."""
         conn = self._conn()
@@ -209,14 +309,15 @@ class ReportDB:
             deliverables_json = json.dumps(deliverables) if deliverables else None
 
             cursor.execute("""
-                INSERT INTO tasks (task_id, user_query, status, created_at, updated_at, report_id, deliverables_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO tasks (task_id, user_query, status, created_at, updated_at, report_id, deliverables_json, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(task_id) DO UPDATE SET
                     status = excluded.status,
                     updated_at = excluded.updated_at,
                     report_id = COALESCE(excluded.report_id, tasks.report_id),
-                    deliverables_json = excluded.deliverables_json
-            """, (task_id, user_query, status, now, now, report_id, deliverables_json))
+                    deliverables_json = excluded.deliverables_json,
+                    user_id = COALESCE(excluded.user_id, tasks.user_id)
+            """, (task_id, user_query, status, now, now, report_id, deliverables_json, user_id))
             conn.commit()
             return True
         except Exception as e:
