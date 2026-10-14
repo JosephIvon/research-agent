@@ -1055,7 +1055,11 @@ async def stream_task_events(task_id: str, request: Request):
 
     q = store.subscribe_task(task_id)
 
-    last_event_id = 0
+    # 回放起点：带 Last-Event-ID 才从该 id 之后续传；否则从 -1 开始（回放全部，
+    # 含 id=0 的 task_created）。曾默认 0，而 task_created 的 id 恰好是 0——
+    # `event.id > 0` 把首个事件永远过滤掉，全新连接永远收不到 task_created
+    # （契约测试实锤：SSE 读到超时）。
+    last_event_id = -1
     if request.headers.get("Last-Event-ID"):
         try:
             last_event_id = int(request.headers["Last-Event-ID"])
