@@ -1,5 +1,7 @@
 """LLM客户端抽象层 - 统一接口支持多种大模型提供商"""
 import asyncio
+import json
+import os
 import random
 import time
 import logging
@@ -428,6 +430,157 @@ class OpenAIClient(OpenAICompatibleClient):
         super().__init__(OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL, provider_name="openai")
 
 
+# ============================================================
+# ScriptedLLMClient：确定性 Fake Provider（评测与测试地基）
+# ============================================================
+# 使命：让完整工作流在 CI 里零网络、零密钥、逐字确定地跑起来，并为
+# M3 工具循环与 M4 评测集提供可精确控制的"模型第 N 步返回什么"。
+#
+# 意图识别：优先匹配 system 提示词里的 <!--intent:xxx--> 标记（新代码用），
+# 未标记时按 legacy 提示词的特征句兜底——历史提示词无需改动即可被脚本化。
+
+INTENT_MARKER_RE = re.compile(r"<!--intent:([a-z0-9_]+)-->")
+
+# legacy 提示词特征句 → 意图（顺序即优先级，首中即停）
+LEGACY_INTENT_HINTS = (
+    ("decompose", "任务分解专家"),
+    ("extract", "信息提取专家"),
+    ("report", "市场调研分析师"),
+    ("prd", "资深产品经理"),
+)
+
+# 内置缺省脚本：响应都是可被现有解析路径消费的合法文本/JSON，
+# 保证"没配脚本也能跑通不炸"。要让报告有意义（如带 [e:id] 引用），
+# 用 LLM_FAKE_SCRIPT 文件或构造参数覆盖对应意图。
+DEFAULT_FAKE_SCRIPT = {
+    "decompose": ['[{"id": "1", "description": "分析目标网站内容", "priority": 1}]'],
+    "extract": ['[{"key": "content", "value": "脚本化抽取占位内容", "confidence": 0.9}]'],
+    "report": ["（脚本化报告占位。通过 LLM_FAKE_SCRIPT 或 ScriptedLLMClient(script=...) 提供正文。）"],
+    "prd": ["（脚本化 PRD 占位。）"],
+}
+
+
+def detect_llm_intent(messages: List[Dict[str, str]]) -> Optional[str]:
+    """从消息序列识别意图：显式标记优先，其次 legacy 特征句。"""
+    for message in messages or []:
+        if message.get("role") != "system":
+            continue
+        content = message.get("content") or ""
+        marker = INTENT_MARKER_RE.search(content)
+        if marker:
+            return marker.group(1)
+        for intent, hint in LEGACY_INTENT_HINTS:
+            if hint in content:
+                return intent
+    return None
+
+
+class ScriptedLLMClient(LLMClient):
+    """按意图返回脚本化响应的确定性 LLM 客户端。
+
+    - 脚本结构 `{intent: [响应, ...]}`，响应为 str（终答）或
+      `{"type": "tool_call", "name": ..., "arguments": ...}`（供工具循环）。
+      同一意图调用次数超出脚本长度时**重复最后一条**——extract 逐页调用、
+      页数不定，尾重复是唯一确定语义。
+    - `calls` 记录每次调用的 intent/step/messages/tools，是 prompt 快照测试的锚点。
+    - 脚本来源优先级：构造参数 > `LLM_FAKE_SCRIPT`（JSON 文件，按键覆盖）> 内置缺省。
+    - 与真实客户端同样遵守返回约定：str 或首个 tool_call 的 dict。
+    """
+
+    provider_name = "fake"
+
+    def __init__(self, script: Optional[Dict[str, List[Any]]] = None):
+        self.default_model = "scripted"
+        self.api_key = "not-needed"
+        self.base_url = None
+        merged: Dict[str, List[Any]] = {k: list(v) for k, v in DEFAULT_FAKE_SCRIPT.items()}
+        env_path = os.getenv("LLM_FAKE_SCRIPT")
+        if env_path:
+            merged.update(self._load_script_file(env_path))
+        if script:
+            merged.update({k: list(v) for k, v in script.items()})
+        self._validate(merged)
+        self._script = merged
+        self.calls: List[Dict[str, Any]] = []
+
+    @staticmethod
+    def _load_script_file(path: str) -> Dict[str, List[Any]]:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            raise ValueError(f"LLM_FAKE_SCRIPT 必须是 {{intent: [响应]}} 的 JSON 对象: {path}")
+        return data
+
+    @staticmethod
+    def _validate(script: Dict[str, List[Any]]) -> None:
+        """构造期就拒绝非法条目——让坏脚本在测试启动时炸，而不是跑到一半。"""
+        for intent, entries in script.items():
+            if not isinstance(entries, list) or not entries:
+                raise ValueError(f"fake 脚本意图 {intent!r} 必须是非空列表")
+            for entry in entries:
+                if isinstance(entry, str):
+                    continue
+                if isinstance(entry, dict) and entry.get("type") == "tool_call":
+                    continue
+                raise ValueError(
+                    f"fake 脚本意图 {intent!r} 的条目必须是 str 或 "
+                    f"{{'type': 'tool_call', ...}}，实际: {entry!r}"
+                )
+
+    def chat_completion(
+        self,
+        messages: List[Dict[str, str]],
+        model: Optional[str] = None,
+        temperature: float = 0.2,
+        max_tokens: int = 4096,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: str = "auto",
+        timeout=None,
+    ) -> Union[str, Dict[str, Any], None]:
+        intent = detect_llm_intent(messages)
+        if intent is None or intent not in self._script:
+            available = ", ".join(sorted(self._script))
+            raise ValueError(
+                f"[fake] 无法识别意图 {intent!r}（脚本可用意图: {available}）。"
+                "请在 system 提示词加 <!--intent:名称-->，或在脚本中补该意图。"
+            )
+        step = sum(1 for call in self.calls if call["intent"] == intent)
+        entry = self._script[intent][min(step, len(self._script[intent]) - 1)]
+        self.calls.append(
+            {"intent": intent, "step": step, "messages": messages, "tools": tools}
+        )
+        return entry
+
+    def stream_completion(
+        self,
+        messages: List[Dict[str, str]],
+        model: Optional[str] = None,
+        temperature: float = 0.2,
+        max_tokens: int = 4096,
+    ) -> str:
+        # 脚本没有流式语义：直接返回全量文本
+        result = self.chat_completion(
+            messages, model=model, temperature=temperature, max_tokens=max_tokens
+        )
+        return result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+
+    def extract_structured_data(self, content: str, schema: Dict[str, Any]) -> Dict[str, Any]:
+        if "extract_structured" in self._script:
+            result = self.chat_completion(
+                [
+                    {"role": "system", "content": "<!--intent:extract_structured-->"},
+                    {"role": "user", "content": content},
+                ]
+            )
+            if isinstance(result, dict):
+                return result
+            try:
+                return json.loads(result)
+            except json.JSONDecodeError:
+                return {"raw": result}
+        return {"raw": content[:500], "schema_keys": list(schema.get("properties", {}))}
+
+
 # LLM提供商映射
 _PROVIDERS = {
     "minimax": MinimaxClient,
@@ -435,6 +588,7 @@ _PROVIDERS = {
     "doubao": DoubaoClient,
     "glm": GLMClient,
     "openai": OpenAIClient,
+    "fake": ScriptedLLMClient,
 }
 
 
