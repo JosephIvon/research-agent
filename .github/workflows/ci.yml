@@ -202,8 +202,16 @@ jobs:
             echo "SEARXNG_SECRET=$(openssl rand -hex 32)"
             echo "JWT_SECRET_KEY=$(openssl rand -hex 32)"
             echo "MINIMAX_API_KEY=${MINIMAX_API_KEY}"
-            echo "MINIMAX_BASE_URL=${MINIMAX_BASE_URL}"
-            echo "MINIMAX_MODEL=${MINIMAX_MODEL}"
+            # 未配的 secret 是空串：绝不能写空值进 .env——空字符串会**覆盖**
+            # settings 的默认值，客户端拿到空 base_url/model，表现为
+            # "Connection error"（实锤：只配 API_KEY 时容器内全链路 429→Connection error）。
+            # 只在非空时才写入，让默认值生效。
+            if [ -n "${MINIMAX_BASE_URL:-}" ]; then
+              echo "MINIMAX_BASE_URL=${MINIMAX_BASE_URL}"
+            fi
+            if [ -n "${MINIMAX_MODEL:-}" ]; then
+              echo "MINIMAX_MODEL=${MINIMAX_MODEL}"
+            fi
           } > .env
           echo "Generated ephemeral .env with provider credentials"
 
