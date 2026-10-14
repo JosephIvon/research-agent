@@ -49,7 +49,7 @@ class TestTaskQueue:
     def test_get_task_returns_status_and_events(self, monkeypatch, auth_headers):
         """GET /research/tasks/{task_id} 返回状态、事件历史、artifacts"""
         task_store = server.get_task_store()
-        asyncio.run(task_store.create("test-task-001", "test query", {"report": True, "prd": True}))
+        asyncio.run(task_store.create("test-task-001", "test query", {"report": True, "prd": True}, user_id="test-user"))
 
         from src.workflow.task_store import TaskEvent, TaskEventType
 
@@ -183,7 +183,7 @@ class TestEventPayloadSecurity:
         """任务状态接口不返回账号密码"""
         task_store = server.get_task_store()
         task_id = "creds-test-task"
-        asyncio.run(task_store.create(task_id, "creds test", {"report": True, "prd": False}))
+        asyncio.run(task_store.create(task_id, "creds test", {"report": True, "prd": False}, user_id="test-user"))
 
         client = TestClient(app)
         response = client.get(f"/research/tasks/{task_id}", headers=auth_headers)

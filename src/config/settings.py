@@ -1,9 +1,47 @@
 """配置模块 - 加载环境变量和全局设置"""
+import logging
 import os
+import re
+from typing import Optional
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 # 加载环境变量
 load_dotenv()
+
+# .env.example 遗留的占位符特征（大小写不敏感）。
+# 命中任意一个就说明用户没改过 .env.example，这类值不得进入生产。
+SECRET_PLACEHOLDER_PATTERN = re.compile(
+    r"CHANGE_ME|YOUR_|REPLACE_WITH|X{5,}",
+    re.IGNORECASE,
+)
+
+# 长度阈值：密钥类与口令类分开，避免用同一把尺子误伤短口令
+SECRET_MIN_LENGTH = 32
+MIN_PASSWORD_LENGTH = 12
+
+
+def is_placeholder_secret(value: Optional[str]) -> bool:
+    """值是否命中占位符特征。空值不算占位符，"是否设置"由调用方单独判定。"""
+    if not value:
+        return False
+    return bool(SECRET_PLACEHOLDER_PATTERN.search(value.strip()))
+
+
+def is_weak_secret(value: Optional[str], min_length: int = SECRET_MIN_LENGTH) -> bool:
+    """值是否不可信：命中占位符，或长度低于阈值。"""
+    if not value or not value.strip():
+        return False
+    return is_placeholder_secret(value) or len(value.strip()) < min_length
+
+
+def describe_weak_secret(key: str, value: str, min_length: int = SECRET_MIN_LENGTH) -> str:
+    """生成诊断信息。只描述问题，绝不回显密钥本身。"""
+    if is_placeholder_secret(value):
+        return f"{key} 仍是 .env.example 里的占位符"
+    return f"{key} 长度不足 {min_length} 位（当前 {len(value.strip())} 位）"
+
 
 def _get_bool(key: str, default: bool = False) -> bool:
     value = os.getenv(key)
@@ -121,6 +159,12 @@ API_AUTH_TOKEN = os.getenv("API_AUTH_TOKEN")
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY") or ""
 if APP_ENV == "production" and not JWT_SECRET_KEY:
     raise ValueError("JWT_SECRET_KEY must be set in production")
+# fail-closed：占位符/弱密钥与"完全没设"同等对待，直接拒绝启动
+if APP_ENV == "production" and is_weak_secret(JWT_SECRET_KEY):
+    raise ValueError(
+        "JWT_SECRET_KEY is not a usable production secret: "
+        + describe_weak_secret("JWT_SECRET_KEY", JWT_SECRET_KEY)
+    )
 if not JWT_SECRET_KEY:
     JWT_SECRET_KEY = "dev-secret-key-change-in-development-32chars"
 JWT_EXPIRE_MINUTES = _get_int("JWT_EXPIRE_MINUTES", 1440)
@@ -134,6 +178,17 @@ ALLOWED_HOSTS = [
     for host in os.getenv("ALLOWED_HOSTS", "127.0.0.1,localhost,testserver").split(",")
     if host.strip()
 ]
+# 生产环境只信回环/内部地址，几乎必然是"忘了配 ALLOWED_HOSTS"：
+# 域名/外部 IP 访问会被 TrustedHostMiddleware 拒成 400，且这个报错对运维不可读。
+# 不 fail（纯本机部署是合法形态），但警告要说得足够响。
+if APP_ENV == "production" and set(ALLOWED_HOSTS) <= {
+    "localhost", "127.0.0.1", "research-agent", "testserver",
+}:
+    logger.warning(
+        "生产环境 ALLOWED_HOSTS 仅含回环/内部地址（%s）。若通过域名或外部 IP 访问，"
+        "TrustedHostMiddleware 将返回 400；请在 .env 显式配置 ALLOWED_HOSTS。",
+        ", ".join(ALLOWED_HOSTS),
+    )
 
 # 路径配置
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))

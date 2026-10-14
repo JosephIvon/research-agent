@@ -1,3 +1,8 @@
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -8,6 +13,14 @@ from src.security.url_validation import UnsafeURL, validate_fetch_url
 
 
 def test_tools_package_imports_without_eager_search_instance():
+    """导入 src.tools 不得实例化任何懒加载单例。
+
+    这个不变量只能在**全新解释器**里验证：只要本进程里任何测试调用过
+    `get_search_tool()`，模块级单例就不再是 None，原来的写法等于在断言
+    "测试执行顺序碰巧如此"——任何在它之前构造 CoordinatorAgent 的用例都会
+    让它失败。因此把懒加载断言放进子进程做一次干净的 import。
+    """
+    # 身份一致性检查与执行顺序无关，保留在同进程做
     import src.tools as tools
     import src.tools.followup_optimizer as followup_module
     import src.tools.multi_role_reviewer as reviewer_module
@@ -18,11 +31,36 @@ def test_tools_package_imports_without_eager_search_instance():
     assert tools.get_follow_up_optimizer is followup_module.get_follow_up_optimizer
     assert tools.get_multi_role_reviewer is reviewer_module.get_multi_role_reviewer
     assert tools.get_prd_generator is prd_module.get_prd_generator
-    assert search_module._search_tool_instance is None
-    assert followup_module._follow_up_optimizer_instance is None
-    assert reviewer_module._multi_role_reviewer_instance is None
-    assert prd_module._prd_generator_instance is None
-    assert not hasattr(search_module, "search_tool")
+
+    probe = """
+import src.tools as tools
+import src.tools.followup_optimizer as followup_module
+import src.tools.multi_role_reviewer as reviewer_module
+import src.tools.prd_generator as prd_module
+import src.tools.search_tool as search_module
+
+assert search_module._search_tool_instance is None, "search_tool 被急切实例化"
+assert followup_module._follow_up_optimizer_instance is None, "followup 优化器被急切实例化"
+assert reviewer_module._multi_role_reviewer_instance is None, "多角色审查器被急切实例化"
+assert prd_module._prd_generator_instance is None, "PRD 生成器被急切实例化"
+assert not hasattr(search_module, "search_tool"), "仍导出模块级 search 实例"
+print("CLEAN_IMPORT")
+"""
+    root = str(Path(__file__).resolve().parents[1])
+    env = {**os.environ, "PYTHONPATH": root}
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=root,
+        timeout=120,
+    )
+
+    assert result.returncode == 0, (
+        f"子进程中的懒加载断言失败：\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "CLEAN_IMPORT" in result.stdout
 
 
 def test_validate_fetch_url_rejects_private_and_non_http_urls():
@@ -148,16 +186,21 @@ def test_optional_bearer_auth_protects_research_endpoints(monkeypatch):
     assert public.status_code == 200
 
 
-def test_history_endpoint_reads_only_report_files(monkeypatch, tmp_path, auth_headers):
+def test_history_endpoint_reads_only_report_files(monkeypatch, tmp_path, admin_headers):
+    """文件兜底分支只对 admin 开放。
+
+    这类报告在库里没有归属记录、归属未知，非 admin 看不到是有意为之的设计
+    （见 server._can_access_report）；跨用户隔离由 tests/test_tenant_isolation.py 覆盖。
+    """
     monkeypatch.setattr(server, "OUTPUT_DIR", str(tmp_path))
     report_path = tmp_path / "research_report_20260517_120000.md"
     report_path.write_text("# Smoke Report\n\n上线检查内容", encoding="utf-8")
     (tmp_path / "notes.md").write_text("ignored", encoding="utf-8")
 
     client = TestClient(app)
-    list_response = client.get("/research/history", headers=auth_headers)
-    detail_response = client.get("/research/history/research_report_20260517_120000", headers=auth_headers)
-    traversal_response = client.get("/research/history/../notes", headers=auth_headers)
+    list_response = client.get("/research/history", headers=admin_headers)
+    detail_response = client.get("/research/history/research_report_20260517_120000", headers=admin_headers)
+    traversal_response = client.get("/research/history/../notes", headers=admin_headers)
 
     assert list_response.status_code == 200
     assert list_response.json()[0]["id"] == "research_report_20260517_120000"

@@ -21,6 +21,16 @@ from src.config.settings import (
     LLM_MAX_CONTENT_CHARS
 )
 from src.security.url_validation import UnsafeURL, validate_fetch_url, validate_fetch_urls
+from src.agent.citations import EvidenceStore, format_violations, verify_report
+from src.security.injection import (
+    UNTRUSTED_NOTICE,
+    collect_canaries,
+    redact_echo,
+    sanitize,
+    scan,
+    should_drop_page,
+    wrap_untrusted,
+)
 from src.workflow.task_store import _sanitize_payload
 import asyncio
 import json
@@ -70,7 +80,7 @@ class CoordinatorAgent:
             }
         ]
 
-        response = self.llm_client.chat_completion(prompt, temperature=0.1)
+        response = await self.llm_client.achat_completion(prompt, temperature=0.1)
         try:
             return json.loads(response)
         except Exception as e:
@@ -116,15 +126,17 @@ class CoordinatorAgent:
 
                 请优先使用以下标准 key，便于后续质量评分和报告对比：
                 pricing、features、models、target_users、integrations、api_flow、workflow、limitations、reviews。
-                value 中要保留可核验的事实、数字、页面来源线索；不要只写概括性形容词。"""
+                value 中要保留可核验的事实、数字、页面来源线索；不要只写概括性形容词。
+
+                {UNTRUSTED_NOTICE}"""
             },
             {
                 "role": "user",
-                "content": f"""来源: {url}\n内容:\n{raw_content[:LLM_MAX_CONTENT_CHARS]}"""
+                "content": f"来源: {url}\n内容:\n{wrap_untrusted(url, raw_content[:LLM_MAX_CONTENT_CHARS])}"
             }
         ]
 
-        response = self.llm_client.chat_completion(prompt, temperature=0.1)
+        response = await self.llm_client.achat_completion(prompt, temperature=0.1)
         try:
             data = _parse_json_response(response)
             for item in data:
@@ -144,9 +156,12 @@ class CoordinatorAgent:
             return normalized
         except Exception as e:
             logger.warning(f"信息提取JSON解析失败: {e}")
+            # 兜底路径直接把原文塞进 extracted_data，之后会流入报告提示词。
+            # 必须在这里再洗一次：这是唯一绕过 extract_key_info 清洗的路径。
+            summary, _ = sanitize(raw_content[:2000])
             return [{
                 "key": "content_summary",
-                "value": raw_content[:2000],
+                "value": summary,
                 "source_url": url,
                 "confidence": 0.7
             }]
@@ -186,15 +201,26 @@ class CopywriterAgent:
     def __init__(self, llm_client: LLMClient):
         self.llm_client = llm_client
 
-    def generate_report(
+    async def generate_report(
         self,
         user_query: str,
         extracted_data: List[Dict[str, Any]],
         verification_info: Dict[str, Any],
         competitors: Optional[List[Dict[str, Any]]] = None,
-        quality_report: Any = None
+        quality_report: Any = None,
+        evidence_store: Optional[EvidenceStore] = None,
+        violations_feedback: str = ""
     ) -> str:
-        """生成结构化报告，支持竞品对比"""
+        """生成结构化报告，支持竞品对比
+
+        `evidence_store` 由调用方传入，以便报告生成完后用**同一份**证据做校验——
+        这里如果自己重建，两边的 id 可能对不上，校验就会全量报 unknown_citation。
+        """
+        evidence_store = evidence_store or EvidenceStore.from_extracted_data(extracted_data)
+        evidence_block = (
+            f"可引用证据表（共 {len(evidence_store)} 条）：\n\n{evidence_store.table()}"
+        )
+        feedback_block = f"\n\n{violations_feedback}" if violations_feedback else ""
 
         if competitors and len(competitors) >= MIN_COMPETITORS_FOR_COMPARISON:
             comparison_analyzer = ComparisonAnalyzer(competitors)
@@ -240,7 +266,8 @@ class CopywriterAgent:
 - 表格对比优先于文字罗列
 - 语言简洁专业，不超过2500字
 - 分析客观中立
-- **重要：所有引用数据必须标注来源URL**"""
+- **重要：凡是含数字（金额、数量、比例、版本号）的结论句，必须在该句末尾标注证据标记 `[e:xxxx]`，标记只能从下方证据表里原样复制。**
+- 没有证据支撑的结论，**整句删除**——不要保留一个没有来源的断言，也不要编造标记。""",
                 },
                 {
                     "role": "user",
@@ -248,13 +275,12 @@ class CopywriterAgent:
 
 {comparison_section}
 
-原始数据（请务必为每条数据标注来源）：
-{self._format_extracted_data_with_sources(extracted_data[:30])}
+{evidence_block}
 
 可信度评分：{verification_info.get('score', 'N/A')}/10
 警告信息：{'；'.join(verification_info.get('warnings', [])[:3]) or '无'}
 
-请生成结构化Markdown报告。"""
+请生成结构化Markdown报告。{feedback_block}"""
                 }
             ]
         else:
@@ -272,9 +298,10 @@ class CopywriterAgent:
 
 写作要求：
 - 语言简洁专业，符合职场报告规范
-- 引用数据时注明来源
 - 分析要客观中立，突出核心差异
 - 输出格式为标准Markdown，不要使用html标签
+- **凡是含数字（金额、数量、比例、版本号）的结论句，必须在该句末尾标注证据标记 `[e:xxxx]`，标记只能从下方证据表里原样复制。**
+- 没有证据支撑的结论，**整句删除**，不要编造标记
 """
                 },
                 {
@@ -283,18 +310,16 @@ class CopywriterAgent:
 
 调研主题：{user_query}
 
-调研数据（请务必为每条数据标注来源）：
-{self._format_extracted_data_with_sources(extracted_data)}
+{evidence_block}
 
 核查信息：可信度评分 {verification_info.get('score', 'N/A')}/10
 警告：{'；'.join(verification_info.get('warnings', [])) or '无'}
 
-请输出结构化Markdown报告。
-"""
+请输出结构化Markdown报告。{feedback_block}"""
                 }
             ]
 
-        response = self.llm_client.chat_completion(prompt, temperature=0.1)
+        response = await self.llm_client.achat_completion(prompt, temperature=0.1)
 
         warning_parts = []
         if verification_info.get('warnings'):
@@ -316,11 +341,17 @@ class CopywriterAgent:
         return response
 
     def _format_extracted_data_with_sources(self, data: List[Dict[str, Any]]) -> str:
-        """格式化提取数据为文本，包含来源URL（用于来源标注）"""
+        """格式化提取数据为文本，包含来源URL（用于来源标注）
+
+        这是**二阶注入面**：extracted_data 是 LLM 的输出，但它可能复述抓取页面里的
+        攻击文本（尤其是 extract_key_info 的兜底路径）。报告生成提示词同样要过一道清洗，
+        否则攻击者可以用「提取 → 复述 → 成文」绕过入口防护。
+        """
         lines = []
         for item in data:
             key = item.get('key', '')
             value = str(item.get('value', ''))[:200]
+            value, _ = sanitize(value)
             source = item.get('source_url', '')
             if source:
                 lines.append(f"- **{key}**: {value}\n  - 来源：[查看原始数据]({source})")
@@ -337,6 +368,97 @@ class MVPWorkflow:
         self.coordinator = CoordinatorAgent(self.llm_client)
         self.copywriter = CopywriterAgent(self.llm_client)
         self._event_emitter = event_emitter
+
+    def _state(self) -> Dict[str, Any]:
+        """取当前 run 的 state。_fetch_single_competitor 也可能被独立调用，
+        那时 self.state 可能还没建立。"""
+        state = getattr(self, "state", None)
+        if state is None:
+            state = {}
+            self.state = state
+        return state
+
+    def _record_injection_findings(self, url: str, findings: List[Any]) -> None:
+        """把注入嫌疑记入 state，供审计与后续 UI 展示。
+
+        只记 rule_id/severity/sample，不记原文偏移——偏移对跨轮次清洗没有意义，
+        且避免把攻击者控制的文本带进持久化层。
+        """
+        if not findings:
+            return
+        state = getattr(self, "state", None)
+        if state is None:
+            return
+        for finding in findings:
+            state.setdefault("injection_findings", []).append({
+                "url": url,
+                "rule_id": finding.rule_id,
+                "severity": finding.severity,
+                "sample": finding.sample,
+            })
+        high = sum(1 for f in findings if f.severity == "high")
+        if high:
+            self._emit(
+                "injection_detected", "crawl", "running",
+                f"检测到 {len(findings)} 处注入嫌疑（高危 {high}），已中和",
+                payload={
+                    "url": url,
+                    "finding_count": len(findings),
+                    "high_count": high,
+                    "rule_ids": sorted({f.rule_id for f in findings}),
+                },
+            )
+
+    def _mark_low_trust(self, report: str, citation_result: Dict[str, Any]) -> str:
+        """在报告顶部挂出低可信标记与具体违规项。
+
+        不静默交付是硬要求：一份没通过引用校验的报告如果照常呈现，
+        用户会把它当成可信结论——这比直接报错更危险。
+        """
+        violations = citation_result.get("violations") or []
+        lines = [
+            "> ⚠️ **低可信标记：本文未通过引用完整性校验**",
+            f"> 引用覆盖 {citation_result['citation_coverage']:.0%}｜"
+            f"扎根率 {citation_result['grounding']:.0%}｜"
+            f"问题 {len(violations)} 处"
+            "（已自动重生成一次仍未通过）",
+            ">",
+        ]
+        for item in violations[:8]:
+            lines.append(f"> - [{item.get('type')}] {item.get('detail')}")
+        if len(violations) > 8:
+            lines.append(f"> - ……另有 {len(violations) - 8} 处")
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+        return "\n".join(lines) + report
+
+    def _enforce_report_output(self, state: Dict[str, Any]) -> None:
+        """报告出口的回声校验。
+
+        清洗后的页面理论上不该让注入文本抵达报告。这里是**独立**的第二道闸：
+        它不依赖清洗是否生效，只看最终报告里是否原样出现了抓取页面中的探针。
+        命中即说明清洗被绕过（或该串另有来源），必须从交付物里移除。
+        """
+        if not self._state().get("injection_canaries"):
+            return
+        cleaned, hits = redact_echo(
+            state.get("report_final") or "", self._state()["injection_canaries"]
+        )
+        if not hits:
+            return
+
+        logger.error(f"最终报告中检出注入回声 {len(hits)} 处，已移除")
+        state["report_final"] = cleaned
+        state.setdefault("injection_findings", []).extend(
+            {"url": "", "rule_id": "report_echo", "severity": "high", "sample": h[:60]}
+            for h in hits
+        )
+        self._emit(
+            "injection_detected", "report_generate", "completed",
+            f"报告中检出注入回声 {len(hits)} 处，已移除",
+            payload={"finding_count": len(hits), "rule_ids": ["report_echo"], "high_count": len(hits)},
+        )
 
     def _emit(self, event_type: str, stage: str, status: str, message: str, payload: Optional[Dict[str, Any]] = None):
         if self._event_emitter is None:
@@ -365,6 +487,7 @@ class MVPWorkflow:
         custom_selectors: Optional[Dict[str, List[str]]] = None,
         deliverables: Optional[Dict[str, bool]] = None,
         task_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         deliverables = deliverables or {"report": True, "prd": False}
 
@@ -378,7 +501,7 @@ class MVPWorkflow:
         if len(initial_sites) > MAX_FETCH_URLS:
             raise ValueError(f"目标URL数量不能超过 {MAX_FETCH_URLS} 个")
 
-        state = self._initialize_state(user_query, initial_urls, task_id)
+        state = self._initialize_state(user_query, initial_urls, task_id, user_id)
         state["target_sites"] = initial_sites
         state["custom_selectors"] = custom_selectors
         self.state = state
@@ -421,10 +544,15 @@ class MVPWorkflow:
 
             success_count = sum(1 for c in state["competitors"] if c["status"] == "success")
             failed_count = sum(1 for c in state["competitors"] if c["status"] == "failed")
+            blocked_count = sum(1 for c in state["competitors"] if c["status"] == "blocked")
             self._emit(
                 "crawl_complete", "crawl", "completed",
-                f"抓取完成：成功 {success_count}，失败 {failed_count}",
-                payload={"success_count": success_count, "failed_count": failed_count}
+                f"抓取完成：成功 {success_count}，失败 {failed_count}，注入拦截 {blocked_count}",
+                payload={
+                    "success_count": success_count,
+                    "failed_count": failed_count,
+                    "blocked_count": blocked_count,
+                }
             )
 
             state["status"] = "extracting"
@@ -448,14 +576,19 @@ class MVPWorkflow:
 
             state["status"] = "writing"
             if not state["verification_passed"]:
-                state["report_final"] = f"❌ 调研失败：可信度评分 {state['verification_score']}/10 低于阈值，无法生成报告。"
+                # 措辞必须是"抽取自评"，不能叫"可信度"——它只是模型对自己抽取结果的
+                # confidence 平均值，是循环论证。可信度由引用校验负责。
+                state["report_final"] = (
+                    f"❌ 调研失败：抽取自评分 {state['verification_score']}/10 低于阈值，无法生成报告。\n\n"
+                    "注：该分数是模型对自身抽取结果的平均置信度，**不代表结论正确性**。"
+                )
                 state["status"] = "failed"
-                state["termination_reason"] = "可信度不足"
-                self._emit("error", "verify", "failed", f"可信度不足：{state['verification_score']}/10")
+                state["termination_reason"] = "抽取置信度不足"
+                self._emit("error", "verify", "failed", f"抽取置信度不足：{state['verification_score']}/10")
                 return state
 
             if not quality_report.is_usable:
-                state["report_final"] = f"⚠️ 调研数据不足：质量评分 {quality_report.overall_score:.1f}/10（{quality_report.grade}级）\n\n原因：\n"
+                state["report_final"] = f"⚠️ 调研数据不足：数据完整度 {quality_report.overall_score:.1f}/10（{quality_report.grade}级）\n\n原因：\n"
                 state["report_final"] += "\n".join(f"- {r}" for r in quality_report.abandonment_reasons)
                 state["report_final"] += "\n\n建议：\n"
                 state["report_final"] += "\n".join(f"- {r}" for r in quality_report.recommendations)
@@ -466,15 +599,83 @@ class MVPWorkflow:
 
             state["status"] = "report_generating"
             self._emit("report_generate", "report_generate", "running", "正在生成竞品分析报告")
-            state["report_final"] = self.copywriter.generate_report(
+            evidence_store = EvidenceStore.from_extracted_data(state["extracted_data"])
+            state["evidence_store"] = evidence_store
+            state["report_final"] = await self.copywriter.generate_report(
                 user_query,
                 state["extracted_data"],
                 verification_result,
                 competitors=state["competitors"],
-                quality_report=quality_report
+                quality_report=quality_report,
+                evidence_store=evidence_store,
             )
 
-            state["sync_results"]["local_file"] = self._save_report(state["report_final"])
+            # --- 引用校验闭环：不过则带违规清单重生成一次，仍不过标记低可信 ---
+            state["status"] = "citation_check"
+            self._emit(
+                "citation_check", "verify", "running",
+                f"正在校验引用完整性（证据 {len(evidence_store)} 条）",
+            )
+            citation_result = await asyncio.to_thread(
+                verify_report, state["report_final"], evidence_store
+            )
+            state["citation_attempts"] = 1
+
+            if not citation_result["passed"]:
+                self._emit(
+                    "citation_check", "verify", "running",
+                    f"引用校验未通过（{citation_result['violation_count']} 处），带违规清单重生成",
+                    payload={"violation_count": citation_result["violation_count"]},
+                )
+                feedback = format_violations(citation_result)
+                state["status"] = "report_regenerating"
+                state["report_final"] = await self.copywriter.generate_report(
+                    user_query,
+                    state["extracted_data"],
+                    verification_result,
+                    competitors=state["competitors"],
+                    quality_report=quality_report,
+                    evidence_store=evidence_store,
+                    violations_feedback=feedback,
+                )
+                state["citation_attempts"] = 2
+                citation_result = await asyncio.to_thread(
+                    verify_report, state["report_final"], evidence_store
+                )
+
+            state["citation_report"] = {
+                k: v for k, v in citation_result.items() if k != "violations"
+            }
+            state["citation_violations"] = citation_result["violations"]
+            state["citation_trusted"] = citation_result["passed"]
+
+            if citation_result["passed"]:
+                self._emit(
+                    "citation_check", "verify", "completed",
+                    f"引用校验通过：覆盖 {citation_result['citation_coverage']:.0%}、"
+                    f"扎根 {citation_result['grounding']:.0%}",
+                    payload={
+                        "citation_coverage": citation_result["citation_coverage"],
+                        "grounding": citation_result["grounding"],
+                        "attempts": state["citation_attempts"],
+                    },
+                )
+            else:
+                # 不静默交付：报告顶部必须挂出低可信标记与具体违规项
+                self._emit(
+                    "citation_check", "verify", "failed",
+                    f"引用校验未通过：{citation_result['violation_count']} 处问题，报告标记为低可信",
+                    payload={
+                        "violation_count": citation_result["violation_count"],
+                        "attempts": state["citation_attempts"],
+                    },
+                )
+                state["report_final"] = self._mark_low_trust(state["report_final"], citation_result)
+
+            # 交付前最后一道闸：注入文本不得原样出现在报告里
+            self._enforce_report_output(state)
+
+            state["sync_results"]["local_file"] = self._save_report(state["report_final"], state.get("task_id"))
             state["report_id"] = Path(state["sync_results"]["local_file"]).stem
 
             # Persist report metadata to SQLite
@@ -492,7 +693,11 @@ class MVPWorkflow:
                 state["status"] = "prd_generating"
                 self._emit("prd_generate", "prd_generate", "running", "正在生成 PRD")
                 generator = PRDGenerator()
-                prd_content = generator.generate_from_competitive_report(state["report_final"], user_query)
+                prd_content = await asyncio.to_thread(
+                    generator.generate_from_competitive_report,
+                    state["report_final"],
+                    user_query,
+                )
                 state["prd_content"] = prd_content
                 self._emit(
                     "artifact_ready", "prd_generate", "completed",
@@ -572,9 +777,10 @@ class MVPWorkflow:
 
         return sites
 
-    def _initialize_state(self, user_query: str, target_urls: List[str], task_id: Optional[str] = None) -> Dict[str, Any]:
+    def _initialize_state(self, user_query: str, target_urls: List[str], task_id: Optional[str] = None, user_id: Optional[str] = None) -> Dict[str, Any]:
         return {
             "task_id": task_id or str(uuid4()),
+            "user_id": user_id,
             "status": "pending",
             "created_at": datetime.now(),
             "updated_at": datetime.now(),
@@ -599,6 +805,7 @@ class MVPWorkflow:
             "report_draft": None,
             "report_final": None,
             "errors": [],
+            "injection_findings": [],
             "retry_count": 0,
             "max_retries": MAX_RETRIES,
             "sync_targets": [],
@@ -688,7 +895,38 @@ class MVPWorkflow:
                     login_url=login_url,
                     custom_selectors=custom_selectors,
                 )
-                extracted = await self.coordinator.extract_key_info(profile["content"], url)
+
+                # 信任边界：抓到的正文是攻击者可控内容，必须在进入任何提示词之前清洗。
+                # 探针取自**清洗前**原文，存进本次 run 的 state，留给报告出口做独立回声校验。
+                raw_content = profile["content"]
+                self._state().setdefault("injection_canaries", []).extend(
+                    collect_canaries(raw_content)
+                )
+                cleaned_content, page_findings = sanitize(raw_content)
+                self._record_injection_findings(url, page_findings)
+
+                if should_drop_page(scan(raw_content)):
+                    logger.warning(f"页面注入嫌疑过高，已整页丢弃: {url}")
+                    self._emit(
+                        "crawl_progress", "crawl", "running",
+                        f"检测到注入攻击，已跳过 {url}",
+                        payload={
+                            "url": url,
+                            "status": "blocked",
+                            "recoverable": True,
+                            "reason": "page_compromised",
+                        },
+                    )
+                    return {
+                        "name": infer_competitor_name(url),
+                        "url": url,
+                        "extracted_data": [],
+                        "status": "blocked",
+                        "error_message": "页面包含多条注入指令，已整页丢弃",
+                        "injection_findings": len(page_findings),
+                    }
+
+                extracted = await self.coordinator.extract_key_info(cleaned_content, url)
 
             name = infer_competitor_name(url, extracted)
             page_count = len(profile.get("pages", []))
@@ -725,13 +963,16 @@ class MVPWorkflow:
                 "error_message": str(e)
             }
 
-    def _save_report(self, content: str) -> str:
+    def _save_report(self, content: str, task_id: Optional[str] = None) -> str:
         """保存报告到本地文件"""
         from src.config.settings import OUTPUT_DIR
         import os
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"research_report_{timestamp}.md"
+        # 附上 task_id 前 8 位：秒级时间戳在多用户并发下会撞车，导致互相覆盖。
+        # task_id 是 uuid4 派生的，不含用户信息，不会成为枚举入口。
+        suffix = f"_{task_id[:8]}" if task_id else ""
+        filename = f"research_report_{timestamp}{suffix}.md"
         filepath = os.path.join(OUTPUT_DIR, filename)
 
         os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -748,8 +989,16 @@ class MVPWorkflow:
             db = get_report_db()
 
             user_query = state.get("user_query")
-            # Compute query hash for version linking
-            query_hash = hashlib.sha256(user_query.encode()).hexdigest()[:16] if user_query else None
+            user_id = state.get("user_id")
+            # 版本链键必须按用户隔离。只用 query_hash 会让用户 A 跑相同问题时，
+            # 把报告接到他人（旧版本）之后 —— 等于通过版本链跨用户泄露内容。
+            # 用 NUL 分隔，避免拼接产生歧义；无主数据统一落到 anon 命名空间。
+            scope = user_id or "\x00anon"
+            query_hash = (
+                hashlib.sha256(f"{scope}\x00{user_query}".encode()).hexdigest()[:16]
+                if user_query
+                else None
+            )
 
             # Check if there's an existing report for this query
             existing_report_id = None
@@ -772,6 +1021,7 @@ class MVPWorkflow:
                     quality_grade=state.get("quality_grade"),
                     version_number=1,  # Will be auto-incremented by link_report_version
                     parent_version_id=parent_version_id,
+                    user_id=user_id,
                     metadata={
                         "competitors": [
                             {"name": c.get("name"), "url": c.get("url")}
@@ -792,6 +1042,7 @@ class MVPWorkflow:
                     report_content=state.get("report_final"),
                     quality_score=state.get("quality_score"),
                     quality_grade=state.get("quality_grade"),
+                    user_id=user_id,
                     metadata={
                         "competitors": [
                             {"name": c.get("name"), "url": c.get("url")}
@@ -810,6 +1061,7 @@ class MVPWorkflow:
                 user_query=user_query,
                 status=state.get("status"),
                 report_id=report_id,
+                user_id=user_id,
             )
         except Exception as e:
             logger.warning(f"Failed to persist to SQLite: {e}")
@@ -821,12 +1073,16 @@ class MVPWorkflow:
         for target in sync_targets:
             try:
                 if target == "feishu":
-                    result = doc_sync_manager.sync_to_feishu(state["report_final"], title)
+                    result = await asyncio.to_thread(
+                        doc_sync_manager.sync_to_feishu, state["report_final"], title
+                    )
                     if "error" in result:
                         raise Exception(result["error"])
                     state["sync_results"]["feishu"] = result.get("url", result.get("document_id", ""))
                 elif target == "tencent":
-                    result = doc_sync_manager.sync_to_tencent(state["report_final"], title)
+                    result = await asyncio.to_thread(
+                        doc_sync_manager.sync_to_tencent, state["report_final"], title
+                    )
                     if "error" in result:
                         raise Exception(result["error"])
                     state["sync_results"]["tencent"] = result.get("url", result.get("document_id", ""))

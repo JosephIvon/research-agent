@@ -72,7 +72,7 @@ from src.workflow.task_store import (
     EventEmitter,
     _sanitize_payload,
 )
-from src.storage import get_report_db
+from src.storage import get_report_db, REPORT_NOT_IN_DB
 from src.logging import get_audit_logger, AuditEvent
 
 logging.basicConfig(level=logging.INFO)
@@ -87,7 +87,9 @@ audit_logger.setLevel(logging.INFO)
 audit_logger.propagate = False
 
 IS_PRODUCTION = APP_ENV == "production"
-REPORT_ID_RE = re.compile(r"^research_report_\d{8}_\d{6}$")
+# 兼容两种报告 ID：历史格式 research_report_YYYYmmdd_HHMMSS，
+# 以及加入 task_id 后缀的新格式 research_report_YYYYmmdd_HHMMSS_<8位hex>。
+REPORT_ID_RE = re.compile(r"^research_report_\d{8}_\d{6}(?:_[0-9a-f]{8})?$")
 app = FastAPI(
     title="Research Agent MCP Server",
     version="1.0.0",
@@ -148,6 +150,7 @@ async def enforce_auth(request: Request, call_next):
         if payload and "sub" in payload:
             request.state.user_id = payload["sub"]
             request.state.username = payload.get("username", "")
+            request.state.role = payload.get("role", "user")
             return await call_next(request)
 
     # Fall back to legacy API_AUTH_TOKEN if configured
@@ -155,6 +158,11 @@ async def enforce_auth(request: Request, call_next):
         expected = f"Bearer {API_AUTH_TOKEN}"
         actual = request.headers.get("Authorization", "")
         if hmac.compare_digest(expected, actual):
+            # Legacy token 是一个共享的管理凭证：按 admin 主体处理，
+            # 既保持它原先"能看到全部数据"的语义，也避免它创建的报告变成谁都读不到的孤儿。
+            request.state.user_id = "api-token"
+            request.state.username = "api-token"
+            request.state.role = "admin"
             return await call_next(request)
         # Token provided but doesn't match either JWT or legacy → reject
         return JSONResponse(status_code=401, content={"detail": "认证失败"})
@@ -397,7 +405,7 @@ def _report_payload(path: Path, include_markdown: bool = False) -> Dict[str, Any
         "created_at": created_at,
         "size_bytes": path.stat().st_size,
         "preview": markdown[:240],
-        "grade": "B",
+        "grade": None,
         "score": None,
         "competitors": None,
         "missing_dimensions": [],
@@ -419,6 +427,71 @@ def _latest_report_payload() -> Dict[str, Any]:
     if not files:
         raise HTTPException(status_code=404, detail="暂无可同步的报告")
     return _report_payload(files[0], include_markdown=True)
+
+
+def _latest_accessible_report(request: Request):
+    """返回当前调用者**有权访问**的最新报告文件；没有则返回 None。
+
+    此前直接取磁盘上最新的文件，不区分归属——任意用户不传 report_id 就能把
+    他人的报告同步到飞书/腾讯。
+    """
+    user_id, is_admin = _principal(request)
+    for path in _report_files():
+        if is_admin or _can_access_report(path.stem, user_id, is_admin):
+            return path
+    return None
+
+
+# ---------- 租户访问控制 ----------
+
+def _principal(request: Request):
+    """返回 (user_id, is_admin)。"""
+    user_id = getattr(request.state, "user_id", None)
+    is_admin = getattr(request.state, "role", None) == "admin"
+    return user_id, is_admin
+
+
+def _can_access_report(report_id: str, user_id: Optional[str], is_admin: bool) -> bool:
+    """报告访问权判定。
+
+    无主报告（user_id 为 NULL）和库里查不到归属记录的文件，**一律仅 admin 可见**。
+    """
+    if is_admin:
+        return True
+    try:
+        owner = get_report_db().get_report_owner(report_id)
+    except Exception as exc:
+        logger.warning("读取报告归属失败 %s: %s", report_id, exc)
+        return False
+    if owner is None or owner is REPORT_NOT_IN_DB:
+        return False
+    return owner == user_id
+
+
+def _require_report_access(request: Request, report_id: str) -> None:
+    """无权限时抛 404 而不是 403 —— 403 等于告诉对方"该报告存在"。"""
+    user_id, is_admin = _principal(request)
+    if not _can_access_report(report_id, user_id, is_admin):
+        raise HTTPException(status_code=404, detail="报告不存在")
+
+
+def _require_admin(request: Request) -> None:
+    """特权端点守卫：以数据库为准，不信任 JWT 里的 role claim。
+
+    token 的 role 只反映签发时刻的库状态；将来一旦加入「改角色/降权」入口，
+    旧 token 在有效期内仍会带着 admin。这里每次查库，让降权即时生效；
+    查库异常按无权限处理（fail-closed）。读取路径（_principal 的 is_admin）
+    仍用 token claim，避免每个请求多一次查询——过期的管理员读权限，
+    风险远小于写权限。
+    """
+    user_id, _ = _principal(request)
+    try:
+        is_admin = bool(user_id) and get_user_db().is_admin(user_id)
+    except Exception as exc:
+        logger.warning("管理员校验查库失败，按无权限处理: %s", exc)
+        is_admin = False
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
 
 
 def _safe_settings_payload() -> Dict[str, Any]:
@@ -448,12 +521,22 @@ def _safe_settings_payload() -> Dict[str, Any]:
     }
 
 
-def _sync_content(req: SyncRequest) -> tuple[str, str]:
+def _sync_content(req: SyncRequest, request: Request) -> tuple[str, str]:
     content = req.report_content or req.content
     title = req.title or "智能调研报告"
     if content:
         return content, title
-    report = _load_report_payload(req.report_id) if req.report_id else _latest_report_payload()
+
+    if req.report_id:
+        _require_report_access(request, req.report_id)
+        report = _load_report_payload(req.report_id)
+        return report["markdown"], req.title or report["title"]
+
+    # 未指定报告：只允许取调用者自己有权访问的那一份
+    path = _latest_accessible_report(request)
+    if path is None:
+        raise HTTPException(status_code=404, detail="暂无可同步的报告")
+    report = _report_payload(path, include_markdown=True)
     return report["markdown"], req.title or report["title"]
 
 
@@ -464,6 +547,7 @@ async def competitive_research(request: Request, req: ResearchRequest):
     try:
         from src.workflow.mvp_workflow import MVPWorkflow
 
+        user_id, _ = _principal(request)
         workflow = MVPWorkflow()
         result = await workflow.run(
             user_query=req.query,
@@ -472,7 +556,8 @@ async def competitive_research(request: Request, req: ResearchRequest):
             auth_credentials=_auth_dict(req.auth_credentials),
             login_url=req.login_url,
             enable_search=req.enable_search,
-            custom_selectors=req.custom_selectors
+            custom_selectors=req.custom_selectors,
+            user_id=user_id,
         )
 
         return {
@@ -587,7 +672,8 @@ async def prd_from_query(request: Request, req: ResearchRequest):
             auth_credentials=_auth_dict(req.auth_credentials),
             login_url=req.login_url,
             enable_search=req.enable_search,
-            custom_selectors=req.custom_selectors
+            custom_selectors=req.custom_selectors,
+            user_id=_principal(request)[0],
         )
 
         if research_result["status"] != "completed":
@@ -599,7 +685,8 @@ async def prd_from_query(request: Request, req: ResearchRequest):
             }
 
         generator = PRDGenerator()
-        prd_content = generator.generate_from_competitive_report(
+        prd_content = await asyncio.to_thread(
+            generator.generate_from_competitive_report,
             research_result["report_final"],
             req.query
         )
@@ -675,7 +762,7 @@ class TaskRequest(BaseModel):
 _task_queue: List[asyncio.Task] = []
 
 
-async def _run_research_task(task_id: str, req: TaskRequest):
+async def _run_research_task(task_id: str, req: TaskRequest, user_id: Optional[str] = None):
     """Background task that runs the research workflow and emits events."""
     from src.workflow.mvp_workflow import MVPWorkflow
 
@@ -711,6 +798,7 @@ async def _run_research_task(task_id: str, req: TaskRequest):
         custom_selectors=req.custom_selectors,
         deliverables=req.deliverables,
         task_id=task_id,
+        user_id=user_id,
     )
 
     research_metadata = {
@@ -776,7 +864,8 @@ async def create_task(request: Request, req: TaskRequest):
     task_id = str(uuid4())
     store = get_task_store()
 
-    await store.create(task_id, req.query, req.deliverables)
+    user_id, _ = _principal(request)
+    await store.create(task_id, req.query, req.deliverables, user_id=user_id)
 
     task_state = await store.get(task_id)
     created_event = TaskEvent(
@@ -790,7 +879,6 @@ async def create_task(request: Request, req: TaskRequest):
     await store.add_event(task_id, created_event)
 
     # Audit log research start
-    user_id = getattr(request.state, "user_id", None)
     get_audit_logger().log(AuditEvent.RESEARCH_START, user_id, {
         "task_id": task_id,
         "query": req.query[:200],
@@ -798,7 +886,7 @@ async def create_task(request: Request, req: TaskRequest):
         "target_sites_count": len(req.target_sites),
     })
 
-    asyncio.create_task(_run_research_task(task_id, req))
+    asyncio.create_task(_run_research_task(task_id, req, user_id))
 
     return {
         "task_id": task_id,
@@ -807,13 +895,25 @@ async def create_task(request: Request, req: TaskRequest):
     }
 
 
+def _require_task_access(task, request: Request) -> None:
+    """任务访问权。无主任务（user_id 为 None）仅 admin 可读。"""
+    user_id, is_admin = _principal(request)
+    if is_admin:
+        return
+    if task.user_id and task.user_id == user_id:
+        return
+    # 与报告一致：无权时返 404 而非 403，避免泄露"该任务存在"
+    raise HTTPException(status_code=404, detail="任务不存在")
+
+
 @app.get("/research/tasks/{task_id}", response_model=Dict[str, Any])
-async def get_task(task_id: str):
+async def get_task(task_id: str, request: Request):
     """获取任务状态和历史事件"""
     store = get_task_store()
     task = await store.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+    _require_task_access(task, request)
     return task.to_dict()
 
 
@@ -825,6 +925,9 @@ async def stream_task_events(task_id: str, request: Request):
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
 
+    # SSE 同样必须校验归属，否则可订阅他人任务的实时事件流
+    _require_task_access(task, request)
+
     q = store.subscribe_task(task_id)
 
     last_event_id = 0
@@ -835,18 +938,22 @@ async def stream_task_events(task_id: str, request: Request):
             pass
 
     async def event_stream():
-        for event in task.events:
-            if event.id > last_event_id:
-                yield f"id: {event.id}\nevent: {event.event}\ndata: {json.dumps(event.to_dict(), ensure_ascii=False)}\n\n"
+        try:
+            for event in task.events:
+                if event.id > last_event_id:
+                    yield f"id: {event.id}\nevent: {event.event}\ndata: {json.dumps(event.to_dict(), ensure_ascii=False)}\n\n"
 
-        while True:
-            if await request.is_disconnected():
-                break
-            try:
-                event = await asyncio.wait_for(q.get(), timeout=SSE_KEEPALIVE_SECONDS)
-                yield f"id: {event.id}\nevent: {event.event}\ndata: {json.dumps(event.to_dict(), ensure_ascii=False)}\n\n"
-            except asyncio.TimeoutError:
-                yield f": keepalive\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=SSE_KEEPALIVE_SECONDS)
+                    yield f"id: {event.id}\nevent: {event.event}\ndata: {json.dumps(event.to_dict(), ensure_ascii=False)}\n\n"
+                except asyncio.TimeoutError:
+                    yield f": keepalive\n\n"
+        finally:
+            # 客户端断开时释放订阅，否则队列会永久滞留在 emitter 上
+            store.unsubscribe_task(task_id, q)
 
     return StreamingResponse(
         event_stream(),
@@ -864,42 +971,49 @@ async def stream_task_events(task_id: str, request: Request):
 def list_history(request: Request):
     items: List[Dict[str, Any]] = []
     seen: set[str] = set()
+    user_id, is_admin = _principal(request)
 
     try:
         db = get_report_db()
-        for r in db.list_reports(limit=100):
+        # 非 admin 只能看到自己的报告
+        for r in db.list_reports(limit=100, user_id=None if is_admin else user_id):
             seen.add(r["id"])
             items.append({
                 "id": r["id"],
                 "title": r["user_query"][:120] if r["user_query"] else r["id"],
                 "date": r["created_at"],
                 "created_at": r["created_at"],
-                "grade": r["quality_grade"] or "B",
+                "grade": r["quality_grade"],
                 "score": r["quality_score"],
                 "task_id": r["task_id"],
             })
     except Exception as exc:
         logger.warning("Failed to list reports from SQLite, falling back to files: %s", exc)
 
-    for path in _report_files():
-        if path.stem not in seen:
-            items.append(_report_payload(path, include_markdown=False))
+    # 文件兜底分支只给 admin：这类报告在库里没有归属记录，归属未知。
+    # 非 admin 若在此看到，等于把别人的历史报告交出去。
+    if is_admin:
+        for path in _report_files():
+            if path.stem not in seen:
+                items.append(_report_payload(path, include_markdown=False))
 
     return sorted(items, key=lambda item: item.get("created_at", ""), reverse=True)[:100]
-
-    """列出本地历史报告（从SQLite读取）。"""
 
 
 @limiter.limit(RATE_LIMIT_PER_TOKEN)
 @app.get("/research/history/{report_id}", response_model=Dict[str, Any])
 def get_history_report(request: Request, report_id: str):
     """读取单份历史报告。"""
+    _require_report_access(request, report_id)
     return _load_report_payload(report_id)
 
 
 @app.get("/research/compare/{report_id1}/{report_id2}", response_model=Dict[str, Any])
 def compare_reports(request: Request, report_id1: str, report_id2: str):
     """对比两个报告版本的差异"""
+    _require_report_access(request, report_id1)
+    _require_report_access(request, report_id2)
+
     db = get_report_db()
     report1 = db.get_report(report_id1)
     report2 = db.get_report(report_id2)
@@ -926,6 +1040,8 @@ async def export_report(request: Request, req: ExportRequest):
             status_code=501,
             detail="PRD 尚未支持后端导出，请在报告页使用「复制当前」功能获取 PRD 内容"
         )
+
+    _require_report_access(request, req.report_id)
 
     # Report content is stored on the file system (authoritative source)
     # Fall back to DB only if the file does not exist
@@ -981,17 +1097,29 @@ async def export_report(request: Request, req: ExportRequest):
 @app.get("/research/versions/{report_id}", response_model=List[Dict[str, Any]])
 def get_report_versions(request: Request, report_id: str):
     """获取报告的所有版本"""
+    _require_report_access(request, report_id)
     db = get_report_db()
     return db.get_report_versions(report_id)
 
 
 @app.delete("/research/history/{report_id}", response_model=Dict[str, Any])
-def delete_history_report(report_id: str):
+def delete_history_report(request: Request, report_id: str):
     """删除本地历史报告。"""
+    _require_report_access(request, report_id)
+
     path = _report_path(report_id)
-    if not path.exists():
+    deleted_file = False
+    if path.exists():
+        path.unlink()
+        deleted_file = True
+
+    # 同时清理数据库记录：此前只删文件，DB 行仍在，报告还会继续出现在历史列表里
+    db = get_report_db()
+    db.delete_report(report_id)
+
+    if not deleted_file and not db.get_report(report_id):
         raise HTTPException(status_code=404, detail="报告不存在")
-    path.unlink()
+
     return {"status": "success", "deleted": report_id}
 
 
@@ -1011,6 +1139,9 @@ def get_all_settings(request: Request):
 @app.post("/settings/{key}", response_model=Dict[str, Any])
 def update_setting(request: Request, key: str, value: str):
     """更新单个配置项（仅允许热更新配置项）"""
+    # 此前任何自注册用户都能改限流/爬虫/阈值，且不写审计。role 字段此前全代码无消费点。
+    _require_admin(request)
+
     cm = get_config_manager()
 
     if not cm.is_hot_reloadable(key):
@@ -1099,7 +1230,7 @@ def sync_feishu(request: Request, req: SyncRequest):
     """同步报告到飞书文档。"""
     if not (FEISHU_APP_ID and FEISHU_APP_SECRET):
         raise HTTPException(status_code=400, detail="飞书文档未配置")
-    content, title = _sync_content(req)
+    content, title = _sync_content(req, request)
     from src.sync import doc_sync_manager
 
     result = doc_sync_manager.sync_to_feishu(content, title)
@@ -1120,7 +1251,7 @@ def sync_tencent(request: Request, req: SyncRequest):
     """同步报告到腾讯文档。"""
     if not (TENCENT_APP_ID and TENCENT_APP_SECRET):
         raise HTTPException(status_code=400, detail="腾讯文档未配置")
-    content, title = _sync_content(req)
+    content, title = _sync_content(req, request)
     from src.sync import doc_sync_manager
 
     result = doc_sync_manager.sync_to_tencent(content, title)
@@ -1144,7 +1275,12 @@ def register(req: UserRegister):
     user_id = db.create_user(req.username, req.email, req.password)
     if not user_id:
         raise HTTPException(status_code=400, detail="Username or email already exists")
-    access_token = create_access_token({"sub": user_id, "username": req.username})
+    created = db.get_user(user_id) or {}
+    access_token = create_access_token({
+        "sub": user_id,
+        "username": req.username,
+        "role": created.get("role", "user"),
+    })
     get_audit_logger().log(AuditEvent.USER_REGISTER, user_id, {"username": req.username})
     return {"user_id": user_id, "access_token": access_token, "token_type": "bearer"}
 
@@ -1153,10 +1289,14 @@ def register(req: UserRegister):
 def login(req: UserLogin):
     """User login"""
     db = get_user_db()
-    user_id = db.authenticate(req.username, req.password)
-    if not user_id:
+    principal = db.authenticate(req.username, req.password)
+    if not principal:
         raise HTTPException(status_code=401, detail="Invalid username or password")
-    access_token = create_access_token({"sub": user_id, "username": req.username})
+    access_token = create_access_token({
+        "sub": principal["id"],
+        "username": req.username,
+        "role": principal.get("role", "user"),
+    })
     get_audit_logger().log(AuditEvent.USER_LOGIN, user_id, {"username": req.username})
     return {"access_token": access_token, "token_type": "bearer"}
 
