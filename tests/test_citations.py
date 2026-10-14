@@ -971,3 +971,76 @@ def test_fabricated_pricing_report_always_trips_the_gate(discount_store):
     ungrounded = [v for v in result["violations"] if v["type"] == "ungrounded_claim"]
     assert result["hallucinated_urls"] or ungrounded
     assert result["passed"] is False
+
+
+# --------------------------------------------------------------------------
+# 推导门禁的已知边界——用测试钉住，不让它悄悄变大
+#
+# 背景与实测数据见 src/agent/citations.py 的 `_DERIVATION_OPS` 上方注释块：
+# 证据里的数一多，"两个数相乘"就能把编造数字洗成合法推导。真实夹具形态下
+# 漏放行是 0.2%~1.3%（扫 1..1000），且其中大部分恰恰是**合法年化换算**——
+# 那正是 M2 明确设计要允许的。这里把两边都钉住。
+# --------------------------------------------------------------------------
+
+def _fabricated_passing(evidence_text, targets, present):
+    """在一条证据上，逐个 target 试编造，返回被判成合法推导的那些。"""
+    from src.agent.citations import EvidenceStore, verify_report
+
+    store = EvidenceStore.from_extracted_data([{
+        "key": "pricing", "value": evidence_text,
+        "source_url": "https://acme.test/pricing",
+    }])
+    eid = store.evidences[0].evidence_id
+    leaked = []
+    for t in targets:
+        if t in present:
+            continue  # 证据里本来就有的数，不算凭空编造
+        if verify_report(f"该产品定价为 {t} 美元/席位/月 [e:{eid}]", store)["passed"]:
+            leaked.append(t)
+    return leaked
+
+
+def test_derivation_still_allows_legitimate_unit_conversions():
+    """月价年化、折扣换算是 M2 明确要允许的，收紧时不能把它一起打死。
+
+    M2 的扎根性边界写死的是：只判**直接引用数值**，推导数值（"$10/月"写
+    "$120/年"）单列 `derived_claims` 记录、不阻塞。禁加减时已经验证过核心场景
+    `49÷10×8`；这里补上另一类更常见的——年化系数 10/12 直接乘月价。
+    """
+    leaked = _fabricated_passing(
+        "标准版 49 元/席位/月。",
+        [490, 588], {49},
+    )
+    assert leaked == [490, 588], (
+        f"49×10 与 49×12 是合法年化，必须仍然判为推导；实测漏掉 {leaked}"
+    )
+
+
+def test_derivation_leak_is_bounded_by_evidence_density():
+    """把各证据形态下的漏放行率钉成**上限**，只卡继续变大，不卡现状复现。
+
+    2026-10-14 实测（扫 1..1000，只数证据里没有的数）：
+    夹具同形 1 数 0.2%、2 数 0.2%、3 数 1.3%、禁加减旧基准 0.8%、合成 5 数 2.5%。
+    上限各留一格余量——这是**棘轮**：演进中若漏放行继续扩大，这条先红，
+    逼人重新评估而不是默默退化。
+
+    注意这些数字里混着合法年化（490/588/110/132），真正的假阳性只是
+    "非价格量 × 单位常数"那一小撮（如 20 = 2×10）。这正是决策为"保持现状"
+    的原因：量级小，且收紧规则会打死合法换算。
+    """
+    CASES = [
+        ("夹具同形 1 数", "入门款 29 元/月。", {29}, 2, 4),
+        ("夹具同形 2 数", "标准版 49 元/席位/月。", {49}, 2, 4),
+        ("夹具同形 3 数", "1 核 2G 入门款 11 元/月。", {1, 2, 11}, 13, 18),
+        ("禁加减旧基准", "标准版 49 元/席位/月，企业版 99 元/席位/月，折扣 8 折。",
+         {8, 49, 99}, 8, 13),
+        ("合成 5 数",
+         "免费额度 5 个席位，团队上限 200 人，99.9% 可用性，延迟 30ms，日活 12000 人",
+         {5, 30, 99.9, 200, 12000}, 25, 34),
+    ]
+    for label, evidence, present, measured, cap in CASES:
+        leaked = _fabricated_passing(evidence, range(1, 1001), present)
+        assert len(leaked) <= cap, (
+            f"[{label}] 漏放行 {len(leaked)} 个，超出上限 {cap} "
+            f"（2026-10-14 实测 {measured}）——推导判定变松了，需重估：{leaked[:20]}"
+        )
