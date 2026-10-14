@@ -16,6 +16,8 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, m
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from limits import parse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -137,6 +139,39 @@ limiter = Limiter(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# 全局兜底限流。此前只有逐路由的 @limiter.limit 装饰器，任何**没被装饰**的路由
+# （含 mount 出去的子应用）完全不受约束。
+if RATE_LIMIT_ENABLED:
+    app.add_middleware(SlowAPIMiddleware)
+
+# /mcp 的显式限流守卫——中间件够不着它，必须单独兜。
+#
+# 实测（5/minute 下连打 8 次）：
+#     普通未装饰路由 /plain  -> [200,200,200,200,200,429,429,429]   限住了
+#     mount 子应用 /mcp/ping  -> [200,200,200,200,200,200,200,200] 完全没限
+#
+# 原因在 slowapi 的 _find_route_handler：它只在顶层路由里找 endpoint，
+# 而 Mount 没有 endpoint，于是返回 None；_should_exempt 对 None **直接返回 True**
+# ——请求被当成"无主路由"整条跳过限流。所以只挂 SlowAPIMiddleware 等于给 /mcp
+# 装了一道看着有、实际不设防的门。方案文档 §4-M5 要的"复用限流"仍然没兑现。
+#
+# 这里改用 limits 的公开 hit() 接口直接计次，并抛 RateLimitExceeded 走
+# 已注册的同一个处理器，保证 429 的响应体与其它路由完全一致。
+_MCP_RATE_LIMIT = parse(RATE_LIMIT_PER_TOKEN)
+
+
+@app.middleware("http")
+async def limit_mcp_endpoint(request: Request, call_next):
+    path = request.url.path
+    if path == "/mcp" or path.startswith("/mcp/"):
+        if not limiter.limiter.hit(_MCP_RATE_LIMIT, get_token_key(request)):
+            # 响应体与 slowapi 已注册的 _rate_limit_exceeded_handler 保持一致。
+            # 走不到那个处理器：它要一个完整的 Limit 对象，而这里只需要一个
+            # 窗口计数器——为了一次 429 去拼 9 个构造参数不划算，也脆。
+            return JSONResponse(
+                {"error": f"Rate limit exceeded: {_MCP_RATE_LIMIT}"}, status_code=429
+            )
+    return await call_next(request)
 
 # JWT Authentication middleware - supports both legacy API_AUTH_TOKEN and new JWT
 @app.middleware("http")
@@ -1544,11 +1579,20 @@ def main():
     uvicorn.run(app, host=APP_HOST, port=APP_PORT)
 
 
+# ---------- 公开路径豁免限流 ----------
+# 全局 SlowAPIMiddleware 会按 default_limits（60/minute）打到**每一个**未装饰路由，
+# 而 PUBLIC_PATHS 里的恰好都是"必须永远可用"的那批：健康/就绪探针要接负载均衡
+# 的高频轮询（每秒一次就是 60/min，正好卡在阈值上），登录接口被误伤等于把服务锁死。
+# 从 PUBLIC_PATHS 直接生成豁免，而不是逐个装饰器——以后新增公开路径不会漏。
+for _route in app.routes:
+    if getattr(_route, "path", None) in PUBLIC_PATHS and hasattr(_route, "endpoint"):
+        limiter.exempt(_route.endpoint)  # 只取注册副作用，返回的包装函数丢弃
 
 
 # ---------- MCP 子应用挂载（M5 接线）----------
 # 必须放在全部路由定义之后；鉴权由上方 enforce_auth 中间件统一把关——
 # /mcp 不在 PUBLIC_PATHS 白名单内，未认证请求在进入子应用前即被拦下。
+# 限流则由上面的 limit_mcp_endpoint 单独兜：SlowAPIMiddleware 够不到 mount 子应用。
 from src.mcpserver import create_mcp_asgi_app
 
 app.mount("/mcp", create_mcp_asgi_app())

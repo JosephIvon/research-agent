@@ -10,6 +10,24 @@ TEST_USER_ID = "test-user"
 OTHER_USER_ID = "other-user"
 
 
+@pytest.fixture(autouse=True)
+def _rate_limits_off():
+    """测试期间关掉限流。
+
+    全局限流按 token 计数，而整套用例共用少数几个测试 token——不关的话几百个
+    请求会挤在同一个分钟窗口里互相踩，用例结果取决于执行顺序与机器快慢。
+    限流本身由 tests/test_rate_limit.py 单独验（那里会显式打开），不在这里生效。
+    """
+    import server
+
+    previous = server.limiter.enabled
+    server.limiter.enabled = False
+    try:
+        yield
+    finally:
+        server.limiter.enabled = previous
+
+
 def _headers(user_id: str, role: str = "user"):
     from src.auth.jwt_auth import create_access_token
 
