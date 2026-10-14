@@ -86,12 +86,27 @@ def pytest_report_header(config):
 
 
 def pytest_collection_finish(session):
-    """Fail when a *required* suite matched zero tests (typo'd marker / all deselected)."""
+    """Fail when a *required* suite matched zero tests (typo'd marker / all deselected).
+
+    E2E_REQUIRE_BACKEND 的语义是"后端必须可达"，绑定到具体 marker 是错的：
+    real-services job 只跑 real_services 测试（不带 contract marker），却同样要求
+    后端在线——此时 guard 若强制 contract 被收集，会误报"green while testing nothing"
+    并退出。所以它只检查"有没有收集到任何 e2e 测试"。
+    E2E_REQUIRE_REAL_SERVICES 才绑定 real_services marker（凭据门禁只对真服务套件有意义）。
+    """
     for env_name, marker in (
-        ("E2E_REQUIRE_BACKEND", "contract"),
+        ("E2E_REQUIRE_BACKEND", None),       # 后端可达性：任意 e2e 测试都算
         ("E2E_REQUIRE_REAL_SERVICES", "real_services"),
     ):
         if not _flag(env_name):
+            continue
+        if marker is None:
+            if not session.items:
+                pytest.exit(
+                    f"{GUARD_TAG}: {env_name}=1 but no e2e test was collected. "
+                    f"The run would have been green while testing nothing.",
+                    returncode=1,
+                )
             continue
         if not any(item.get_closest_marker(marker) is not None for item in session.items):
             pytest.exit(
