@@ -154,12 +154,12 @@
         <section class="report-content">
           <el-alert
             v-if="reportIncomplete"
-            class="injection-alert"
-            type="warning"
+            class="incomplete-alert"
+            type="error"
             show-icon
             :closable="false"
-            title="本次结果不完整"
-            description="任务触发了预算上限并提前收束，以下内容可能未覆盖全部竞品或维度。如需完整报告，请提高预算后重跑。"
+            title="本次结果不完整：任务触发了预算上限并提前收束"
+            description="下方报告由预算耗尽前已采集的证据生成，可能没有覆盖全部竞品或调研维度。请勿把它当作完整结论；如需完整报告，请提高预算后重跑。"
           />
 
           <el-alert
@@ -184,7 +184,12 @@
               <div class="section-kicker">调研主题</div>
               <h1>{{ displayTitle }}</h1>
             </div>
-            <el-tag :type="qualityTagType" effect="light">{{ qualityTagText }}</el-tag>
+            <div class="title-tags">
+              <el-tag v-if="reportIncomplete" type="warning" effect="dark" class="partial-tag">
+                预算收束 · 内容不完整
+              </el-tag>
+              <el-tag :type="qualityTagType" effect="light">{{ qualityTagText }}</el-tag>
+            </div>
           </div>
 
           <div v-if="isLowQuality" class="quality-callout">
@@ -778,6 +783,26 @@ onUnmounted(() => {
 
 .injection-alert {
   border-radius: 8px;
+}
+
+/* 预算收束的提示刻意比注入提示更重：注入痕迹被净化掉了，报告本身是可信的；
+   而 partial 的报告是真的缺内容——两者混成同一种黄色 warning 会被一起忽略。 */
+.incomplete-alert {
+  border-radius: 8px;
+  border-left: 4px solid var(--el-color-danger);
+}
+
+.title-tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.partial-tag {
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .injection-sources {

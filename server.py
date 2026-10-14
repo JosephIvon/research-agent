@@ -1135,10 +1135,19 @@ async def _task_meta_for_report(report_id: str) -> Dict[str, Any]:
                 "cost_report": getattr(task, "cost_report", None),
                 "injection_findings_count": getattr(task, "injection_findings_count", 0),
                 "trace_url": trace_url(task.task_id),
+                # 预算收束标记必须跟着报告走。它此前只活在前端的 localStorage 缓存里，
+                # 换浏览器或清缓存后重新打开历史报告，"内容不完整"的提示会整个消失——
+                # 一份半截的报告就这么被当成完整结论读了。和成本卡是同一类断链。
+                "incomplete": task.status == TaskStatus.PARTIAL,
             }
     # 找不到归属任务（比如任务存储已过期、或报告来自文件兜底）：如实给空值。
     # 用 report_id 拼一个假的 trace 链接只会让用户点进一个必然 404 的页面。
-    return {"cost_report": None, "injection_findings_count": 0, "trace_url": None}
+    return {
+        "cost_report": None,
+        "injection_findings_count": 0,
+        "trace_url": None,
+        "incomplete": False,
+    }
 
 
 @limiter.limit(RATE_LIMIT_PER_TOKEN)

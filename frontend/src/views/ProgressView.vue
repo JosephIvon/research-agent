@@ -130,7 +130,14 @@ import {
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useResearchStore } from '../stores/research'
-import { formatAgentStepSummary, getTaskInputSummary } from '../stores/researchTaskHelpers'
+import {
+  formatAgentStepSummary,
+  getRunHeadline,
+  getRunStatusKicker,
+  getRunStatusLabel,
+  getRunStatusTagType,
+  getTaskInputSummary
+} from '../stores/researchTaskHelpers'
 
 const route = useRoute()
 const router = useRouter()
@@ -151,30 +158,10 @@ const currentStageIndex = computed(() => {
 })
 const canOpenReport = computed(() => Boolean(run.value?.report_id))
 const deliverableText = computed(() => run.value?.deliverables?.prd ? '报告 + PRD' : '报告')
-const statusText = computed(() => ({
-  pending: '等待开始',
-  running: '执行中',
-  completed: '已完成',
-  needs_input: '需要补充资料',
-  failed: '执行失败'
-})[run.value?.status] || '准备中')
-const statusTagType = computed(() => ({
-  completed: 'success',
-  needs_input: 'warning',
-  failed: 'danger'
-})[run.value?.status] || 'primary')
-const statusKicker = computed(() => {
-  if (run.value?.status === 'completed') return '已完成'
-  if (run.value?.status === 'needs_input') return '需要补充资料'
-  if (run.value?.status === 'failed') return '执行失败'
-  return '正在处理'
-})
-const headline = computed(() => {
-  if (run.value?.status === 'completed') return '报告和交付物已整理完成。'
-  if (run.value?.status === 'needs_input') return '已生成质量提示，建议补充竞品资料后继续。'
-  if (run.value?.status === 'failed') return run.value.error || '任务执行失败。'
-  return '你可以先离开这个页面，但刷新可能会重新执行当前任务。'
-})
+const statusText = computed(() => getRunStatusLabel(run.value?.status))
+const statusTagType = computed(() => getRunStatusTagType(run.value?.status))
+const statusKicker = computed(() => getRunStatusKicker(run.value?.status))
+const headline = computed(() => getRunHeadline(run.value || {}))
 
 function syncRun() {
   run.value = store.getResearchRun(taskId)

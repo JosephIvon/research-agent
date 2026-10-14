@@ -2,12 +2,23 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  BACKEND_EVENTS,
   buildSourceRows,
   buildTaskTimeline,
+  getEventType,
   getReportCompetitorCount,
+  getRunHeadline,
+  getRunStatusKicker,
+  getRunStatusLabel,
+  getRunStatusTagType,
   getTaskArtifactContent,
   getTaskInputSummary,
-  normalizeDeliverables
+  isTerminalRunStatus,
+  mergeReportMeta,
+  normalizeDeliverables,
+  mapBackendStageField,
+  resolveFrontendStage,
+  STAGE_MAP
 } from '../src/stores/researchTaskHelpers.js'
 
 test('normalizes deliverables with report and PRD enabled by default', () => {
@@ -108,4 +119,130 @@ test('builds source rows from async task crawl results', () => {
   assert.equal(rows[0].dataCount, 1)
   assert.deepEqual(rows[0].pageUrls, ['https://api000.com', 'https://api000.com/pricing'])
   assert.deepEqual(rows[0].discoveredUrls, ['https://api000.com/pricing'])
+})
+
+// ---------------------------------------------------------------------------
+// SSE 事件订阅与阶段映射
+//
+// 这组用例盯的是一个具体的坑：后端发了事件，前端**没订阅**，或者订阅了却没在
+// STAGE_MAP 里配阶段——两种情况都会走到 `if (!frontendStage) return`，事件被
+// 静默丢弃，界面上什么都不会发生，也没有任何报错。
+// citation_check 正好栽在这上：后端发了 4 次，前端白名单里根本没有它。
+// ---------------------------------------------------------------------------
+
+test('subscribes citation_check so citation-verification progress is not dropped', () => {
+  assert.ok(
+    BACKEND_EVENTS.includes('citation_check'),
+    '后端 citation_check 发了 4 次，前端不订阅就等于全部丢弃'
+  )
+})
+
+test('every mapped backend event is actually subscribed', () => {
+  const unmapped = Object.keys(STAGE_MAP).filter(name => !BACKEND_EVENTS.includes(name))
+  assert.deepEqual(unmapped, [], `配了阶段却没订阅的事件：${unmapped.join(', ')}`)
+})
+
+test('subscription list carries no event the backend never sends', () => {
+  // task_created 由 server.py 的 create_task 直接发，不经过工作流，因此没有阶段
+  const allowedExtras = ['task_created']
+  const extras = BACKEND_EVENTS.filter(
+    name => !Object.keys(STAGE_MAP).includes(name) && !allowedExtras.includes(name)
+  )
+  assert.deepEqual(extras, [], `订阅了后端从不发的事件：${extras.join(', ')}`)
+})
+
+test('citation_check lands on the report step instead of inventing a new one', () => {
+  assert.equal(resolveFrontendStage('citation_check'), 'report')
+})
+
+test('injection_detected takes its stage from the event payload', () => {
+  // 它在爬取和成文两个阶段都会发；硬编码成一个值会把成文阶段发现的注入
+  // 记到"抓取"那一步上
+  assert.equal(resolveFrontendStage('injection_detected', 'crawl'), 'crawl')
+  assert.equal(resolveFrontendStage('injection_detected', 'report_generate'), 'report')
+  assert.equal(resolveFrontendStage('injection_detected', 'anything_else'), null)
+  assert.equal(resolveFrontendStage('injection_detected', 'report_generate'), 'report')
+  // 拿事件名的表去查后端 stage 值只会得到 undefined——事件被静默丢掉
+  assert.equal(mapBackendStageField('crawl'), 'crawl')
+  assert.equal(mapBackendStageField('report_generate'), 'report')
+  assert.equal(mapBackendStageField('never_sent'), null)
+})
+
+test('events without a timeline step resolve to null rather than throwing', () => {
+  assert.equal(resolveFrontendStage('verify', 'verify'), null)
+  assert.equal(resolveFrontendStage('artifact_ready', 'report_generate'), null)
+  assert.equal(resolveFrontendStage('never_heard_of_it'), null)
+})
+
+test('partial terminal event is reported as a delivered result, not an error', () => {
+  assert.equal(getEventType('partial', 'partial'), 'success')
+  assert.equal(getEventType('completed', 'completed'), 'success')
+  assert.equal(getEventType('error', 'failed'), 'error')
+})
+
+// ---------------------------------------------------------------------------
+// PARTIAL 终态（M6）
+// ---------------------------------------------------------------------------
+
+test('partial counts as a terminal run status', () => {
+  assert.equal(isTerminalRunStatus('partial'), true)
+  assert.equal(isTerminalRunStatus('completed'), true)
+  assert.equal(isTerminalRunStatus('failed'), true)
+  assert.equal(isTerminalRunStatus('running'), false)
+})
+
+test('partial never borrows the completed label', () => {
+  // 标签写成「已完成」就是撒谎：那份报告是半截的
+  assert.notEqual(getRunStatusLabel('partial'), getRunStatusLabel('completed'))
+  assert.notEqual(getRunStatusLabel('partial'), '准备中', 'partial 落进默认值等于没接')
+  assert.equal(getRunStatusTagType('partial'), 'warning')
+  assert.equal(getRunStatusKicker('partial'), '预算收束')
+})
+
+test('partial headline explains the truncation instead of claiming success', () => {
+  const headline = getRunHeadline({ status: 'partial' })
+  assert.ok(headline.includes('预算'), `partial 的说明必须点明预算，���际：${headline}`)
+  assert.ok(headline.includes('不完整') || headline.includes('未覆盖'))
+})
+
+test('unknown status still degrades to a safe placeholder', () => {
+  assert.equal(getRunStatusLabel('something_new'), '准备中')
+  assert.equal(getRunStatusTagType('something_new'), 'primary')
+  assert.equal(getRunStatusKicker('something_new'), '正在处理')
+})
+
+// ---------------------------------------------------------------------------
+// 报告元数据合并（冷加载不能丢字段）
+// ---------------------------------------------------------------------------
+
+test('mergeReportMeta carries the incomplete flag from a cold load', () => {
+  const report = mergeReportMeta({}, { incomplete: true })
+  assert.equal(report.incomplete, true)
+})
+
+test('mergeReportMeta defaults incomplete to false when backend omits it', () => {
+  assert.equal(mergeReportMeta({}, {}).incomplete, undefined)
+  assert.equal(mergeReportMeta({}, { incomplete: false }).incomplete, false)
+})
+
+test('mergeReportMeta keeps the other observable fields together', () => {
+  const report = mergeReportMeta({}, {
+    trace_url: 'https://trace.test/abc',
+    injection_findings_count: '3',
+    cost_report: { total_tokens: 1200 },
+    incomplete: true
+  })
+  assert.equal(report.trace_url, 'https://trace.test/abc')
+  assert.equal(report.injection_findings_count, 3, '字符串数字必须被转成数值')
+  assert.deepEqual(report.cost_report, { total_tokens: 1200 })
+  assert.equal(report.incomplete, true)
+})
+
+test('mergeReportMeta never overwrites existing values with undefined', () => {
+  const report = mergeReportMeta(
+    { trace_url: 'https://trace.test/keep', cost_report: { total_tokens: 9 } },
+    { trace_url: undefined, cost_report: null }
+  )
+  assert.equal(report.trace_url, 'https://trace.test/keep')
+  assert.deepEqual(report.cost_report, { total_tokens: 9 })
 })

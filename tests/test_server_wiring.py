@@ -266,3 +266,61 @@ class TestHistoryReportMeta:
         assert body["cost_report"] is None
         assert body["injection_findings_count"] == 0
         assert body["trace_url"] is None
+
+    def test_history_report_marks_budget_truncated_delivery(self, storage, client, auth_headers):
+        """partial 任务产出的报告，冷加载时也必须带着「不完整」标记。
+
+        这个标记此前只活在前端的 localStorage 缓存里：换浏览器或清缓存后
+        重新打开历史报告，一份半截的报告会顶着「可阅读」的标签被当成完整结论读完。
+        和成本卡是同一类断链，所以放在同一处验收。
+
+        这里必须用**独立的** report_id：任务存储是模块级单例，上面那条用例已经
+        给 REPORT_ID 挂过一个 COMPLETED 任务了，沿用同一个 id 会先撞上它，
+        断言就成了「永远绿」的假货。
+        """
+        from src.workflow.task_store import TaskStatus
+
+        partial_id = "research_report_20260101_130000_eeeeeeee"
+        _register_report(storage, partial_id, TEST_USER_ID)
+        store = server.get_task_store()
+        asyncio.run(store.create("wiring-partial-hist", "预算收束", {"report": True},
+                                 user_id=TEST_USER_ID))
+        asyncio.run(store.update(
+            "wiring-partial-hist",
+            status=TaskStatus.PARTIAL,
+            report_id=partial_id,
+        ))
+
+        body = client.get(f"/research/history/{partial_id}", headers=auth_headers).json()
+        assert body["incomplete"] is True
+        assert "incomplete" in body
+
+    def test_completed_task_history_report_is_not_marked_incomplete(self, storage, client, auth_headers):
+        """反向：正常完成的任务绝不能被误标成不完整。"""
+        from src.workflow.task_store import TaskStatus
+
+        done_id = "research_report_20260101_130000_cccccccc"
+        _register_report(storage, done_id, TEST_USER_ID)
+        store = server.get_task_store()
+        asyncio.run(store.create("wiring-done-hist", "正常完成", {"report": True},
+                                 user_id=TEST_USER_ID))
+        asyncio.run(store.update(
+            "wiring-done-hist",
+            status=TaskStatus.COMPLETED,
+            report_id=done_id,
+        ))
+
+        body = client.get(f"/research/history/{done_id}", headers=auth_headers).json()
+        assert body["incomplete"] is False
+
+    def test_history_report_without_task_is_not_marked_incomplete(self, storage, client, auth_headers):
+        """找不到归属任务时给 false（不是 partial），不给 None。
+
+        给 None 的话前端分不出「后端没这个字段」与「不是 partial」，
+        模板里那个 v-if 会静默不渲染——标记又消失了。
+        """
+        orphan_id = "research_report_20260101_130000_dddddddd"
+        _register_report(storage, orphan_id, TEST_USER_ID)
+
+        body = client.get(f"/research/history/{orphan_id}", headers=auth_headers).json()
+        assert body["incomplete"] is False

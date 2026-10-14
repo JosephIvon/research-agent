@@ -4,11 +4,16 @@ import { researchApi } from '../api'
 import { resolveGrade } from '../utils/reportGrade'
 import {
   appendAgentStep,
+  BACKEND_EVENTS,
   buildAgentStepMessage,
   buildTaskTimeline,
+  getEventType,
   getTaskArtifactContent,
+  isTerminalRunStatus,
   makeResearchRunId,
-  normalizeDeliverables
+  mergeReportMeta,
+  normalizeDeliverables,
+  resolveFrontendStage
 } from './researchTaskHelpers'
 
 const REPORT_INDEX_KEY = 'research_report_index'
@@ -35,14 +40,7 @@ function firstHeading(markdown) {
 }
 
 function applyTraceExtras(target, payload = {}) {
-  if (payload.trace_url) target.trace_url = payload.trace_url
-  if (Number.isFinite(Number(payload.injection_findings_count))) {
-    target.injection_findings_count = Number(payload.injection_findings_count)
-  }
-  if (payload.cost_report && typeof payload.cost_report === 'object') {
-    target.cost_report = payload.cost_report
-  }
-  return target
+  return mergeReportMeta(target, payload)
 }
 
 function normalizeReport(payload, request = {}) {
@@ -95,13 +93,17 @@ function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
+// 后端任务终态。partial = 预算耗尽收束：报告已产出但不完整（M6）。
+// 任何"任务是否已经跑完"的判断都必须走 isTerminalRunStatus——漏掉 partial 的
+// 后果不是判断错，而是永远等不到：在 fetchTaskUntilArtifactsReady 里它会白转
+// 8 轮 ×400ms。集合本身与展示文案都在 researchTaskHelpers（纯函数、可测）。
 async function fetchTaskUntilArtifactsReady(taskId, deliverables = {}, fallbackReportId = null) {
   const expected = normalizeDeliverables(deliverables)
   let lastTask = null
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
     lastTask = await researchApi.getTask(taskId)
-    if (lastTask?.status === 'failed' || lastTask?.status === 'completed') {
+    if (isTerminalRunStatus(lastTask?.status)) {
       const hasReport = expected.report === false ||
         Boolean(getTaskArtifactContent(lastTask, 'report') || lastTask?.report_id || fallbackReportId)
       const hasPrd = expected.prd === false || Boolean(getTaskArtifactContent(lastTask, 'prd'))
@@ -114,38 +116,6 @@ async function fetchTaskUntilArtifactsReady(taskId, deliverables = {}, fallbackR
   }
 
   return lastTask
-}
-
-// Backend SSE event stage → frontend timeline stage mapping
-const STAGE_MAP = {
-  decompose: 'understand',
-  search: 'search',
-  crawl_start: 'crawl',
-  crawl_progress: 'crawl',
-  agent_step: 'crawl',
-  crawl_complete: 'extract',
-  extract: 'extract',
-  verify: null,          // no frontend step
-  report_generate: 'report',
-  prd_generate: 'prd',
-  completed: 'finish',
-  // 阶段取事件自带的 stage（crawl 或 report_generate），见 handleMessage 里的特判
-  injection_detected: null,
-  partial: 'finish',
-  artifact_ready: null,  // handled via report_generate / prd_generate
-  error: 'finish'
-}
-
-function mapBackendStage(backendStage) {
-  return STAGE_MAP[backendStage] || null
-}
-
-function getEventType(backendEvent, status) {
-  if (status === 'failed' || status === 'error') return 'error'
-  // partial 走 success：报告确实产出了，只是被预算截断。不完整的细节由 run.status 承载。
-  if (status === 'completed' || backendEvent === 'completed' || backendEvent === 'partial') return 'success'
-  if (status === 'running') return 'running'
-  return 'running'
 }
 
 function connectTaskSSE(runId, taskId, callbacks = {}, handlers = {}) {
@@ -197,9 +167,7 @@ function connectTaskSSE(runId, taskId, callbacks = {}, handlers = {}) {
         runMessage = buildAgentStepMessage(payload)
       }
 
-      const frontendStage = mapBackendStage(backendEvent)
-        // injection_detected 在爬取和成文两个阶段都会发，阶段得看事件自己带的 stage
-        || (backendEvent === 'injection_detected' ? mapBackendStage(stage) : null)
+      const frontendStage = resolveFrontendStage(backendEvent, stage)
       if (!frontendStage) return
 
       const eventType = getEventType(backendEvent, status)
@@ -225,13 +193,6 @@ function connectTaskSSE(runId, taskId, callbacks = {}, handlers = {}) {
       // ignore parse errors
     }
   }
-
-  const BACKEND_EVENTS = [
-    'task_created', 'decompose', 'search', 'crawl_start',
-    'crawl_progress', 'agent_step', 'crawl_complete', 'extract', 'verify',
-    'report_generate', 'prd_generate', 'artifact_ready',
-    'injection_detected', 'partial', 'completed', 'error'
-  ]
 
   function cleanup() {
     eventSource.close()
