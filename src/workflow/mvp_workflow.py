@@ -21,6 +21,10 @@ from src.config.settings import (
     LLM_MAX_CONTENT_CHARS
 )
 from src.security.url_validation import UnsafeURL, validate_fetch_url, validate_fetch_urls
+from src.agent.config import AGENT_TOKEN_BUDGET, AGENT_USD_BUDGET
+from src.agent.runner import ReActRunner
+from src.agent.tool_specs import build_default_tools
+from src.llm.token_budget import TaskBudget
 from src.agent.citations import (
     CLAIM_KIND_GAP_ACK,
     EvidenceStore,
@@ -39,7 +43,9 @@ from src.security.injection import (
 )
 from src.workflow.task_store import _sanitize_payload
 import asyncio
+import contextlib
 import json
+import os
 import re
 import logging
 
@@ -51,24 +57,96 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_json_response(response: str):
-    """解析LLM返回的JSON，支持markdown代码块包装和无包装两种格式
+    """解析 LLM 返回的 JSON。
 
-    这里再剥一次 `<think>` 是**第二道防线**：客户端层已经剥过，但只要将来新增的
-    LLM 客户端绕过那一层（或模型把推理塞进代码围栏之外），JSON 解析就会失败，
-    而失败会被 except 兜底成 `content_summary`——结构化数据静默全丢还不报错。
-    解析入口必须自己能扛住推理前缀。
+    要扛住四件真实发生过的事，每一件都是**运行日志里的实测故障**，不是假想：
+
+    1. **推理前缀**：客户端层已剥离，但换客户端实现或模型把推理塞在别处时仍会来。
+       不扛住的后果是 JSON 解析失败 → except 兜底成 `content_summary`，
+       结构化数据静默全丢还不报错。
+    2. **单个 markdown 围栏**：最常见。
+    3. **多个围栏**：模型分批吐 JSON，每批各包一个 ```json（实测抽取路径遇到过）。
+    4. **`Extra data`**：JSON 解析成功了，后面还有内容——可能是第二批 JSON，
+       也可能是一句说明文字。实测 6 次真实抽取里有 1 次栽在这。
+
+    分批输出必须**合并**而不是取第一段：丢掉后半批等于数据损失。
+    合并不去重——下游 `EvidenceStore` 按 sha256(url,key,value) 去重，重复项在那里被吸收。
     """
     if not response:
         raise ValueError("Empty response")
     text = strip_thinking(response)
     if not text:
         raise ValueError("Response contained only a thinking block")
-    if text.startswith("```"):
-        lines = text.split("\n")
+
+    fenced = _fenced_bodies(text)
+    if fenced:
+        values = [v for v in (_loads_or_none(body) for body in fenced) if v is not None]
+        if values:
+            return _merge_values(values)
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as first_error:
+        merged = _decode_json_segments(text)
+        if merged is None:
+            raise first_error
+        return merged
+
+
+def _fenced_bodies(text: str) -> List[str]:
+    """抽出所有 ``` 围栏的内容（```json 或裸 ```），没有围栏则返回空列表。"""
+    bodies = re.findall(r"```(?:json)?[ \t]*\r?\n(.*?)```", text, re.DOTALL | re.IGNORECASE)
+    # 老行为兼容：只有开围栏没有闭围栏时，按首尾行剥一次
+    if not bodies and text.lstrip().startswith("```"):
+        lines = text.strip().split("\n")
         if len(lines) >= 3:
-            text = "\n".join(lines[1:-1])
-            text = re.sub(r"^json\s+", "", text, flags=re.IGNORECASE)
-    return json.loads(text)
+            bodies = ["\n".join(lines[1:-1])]
+    return [re.sub(r"^json\s+", "", b, flags=re.IGNORECASE).strip() for b in bodies]
+
+
+def _loads_or_none(body: str):
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        return None
+
+
+def _merge_values(values: List[Any]):
+    """多个 JSON 值 → 单个返回值。全是数组则拼接，否则取第一个。"""
+    if len(values) == 1:
+        return values[0]
+    if all(isinstance(v, list) for v in values):
+        combined: List[Any] = []
+        for value in values:
+            combined.extend(value)
+        return combined
+    return values[0]
+
+
+def _decode_json_segments(text: str):
+    """逐段解出文本里的 JSON 值。
+
+    - 全部是数组 → 合并成一个（模型分批输出）
+    - 否则       → 取第一个可解出的值（尾部说明文字直接丢弃）
+
+    一段都解不出来时返回 None，让调用方抛原始异常——不做"猜测性降级"。
+    """
+    decoder = json.JSONDecoder()
+    values: List[Any] = []
+    idx, length = 0, len(text)
+    while idx < length:
+        while idx < length and text[idx] in " \t\r\n,;":
+            idx += 1
+        if idx >= length:
+            break
+        try:
+            value, idx = decoder.raw_decode(text, idx)
+        except ValueError:
+            break
+        values.append(value)
+    if not values:
+        return None
+    return _merge_values(values)
 
 
 class CoordinatorAgent:
@@ -96,7 +174,11 @@ class CoordinatorAgent:
 
         response = await self.llm_client.achat_completion(prompt, temperature=0.1)
         try:
-            return json.loads(response)
+            # 必须走共享解析入口，不能裸 json.loads：模型经常把 JSON 包在
+            # ```json 围栏里（提示词没禁止，它就会这么做），裸解析直接
+            # `Expecting value: line 1 column 1`，任务分解静默降级成写死的一步。
+            # 真实端到端跑出来的实测遗漏。
+            return _parse_json_response(response)
         except Exception as e:
             logger.warning(f"任务分解JSON解析失败: {e}")
             return [{
@@ -634,6 +716,11 @@ class MVPWorkflow:
         state["custom_selectors"] = custom_selectors
         self.state = state
 
+        # AGENT_MODE=react：切换到 ReAct 工具循环（模型自主规划抓取/抽取/对比），
+        # 以下是 legacy 固定管线，路径保持不动。env 运行时读取，方便部署侧切换。
+        if os.getenv("AGENT_MODE", "legacy").lower() == "react":
+            return await self._run_react_mode(state, user_query, state["target_urls"])
+
         try:
             state["status"] = "decomposing"
             self._emit("decompose", "decompose", "running", "正在理解需求、拆解调研维度")
@@ -722,6 +809,7 @@ class MVPWorkflow:
                     f"抽取数据不足：来源覆盖率 {state['source_coverage']:.0%}、"
                     f"证据 {state['evidence_count']} 条",
                 )
+                state["injection_findings_count"] = len(state.get("injection_findings") or [])
                 return state
 
             if not quality_report.is_usable:
@@ -732,6 +820,7 @@ class MVPWorkflow:
                 state["status"] = "failed"
                 state["termination_reason"] = "数据质量不足"
                 self._emit("error", "verify", "failed", f"数据质量不足：{quality_report.overall_score}/10")
+                state["injection_findings_count"] = len(state.get("injection_findings") or [])
                 return state
 
             state["status"] = "report_generating"
@@ -866,6 +955,8 @@ class MVPWorkflow:
                 payload={"stage": "workflow", "error_type": type(e).__name__}
             )
 
+        # 收尾统一记录注入审计计数：正常完成与异常兜底两条路径共用这个出口
+        state["injection_findings_count"] = len(state.get("injection_findings") or [])
         return state
 
     def _filter_search_urls(self, urls: List[str]) -> List[str]:

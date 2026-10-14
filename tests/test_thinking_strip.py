@@ -214,6 +214,53 @@ def test_parse_json_response_still_rejects_garbage():
         _parse_json_response("<think>x</think>这完全不是 JSON")
 
 
+def test_parse_json_response_merges_multiple_json_arrays():
+    """真实抽取实测：模型会吐出**多个** JSON 数组，`json.loads` 报
+    `Extra data: line 50 column 1 (char 866)`，抽取静默降级成 content_summary。
+
+    实测降级率 1/6。抽取失败等于结构化字段全丢，只剩一段原文摘要——
+    后面报告的引用覆盖度、维度覆盖全部跟着塌。
+    """
+    text = ('[{"key": "pricing", "value": "49 美元"}]\n'
+            '[{"key": "models", "value": "3 个模型"}]')
+    result = _parse_json_response(text)
+
+    assert isinstance(result, list) and len(result) == 2, f"两个数组应被合并，得到 {result!r}"
+    assert {i["key"] for i in result} == {"pricing", "models"}
+
+
+def test_parse_json_response_handles_json_followed_by_prose():
+    """`Extra data` 的另一种形态：JSON 之后跟了解释文字。尾部文字直接忽略。"""
+    text = '[{"key": "pricing", "value": "49 美元"}]\n以上是从定价页提取的信息。'
+    result = _parse_json_response(text)
+    assert [i["key"] for i in result] == ["pricing"]
+
+
+def test_parse_json_response_keeps_single_array_intact():
+    """回归：正常单数组不能被多段逻辑改动。"""
+    text = '[{"key": "pricing", "value": "49 美元"}, {"key": "models", "value": "3"}]'
+    result = _parse_json_response(text)
+    assert [i["key"] for i in result] == ["pricing", "models"]
+
+
+def test_extract_key_info_does_not_degrade_on_multiple_json_arrays():
+    """接线级断言：抽取不得因为多段 JSON 而降级。"""
+    text = ('<think>分两批给</think>\n```json\n'
+            '[{"key": "pricing", "value": "49 美元"}]\n```\n'
+            '```json\n[{"key": "models", "value": "3 个模型"}]\n```')
+
+    client = _make_client(_response(text))
+    agent = CoordinatorAgent.__new__(CoordinatorAgent)
+    agent.llm_client = client
+    agent.search_tool = None
+
+    items = asyncio.run(
+        agent.extract_key_info("页面里写着标准版 49 美元", "https://acme.test/pricing")
+    )
+
+    assert {i["key"] for i in items} == {"pricing", "models"}, f"实际拿到 {[i['key'] for i in items]}"
+
+
 def test_parse_json_response_rejects_thinking_only_output():
     """只有推理、没有正文时必须抛错，不能返回空列表蒙混过关。
 
@@ -273,3 +320,65 @@ def test_generate_report_still_returns_body_when_thinking_is_stripped():
     ))
 
     assert "定价 49 美元" in report
+
+
+# --------------------------------------------------------------------------
+# 接线：任务分解也必须走同一个 JSON 解析入口
+#
+# 真实端到端跑出来的遗漏：`extract_key_info` 走了 `_parse_json_response`，
+# 而 `decompose_task` 还在裸调 `json.loads`。模型把 JSON 包在 ```json 围栏里
+# （提示词没禁止，它就会这么做），裸 json.loads 直接
+# `Expecting value: line 1 column 1`，分解降级成写死的一步。
+# --------------------------------------------------------------------------
+
+FENCED_TASK_JSON = (
+    '```json\n[{"id": "1", "description": "分析定价", "priority": 1}]\n```'
+)
+
+
+def _decompose(client):
+    agent = CoordinatorAgent.__new__(CoordinatorAgent)
+    agent.llm_client = client
+    agent.search_tool = None
+    return asyncio.run(agent.decompose_task("调研问题", []))
+
+
+def test_decompose_task_accepts_fenced_json():
+    client = _make_client(_response(FENCED_TASK_JSON))
+    tasks = _decompose(client)
+    assert tasks and tasks[0]["description"] == "分析定价", \
+        f"围栏 JSON 必须被解析，而不是降级成写死的兜底：{tasks}"
+
+
+def test_decompose_task_accepts_fenced_json_behind_thinking():
+    client = _make_client(_response(f"<think>先拆解</think>{FENCED_TASK_JSON}"))
+    tasks = _decompose(client)
+    assert tasks and tasks[0]["description"] == "分析定价", \
+        f"推理块 + 围栏也要能解析：{tasks}"
+
+
+def test_decompose_task_still_falls_back_on_real_garbage():
+    """照常兜底：不是 JSON 就该降级，而不是崩掉。"""
+    client = _make_client(_response("<think>x</think>完全不是 JSON"))
+    tasks = _decompose(client)
+    assert tasks == [{"id": "1", "description": "分析目标网站内容", "priority": 1}]
+
+
+def test_no_workflow_llm_call_bypasses_the_shared_json_parser():
+    """接线守卫：所有需要结构化输出的 LLM 调用都必须经过 `_parse_json_response`。
+
+    按契约而非字符串匹配来断言——这里真的去调，比在源码里搜函数名可靠：
+    把 `json.loads(response)` 换成 `_parse_json_response(response)` 的源码字符串
+    仍然存在，只有真调用能分辨哪条路径真的走了解析入口。
+    """
+    import inspect
+
+    from src.workflow import mvp_workflow as wf
+
+    src = inspect.getsource(wf)
+    assert "data = _parse_json_response(response)" in src
+    # decompose_task 里不得再有裸 json.loads(response)
+    decompose_src = inspect.getsource(wf.CoordinatorAgent.decompose_task)
+    assert "_parse_json_response(response)" in decompose_src, \
+        "decompose_task 必须走共享解析入口，否则围栏 JSON 会让它静默降级"
+    assert "json.loads(response)" not in decompose_src
