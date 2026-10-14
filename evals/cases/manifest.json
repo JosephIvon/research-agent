@@ -458,7 +458,7 @@
     "conf_specs/llm.json": "6c2aa4b6bda34c280f76b98bc660c74cd484d0224a6e8fa89e353dbeafe4fa6b",
     "conf_specs/sites/docsA/specs.html": "ccd910e8455108713040e2b2f5593640601d3fbe3b6765958cf3db2469ccb39e",
     "conf_specs/sites/forumB/thread.html": "7c541d8f54f5ee7f2df55a465de751587b10e4cf084984d4da061fdf0344be86",
-    "cross_cloudprice/llm.json": "d298f792565ed761d107ffcf90acc2349668fc2a560da48edff8ab9b38981aa4",
+    "cross_cloudprice/llm.json": "ebc24edb0dc30d1489caaaf5666aef6d31d0720e98e8688dc255c3691f3609e6",
     "cross_cloudprice/sites/cloud_a/index.html": "c72fd0493f01876f242884d87d42d3f2afe6ba4567804a95e6f791dbb8297c9a",
     "cross_cloudprice/sites/cloud_b/index.html": "b85ed359eeb06cd87770235ad4107a90e093962157d07f2455fdc9931a0bd080",
     "cross_cloudprice/sites/cloud_c/index.html": "62170165a52109b945473106472393eb7c1d89826d9b46b177e52185b99cf195",

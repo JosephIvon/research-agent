@@ -51,5 +51,5 @@
       {"key": "target_users", "value": "初创团队", "confidence": 0.9}
     ]
   ],
-  "report": "## 定价汇总\n\nCloud A 为 11 元/月 {{cite:cloud_a:0}}，Cloud B 为 12 元/月 {{cite:cloud_b:0}}；Cloud C 为 13 元/月 {{cite:cloud_c:0}}，Cloud D 为 14 元/月 {{cite:cloud_d:0}}。\n\nCloud E 为 15 元/月 {{cite:cloud_e:0}}，Cloud F 为 16 元/月 {{cite:cloud_f:0}}；Cloud G 为 17 元/月 {{cite:cloud_g:0}}，Cloud H 为 18 元/月 {{cite:cloud_h:0}}。\n\nCloud I 为 19 元/月 {{cite:cloud_i:0}}，Cloud J 为 20 元/月 {{cite:cloud_j:0}}。\n\n## 功能\n\n各家均提供快照能力，镜像与监控各有差异。\n\n## 目标用户\n\n以个人开发者为主，兼顾学生与小团队。\n"
+  "report": "## 定价汇总\n\nCloud A 为 11 元/月 {{cite:cloud_a:0}}。\nCloud B 为 12 元/月 {{cite:cloud_b:0}}。\nCloud C 为 13 元/月 {{cite:cloud_c:0}}。\nCloud D 为 14 元/月 {{cite:cloud_d:0}}。\nCloud E 为 15 元/月 {{cite:cloud_e:0}}。\nCloud F 为 16 元/月 {{cite:cloud_f:0}}。\nCloud G 为 17 元/月 {{cite:cloud_g:0}}。\nCloud H 为 18 元/月 {{cite:cloud_h:0}}。\nCloud I 为 19 元/月 {{cite:cloud_i:0}}。\nCloud J 为 20 元/月 {{cite:cloud_j:0}}。\n\n## 功能\n\n各家均提供快照能力，镜像与监控各有差异。\n\n## 目标用户\n\n以个人开发者为主，兼顾学生与小团队。\n"
 }
