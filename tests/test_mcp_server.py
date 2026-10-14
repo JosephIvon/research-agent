@@ -13,12 +13,18 @@ import threading
 
 import pytest
 
-pytest.importorskip("mcp", reason="需要官方 mcp SDK（uv add mcp）")
-
-from src.agent.tools import Tool, ToolRegistry  # noqa: E402
-from src.mcpserver.server import (  # noqa: E402
+from src.agent.tools import Tool, ToolRegistry
+from src.mcpserver.server import (
     create_mcp_asgi_app,
+    mcp_sdk_available,
     mcp_tool_definitions,
+)
+
+# 刻意**不在模块级 importorskip("mcp")**：那会让整个文件在没装 SDK 的机器上被跳过，
+# 连 /mcp 白名单这类与协议无关的用例一起失去保护。改为只给真正走协议的用例挂 skip，
+# 判定复用生产代码里的同一个标志（src/mcpserver/server.py 的 _SDK_AVAILABLE）。
+requires_mcp_sdk = pytest.mark.skipif(
+    not mcp_sdk_available(), reason="需要官方 mcp SDK（uv add mcp）"
 )
 
 
@@ -61,6 +67,7 @@ def _test_registry() -> ToolRegistry:
 # schema 单一来源（复核 §3.4：防漂移的约束级测试）
 # --------------------------------------------------------------------------
 
+@requires_mcp_sdk
 def test_mcp_tool_definitions_match_registry_exactly():
     registry = _test_registry()
     definitions = mcp_tool_definitions(registry)
@@ -113,6 +120,7 @@ async def _serve(app):
     return uv_server, port
 
 
+@requires_mcp_sdk
 @pytest.mark.asyncio
 async def test_real_mcp_client_roundtrip():
     """真客户端四步：initialize → tools/list → tools/call → SSRF 拦截可见。"""

@@ -7,6 +7,9 @@ Handler 通过 workspace 闭包共享运行期状态：
 - compare_competitors 基于已抽取事实生成对比章节（复用 ComparisonAnalyzer）
 
 模块级 import 是刻意的：测试需要在这些名字上打补丁隔离网络。
+
+对外契约的 schema 全部住在这里：build_default_tools() 的四个工具，加上仅 MCP
+暴露的编排工具 generate_research_report（原因见其定义处的注释）。
 """
 import asyncio
 import json
@@ -190,6 +193,50 @@ def build_default_tools(llm_client, workspace: Dict[str, Any]) -> ToolRegistry:
     ))
 
     return registry
+
+
+# ----------------------------------------------------------------------
+# generate_research_report（编排工具，只对外暴露）
+# ----------------------------------------------------------------------
+# 刻意**不放进 build_default_tools()**：报告生成工具若进了 ReAct Runner 的工具集，
+# 模型就能调用自己去生成报告（递归）。Runner 用的是 build_default_tools() 的独立
+# 实例，天然不含本工具（见 src/mcpserver/server.py 里 runner_registry 的注释）。
+#
+# 描述与 JSON Schema 只有下面这一份：src/mcpserver/server.py 引用本模块组装
+# Tool，不再在协议层内联第二份——MCP 与 ReAct 共用同一套对外契约。
+_GENERATE_REPORT_DESCRIPTION = (
+    "执行一次完整的竞品调研并返回结构化报告（有界 ReAct：自主搜索/抓取/"
+    "抽取后综合成文，含引用与成本报告）。适合需要多步信息收集的问题；"
+    "单点事实查询请优先用 web_search / fetch_site。"
+)
+_GENERATE_REPORT_PARAMETERS = {
+    "type": "object",
+    "properties": {
+        "query": {"type": "string", "description": "调研问题，尽量具体"},
+        "target_urls": {
+            "type": "array", "items": {"type": "string"},
+            "description": "可选：优先调研的站点 URL 列表",
+        },
+    },
+    "required": ["query"],
+}
+
+
+def generate_research_report_tool(handler: Any, timeout: float) -> Tool:
+    """按上面的描述/schema 组装 generate_research_report。
+
+    handler 与 timeout 由调用方给：它们是执行策略（MCP 侧按墙钟预算放宽超时），
+    不是对外契约，所以不进这里。schema 原样引用，不复制——协议层拿到的是
+    同一个对象，抄一份必然在一致性测试里红。
+    """
+    return Tool(
+        name="generate_research_report",
+        description=_GENERATE_REPORT_DESCRIPTION,
+        parameters=_GENERATE_REPORT_PARAMETERS,
+        handler=handler,
+        timeout=timeout,
+        url_params=(),
+    )
 
 
 def system_prompt(tool_schemas: List[Dict[str, Any]], max_steps: int) -> str:

@@ -17,8 +17,8 @@ from starlette.routing import Route
 
 from src.agent.config import AGENT_WALL_CLOCK_BUDGET
 from src.agent.runner import ReActRunner
-from src.agent.tool_specs import build_default_tools
-from src.agent.tools import Tool, ToolRegistry
+from src.agent.tool_specs import build_default_tools, generate_research_report_tool
+from src.agent.tools import ToolRegistry
 
 try:  # 官方 MCP Python SDK（uv add "mcp>=2.3" 引入）
     from mcp import types as mcp_types
@@ -56,7 +56,8 @@ def build_mcp_registry() -> ToolRegistry:
     """MCP 暴露的工具集：web_search / fetch_site / generate_research_report。
 
     web_search 与 fetch_site 复用 M3 注册表定义（schema 与实现同源）；
-    generate_research_report 是新增的编排工具，同样只读。
+    generate_research_report 的描述/schema 同样住在 src/agent/tool_specs.py，
+    这里只补执行策略（handler 与墙钟相关超时）。三个工具都只读。
     """
     workspace: Dict[str, Any] = {}
     # 只为借 web_search/fetch_site 的定义；两者不依赖 LLM（extract_facts 不暴露）
@@ -65,27 +66,9 @@ def build_mcp_registry() -> ToolRegistry:
     for name in ("web_search", "fetch_site"):
         registry.add(base.get(name))
 
-    registry.add(Tool(
-        name="generate_research_report",
-        description=(
-            "执行一次完整的竞品调研并返回结构化报告（有界 ReAct：自主搜索/抓取/"
-            "抽取后综合成文，含引用与成本报告）。适合需要多步信息收集的问题；"
-            "单点事实查询请优先用 web_search / fetch_site。"
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "调研问题，尽量具体"},
-                "target_urls": {
-                    "type": "array", "items": {"type": "string"},
-                    "description": "可选：优先调研的站点 URL 列表",
-                },
-            },
-            "required": ["query"],
-        },
-        handler=_generate_research_report,
-        timeout=max(300.0, AGENT_WALL_CLOCK_BUDGET * 2),
-        url_params=(),
+    registry.add(generate_research_report_tool(
+        _generate_research_report,
+        max(300.0, AGENT_WALL_CLOCK_BUDGET * 2),
     ))
     return registry
 
