@@ -15,6 +15,9 @@ from src.config.settings import REDIS_URL, TASK_STORE_BACKEND
 
 logger = logging.getLogger(__name__)
 
+# 单个订阅者（SSE 连接）的待消费事件上限。防止慢消费者或失联连接导致内存无界增长。
+SUBSCRIBER_QUEUE_MAXSIZE = 1000
+
 
 class TaskStatus(str, Enum):
     PENDING = "pending"
@@ -100,6 +103,9 @@ class TaskState:
     quality_score: Optional[float] = None
     quality_grade: Optional[str] = None
     missing_dimensions: List[str] = field(default_factory=list)
+    # 任务归属用户。默认值保证旧任务（Redis/内存里已存在的状态）反序列化时不报错。
+    # 为 None 表示无主，按策略仅 admin 可读。
+    user_id: Optional[str] = None
 
     def __post_init__(self):
         if isinstance(self.status, str):
@@ -125,6 +131,7 @@ class TaskState:
             "quality_score": self.quality_score,
             "quality_grade": self.quality_grade,
             "missing_dimensions": self.missing_dimensions,
+            "user_id": self.user_id,
             "artifacts": {k: v.to_dict() for k, v in self.artifacts.items()},
             "events": [e.to_dict() for e in self.events],
         }
@@ -148,10 +155,37 @@ class EventEmitter:
         self._subscribers: List[asyncio.Queue] = []
         self._lock = asyncio.Lock()
 
-    def subscribe(self) -> asyncio.Queue:
-        q = asyncio.Queue()
+    def subscribe(self, maxsize: int = SUBSCRIBER_QUEUE_MAXSIZE) -> asyncio.Queue:
+        q = asyncio.Queue(maxsize=maxsize)
         self._subscribers.append(q)
         return q
+
+    def unsubscribe(self, queue: asyncio.Queue) -> None:
+        """移除订阅者。SSE 连接断开后必须调用，否则队列永久滞留在 emitter 上。"""
+        try:
+            self._subscribers.remove(queue)
+        except ValueError:
+            pass
+
+    @staticmethod
+    def _deliver(queue: asyncio.Queue, event: TaskEvent) -> None:
+        """非阻塞投递。队列满时丢弃最旧事件。
+
+        这里必须用 put_nowait 而不是 await queue.put()：加了 maxsize 之后，
+        put() 会在慢消费者上阻塞，进而阻塞事件发布方（乃至整个工作流）。
+        实时进度场景下丢失中间帧是可接受的，调用方另有重连补发兜底。
+        """
+        try:
+            queue.put_nowait(event)
+        except asyncio.QueueFull:
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                queue.put_nowait(event)
+            except asyncio.QueueFull:
+                logger.warning("Subscriber queue still full after dropping oldest event")
 
     async def emit(self, event: TaskEvent):
         if self._on_event:
@@ -162,8 +196,9 @@ class EventEmitter:
             except Exception as e:
                 logger.warning(f"Event callback error: {e}")
         async with self._lock:
-            for q in self._subscribers:
-                await q.put(event)
+            # 迭代快照：unsubscribe 不持锁，遍历快照可避免遍历期间列表被改
+            for q in list(self._subscribers):
+                self._deliver(q, event)
 
     def emit_sync(self, event: TaskEvent):
         if self._on_event:
@@ -173,15 +208,15 @@ class EventEmitter:
                     raise RuntimeError("emit_sync cannot await coroutine")
             except Exception as e:
                 logger.warning(f"Event callback error: {e}")
-        for q in self._subscribers:
-            q.put_nowait(event)
+        for q in list(self._subscribers):
+            self._deliver(q, event)
 
 
 class PersistenceBackend(ABC):
     """抽象持久化后端接口"""
 
     @abstractmethod
-    async def create(self, task_id: str, user_query: str, deliverables: Optional[Dict[str, bool]] = None) -> Optional[TaskState]:
+    async def create(self, task_id: str, user_query: str, deliverables: Optional[Dict[str, bool]] = None, user_id: Optional[str] = None) -> Optional[TaskState]:
         pass
 
     @abstractmethod
@@ -205,6 +240,15 @@ class PersistenceBackend(ABC):
         pass
 
     @abstractmethod
+    def subscribe_task(self, task_id: str) -> asyncio.Queue:
+        pass
+
+    @abstractmethod
+    def unsubscribe_task(self, task_id: str, queue: asyncio.Queue) -> None:
+        """解除 SSE 订阅，释放队列引用。"""
+        pass
+
+    @abstractmethod
     async def close(self):
         pass
 
@@ -224,6 +268,7 @@ class InMemoryTaskStore(PersistenceBackend):
         task_id: str,
         user_query: str,
         deliverables: Optional[Dict[str, bool]] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[TaskState]:
         async with self._lock:
             ts = TaskState(
@@ -233,6 +278,7 @@ class InMemoryTaskStore(PersistenceBackend):
                 updated_at=datetime.now().isoformat(timespec="seconds"),
                 user_query=user_query,
                 deliverables=deliverables or {"report": True, "prd": False},
+                user_id=user_id,
             )
             self._tasks[task_id] = ts
             return ts
@@ -302,6 +348,11 @@ class InMemoryTaskStore(PersistenceBackend):
         emitter = self.get_or_create_emitter(task_id)
         return emitter.subscribe()
 
+    def unsubscribe_task(self, task_id: str, queue: asyncio.Queue) -> None:
+        emitter = self._emitters.get(task_id)
+        if emitter:
+            emitter.unsubscribe(queue)
+
     async def close(self):
         pass
 
@@ -320,6 +371,10 @@ class RedisTaskStore(PersistenceBackend):
         self._lock = asyncio.Lock()
         self._listener_task: Optional[asyncio.Task] = None
         self._subscribers: Dict[str, asyncio.Queue] = {}
+        # 标识本进程实例。publish 时带上它，监听器据此丢弃本进程自己的回声，
+        # 否则 emit -> on_event -> add_event -> publish -> 监听器 -> 同一个 emitter
+        # 会构成闭环，一次事件被无限自我放大（仅 Redis 后端受影响）。
+        self._instance_id = uuid4().hex[:8]
 
     async def _get_client(self) -> redis.Redis:
         if self._client is None:
@@ -346,6 +401,7 @@ class RedisTaskStore(PersistenceBackend):
         task_id: str,
         user_query: str,
         deliverables: Optional[Dict[str, bool]] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[TaskState]:
         client = await self._get_client()
         async with self._lock:
@@ -356,6 +412,7 @@ class RedisTaskStore(PersistenceBackend):
                 updated_at=datetime.now().isoformat(timespec="seconds"),
                 user_query=user_query,
                 deliverables=deliverables or {"report": True, "prd": False},
+                user_id=user_id,
             )
             data = json.dumps(ts.to_dict())
             pipe = client.pipeline()
@@ -410,7 +467,9 @@ class RedisTaskStore(PersistenceBackend):
         pipe.hset(self._state_key(task_id), "data", json.dumps(ts.to_dict()))
         pipe.rpush(self._events_key(task_id), json.dumps(event.to_dict()))
         await pipe.execute()
-        await client.publish(self._channel(task_id), json.dumps(event.to_dict()))
+        # 只在 publish 的载荷上标记来源，不写入存储：存储侧的结构保持向后兼容
+        published = json.dumps({**event.to_dict(), "_origin": self._instance_id})
+        await client.publish(self._channel(task_id), published)
         return ts
 
     async def set_artifact(self, task_id: str, key: str, artifact: TaskArtifact) -> Optional[TaskState]:
@@ -442,6 +501,11 @@ class RedisTaskStore(PersistenceBackend):
         emitter = self.get_or_create_emitter(task_id)
         return emitter.subscribe()
 
+    def unsubscribe_task(self, task_id: str, queue: asyncio.Queue) -> None:
+        emitter = self._emitters.get(task_id)
+        if emitter:
+            emitter.unsubscribe(queue)
+
     async def _start_listener(self):
         """Start background listener for pubsub messages."""
         if self._listener_task and not self._listener_task.done():
@@ -456,7 +520,13 @@ class RedisTaskStore(PersistenceBackend):
                     if message["type"] in {"message", "pmessage"}:
                         try:
                             data = json.loads(message["data"])
+                            # 必须在构造 TaskEvent 之前取出，否则 dataclass 会因未知
+                            # 字段抛 TypeError，异常被下面的 except 吞掉后表现为事件静默丢失
+                            origin = data.pop("_origin", None)
                             event = TaskEvent.from_dict(data)
+                            if origin == self._instance_id:
+                                # 本进程发布的事件，已由 emit() 直接投递给本地订阅者
+                                continue
                             task_id = event.task_id
                             if task_id in self._emitters:
                                 await self._emitters[task_id].emit(event)

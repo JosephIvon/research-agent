@@ -1,4 +1,5 @@
 """LLM客户端抽象层 - 统一接口支持多种大模型提供商"""
+import asyncio
 import random
 import time
 import logging
@@ -82,6 +83,19 @@ class LLMClient(ABC):
     ) -> str:
         """流式对话补全"""
         pass
+
+    async def achat_completion(self, messages: List[Dict[str, str]], **kwargs):
+        """异步调用包装，供 async 代码路径使用。
+
+        chat_completion 是同步实现：内部既做阻塞式网络 I/O，也在重试退避时
+        `time.sleep`（单次最长 LLM_RETRY_BACKOFF_MAX，乘以重试次数可达分钟级）。
+        直接在 async 代码里调用会冻结整个事件循环——单 worker 部署下，SSE 心跳
+        和其他并发请求会一起停摆。
+
+        这里统一丢进线程池执行。熔断器用的是 threading.Lock，保护的是跨线程共享
+        的状态机，在多线程下正是需要的。
+        """
+        return await asyncio.to_thread(self.chat_completion, messages, **kwargs)
     
     @abstractmethod
     def extract_structured_data(
