@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { researchApi } from '../api'
+import { resolveGrade } from '../utils/reportGrade'
 import {
   buildTaskTimeline,
   getTaskArtifactContent,
@@ -44,7 +45,7 @@ function normalizeReport(payload, request = {}) {
     query: payload.query || request.query || payload.title || '',
     markdown,
     score: payload.quality_score ?? payload.score ?? null,
-    grade: payload.quality_grade || payload.grade || 'B',
+    grade: resolveGrade(payload.quality_score ?? payload.score ?? null, payload.quality_grade || payload.grade),
     competitors,
     missing_dimensions: payload.missing_dimensions || [],
     created_at: payload.created_at || new Date().toLocaleString(),
@@ -291,7 +292,7 @@ export const useResearchStore = defineStore('research', () => {
         query: task?.user_query || run?.params?.query || '',
         competitors: crawlCompetitors.length,
         score: task?.quality_score ?? null,
-        grade: task?.quality_grade || 'B',
+        grade: resolveGrade(task?.quality_score ?? null, task?.quality_grade),
         quality_score: task?.quality_score,
         quality_grade: task?.quality_grade,
         missing_dimensions: task?.missing_dimensions || [],

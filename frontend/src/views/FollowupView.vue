@@ -15,7 +15,7 @@
             <div class="summary-content" v-if="reportSummary">
               <div class="summary-item">
                 <span class="label">质量:</span>
-                <span class="value">{{ reportSummary.grade || 'B' }}</span>
+                <span class="value">{{ resolveGrade(reportSummary.score, reportSummary.grade) }}</span>
               </div>
               <div class="summary-item">
                 <span class="label">竞品:</span>
@@ -86,6 +86,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { researchApi } from '../api'
 import { useResearchStore } from '../stores/research'
+import { resolveGrade } from '../utils/reportGrade'
 
 const route = useRoute()
 const taskId = route.params.id

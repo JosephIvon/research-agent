@@ -218,6 +218,7 @@ import { init, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { useResearchStore } from '../stores/research'
 import { buildSourceRows, getReportCompetitorCount } from '../stores/researchTaskHelpers'
+import { gradeClassName, resolveGrade } from '../utils/reportGrade'
 import { researchApi } from '../api'
 
 const route = useRoute()
@@ -240,11 +241,8 @@ const numericScore = computed(() => {
 
 const scoreDisplay = computed(() => numericScore.value === null ? '暂无' : numericScore.value.toFixed(1))
 const scorePercent = computed(() => numericScore.value === null ? 0 : Math.round(numericScore.value * 10))
-const gradeDisplay = computed(() => {
-  if (numericScore.value !== null) return gradeFromScore(numericScore.value)
-  return report.value?.grade || 'B'
-})
-const gradeClass = computed(() => `grade-${gradeDisplay.value.toLowerCase()}`)
+const gradeDisplay = computed(() => resolveGrade(numericScore.value, report.value?.grade))
+const gradeClass = computed(() => gradeClassName(gradeDisplay.value))
 const scoreTone = computed(() => {
   if (numericScore.value === null) return 'score-muted'
   if (numericScore.value < 3) return 'score-bad'
@@ -303,14 +301,6 @@ const activeArtifactFilename = computed(() => {
   if (activeTab.value === 'sources') return 'sources.md'
   return 'report.md'
 })
-
-function gradeFromScore(score) {
-  if (score >= 8.5) return 'A'
-  if (score >= 7) return 'B'
-  if (score >= 5.5) return 'C'
-  if (score >= 3) return 'D'
-  return 'F'
-}
 
 async function loadReport() {
   try {

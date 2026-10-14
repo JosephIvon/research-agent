@@ -26,8 +26,8 @@
                   <span class="report-title">{{ report.title }}</span>
                 </div>
                 <div class="report-card-meta">
-                  <span class="grade-badge" :class="'grade-' + (report.grade || 'b').toLowerCase()">
-                    {{ report.grade || 'B' }}
+                  <span class="grade-badge" :class="gradeClassName(report.grade)">
+                    {{ resolveGrade(report.score, report.grade) }}
                   </span>
                   <span class="meta-item">{{ report.competitors || 0 }}个竞品</span>
                   <span class="meta-item">{{ report.created_at || report.date }}</span>
@@ -52,6 +52,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { useResearchStore } from '../stores/research'
+import { gradeClassName, resolveGrade } from '../utils/reportGrade'
 
 const router = useRouter()
 const store = useResearchStore()
