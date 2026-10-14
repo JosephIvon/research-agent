@@ -739,9 +739,107 @@ def test_uncited_claim_is_unaffected_by_derivation(discount_store):
 
 
 def test_derivation_constants_are_a_fixed_auditable_set():
-    """常数集必须写死且可审计：放宽它就等于允许"编一个前提再算"。"""
-    assert set(DERIVATION_CONSTANTS) == {10.0, 12.0, 100.0, 1000.0}
+    """常数集必须写死且可审计：放宽它就等于允许"编一个前提再算"。
+
+    集合只有 {10, 12} 不是省事，是消融实测的结果（依据写在 DERIVATION_CONSTANTS
+    上方注释里）：`{10,12,100,1000}` 在 1..300 放行的数字集合与窄集**完全相同**，
+    在 1..1000 上还**多**放行 5 个。也就是说 100/1000 零功能贡献、纯增风险。
+
+    任何往里加数的改动都必须先重跑那份消融，并把这个断言一起更新——
+    否则"加一个数"会变成一次无人复核的门禁放宽。
+    """
+    assert set(DERIVATION_CONSTANTS) == {10.0, 12.0}
     assert all(isinstance(name, str) and name for name in DERIVATION_CONSTANTS.values())
+
+
+def test_no_generic_multiplier_can_enter_the_constant_set():
+    """`5`、`20` 这类通用倍数一旦进集合，`49 × 5 = 245` 立刻成立——
+    实测会让漏放行率从 23 涨到 41（+78%）。挡在这里，理由写进测试而不只是注释。"""
+    for value in DERIVATION_CONSTANTS.values():
+        assert not value.startswith(("通用", "任意")), value
+    assert 5.0 not in DERIVATION_CONSTANTS
+    assert 20.0 not in DERIVATION_CONSTANTS
+
+
+def test_semantic_guesses_never_enter_the_constant_set():
+    """`50`（团队规模）、`2024`（年份）是"编一个前提"最顺手的数。
+
+    真实冒烟里「以 50 人团队…年化 23,520 美元」的 50 就是模型自己假设的——
+    它绝不能成为可推导的操作数，否则那句无据假设就会被洗成"已核实"。
+    """
+    assert 50.0 not in DERIVATION_CONSTANTS
+    assert 2024.0 not in DERIVATION_CONSTANTS
+
+
+# 消融用的两套常数集。提到模块级，因为下面两条测试要共用同一份定义。
+_WIDE_CONSTANTS = {10.0: "十进制", 12.0: "月数", 100.0: "百分数", 1000.0: "千"}
+_NARROW_CONSTANTS = {10.0: "十进制", 12.0: "月数"}
+
+# 1..1000 范围内，宽集合（多出 100/1000）**独有**的漏放行数字。逐个写死，
+# 不只钉"两者相等"这个关系——变异测试证实：把对照组的 wide 改窄，
+# `wide_leaks == narrow_leaks` 就会恒真，保护整个失效。钉住具体数字之后，
+# 改窄或改宽都会红；要改就得连这串数字一起改，那是个能被 review 看见的动作。
+_WIDE_ONLY_LEAKS = {701, 751, 800, 849, 899}
+
+
+def _leaked_numbers(constants, hi):
+    """在给定常数集下，1..hi 里有多少编造数字会被"推导"放过（不含证据原有数字）。"""
+    import src.agent.citations as mod
+
+    original = mod.DERIVATION_CONSTANTS
+    mod.DERIVATION_CONSTANTS = dict(constants)
+    try:
+        store = EvidenceStore.from_extracted_data([{
+            "key": "pricing",
+            "value": "标准版 49 美元/席位/月，企业版 99 美元/席位/月，年付享 8 折。",
+            "source_url": "https://acme.test/pricing",
+        }])
+        p = next(e.citation for e in store.evidences if e.key == "pricing")
+        in_evidence = set()
+        for ev in store.evidences:
+            in_evidence |= {int(v) for v in ev.numbers}
+        return {n for n in range(1, hi + 1)
+                if n not in in_evidence
+                and verify_report(f"定价为 {n} 美元/席位/月{p}", store)["violation_count"] == 0}
+    finally:
+        mod.DERIVATION_CONSTANTS = original
+
+
+def test_dropping_100_and_1000_cost_nothing_and_only_tightens():
+    """把消融结论钉成测试：砍掉 100/1000 不会放过更多编造数字。
+
+    背景（实测，非推断）：同一份 pricing 证据下扫描 1..300，
+    `{10,12,100,1000}` 与 `{10,12}` 放行的数字**集合完全相同**；
+    扫到 1..1000 时窄集合还**少**放行 5 个。也就是说那两个常数零功能贡献，
+    留在集合里只是放大组合空间。
+    """
+    wide_leaks = _leaked_numbers(_WIDE_CONSTANTS, 300)
+    narrow_leaks = _leaked_numbers(_NARROW_CONSTANTS, 300)
+
+    assert wide_leaks == narrow_leaks, (
+        "消融结论失效：宽集合在 1..300 放行的集合与窄集合不再相同，"
+        "说明 100/1000 确实有贡献，不能直接砍"
+    )
+    assert set(DERIVATION_CONSTANTS) == set(_NARROW_CONSTANTS), "生产常数集与被消融验证的窄集不一致"
+
+    # 更大的范围上，窄集合只能更严——若它反而多放行，说明消融方向反了
+    wide_1000 = _leaked_numbers(_WIDE_CONSTANTS, 1000)
+    narrow_1000 = _leaked_numbers(_NARROW_CONSTANTS, 1000)
+    assert narrow_1000 <= wide_1000, f"窄集合反而多放行了：{sorted(narrow_1000 - wide_1000)}"
+
+
+def test_wide_constants_leak_exactly_these_five_extra_numbers():
+    """把消融的**具体结果**钉死，作为上一条测试的对照护栏。
+
+    只断言"两组相等"有个致命弱点：对照组被改窄就恒真（变异验证实测过）。
+    这里把 1..1000 上宽集合独有的漏放行数字逐个写死——
+    任何一方被改动都必须连这串数字一起改，而那是个能被 review 抓住的动作。
+    """
+    extra = _leaked_numbers(_WIDE_CONSTANTS, 1000) - _leaked_numbers(_NARROW_CONSTANTS, 1000)
+    assert extra == _WIDE_ONLY_LEAKS, (
+        f"宽集合独有的漏放行变成了 {sorted(extra)}，与实测的 {sorted(_WIDE_ONLY_LEAKS)} 不符；"
+        "若这是有意改动，请同步更新生产注释里的消融数据"
+    )
 
 
 def test_derivation_detection_is_deterministic(discount_store):
