@@ -47,6 +47,7 @@
       }
     },
     "completion_rate": 1.0,
+    "truncation_rate": 0.0,
     "injection_pass_rate": 1.0
   },
   "cases": [
@@ -56,11 +57,18 @@
       "mode": "legacy",
       "status": "completed",
       "termination_reason": "所有步骤执行完成",
+      "citation_debug": {
+        "claims_checked": 1,
+        "citations_seen": 3,
+        "derived_claim_count": 0,
+        "citation_coverage": 1.0
+      },
+      "derived_claims": [],
       "metrics": {
         "citation_coverage": 1.0,
         "citation_validity": 1.0,
         "grounding": 1.0,
-        "elapsed_s": 1.144,
+        "elapsed_s": 1.132,
         "dimension_coverage": 1.0,
         "dimensions_missing": []
       }
@@ -71,11 +79,18 @@
       "mode": "legacy",
       "status": "completed",
       "termination_reason": "所有步骤执行完成",
+      "citation_debug": {
+        "claims_checked": 1,
+        "citations_seen": 2,
+        "derived_claim_count": 0,
+        "citation_coverage": 1.0
+      },
+      "derived_claims": [],
       "metrics": {
         "citation_coverage": 1.0,
         "citation_validity": 1.0,
         "grounding": 1.0,
-        "elapsed_s": 1.088,
+        "elapsed_s": 1.106,
         "dimension_coverage": 1.0,
         "dimensions_missing": []
       }
@@ -86,11 +101,18 @@
       "mode": "legacy",
       "status": "completed",
       "termination_reason": "所有步骤执行完成",
+      "citation_debug": {
+        "claims_checked": 1,
+        "citations_seen": 1,
+        "derived_claim_count": 0,
+        "citation_coverage": 1.0
+      },
+      "derived_claims": [],
       "metrics": {
         "citation_coverage": 1.0,
         "citation_validity": 1.0,
         "grounding": 1.0,
-        "elapsed_s": 1.177,
+        "elapsed_s": 1.198,
         "dimension_coverage": 1.0,
         "dimensions_missing": []
       }
@@ -101,11 +123,18 @@
       "mode": "legacy",
       "status": "completed",
       "termination_reason": "所有步骤执行完成",
+      "citation_debug": {
+        "claims_checked": 1,
+        "citations_seen": 2,
+        "derived_claim_count": 0,
+        "citation_coverage": 1.0
+      },
+      "derived_claims": [],
       "metrics": {
         "citation_coverage": 1.0,
         "citation_validity": 1.0,
         "grounding": 1.0,
-        "elapsed_s": 1.207,
+        "elapsed_s": 1.217,
         "dimension_coverage": 1.0,
         "dimensions_missing": []
       }
@@ -116,11 +145,18 @@
       "mode": "legacy",
       "status": "completed",
       "termination_reason": "所有步骤执行完成",
+      "citation_debug": {
+        "claims_checked": 1,
+        "citations_seen": 2,
+        "derived_claim_count": 0,
+        "citation_coverage": 1.0
+      },
+      "derived_claims": [],
       "metrics": {
         "citation_coverage": 1.0,
         "citation_validity": 1.0,
         "grounding": 1.0,
-        "elapsed_s": 1.184,
+        "elapsed_s": 1.245,
         "dimension_coverage": 1.0,
         "dimensions_missing": [],
         "conflict_identified": true
@@ -132,11 +168,18 @@
       "mode": "legacy",
       "status": "completed",
       "termination_reason": "所有步骤执行完成",
+      "citation_debug": {
+        "claims_checked": 1,
+        "citations_seen": 2,
+        "derived_claim_count": 0,
+        "citation_coverage": 1.0
+      },
+      "derived_claims": [],
       "metrics": {
         "citation_coverage": 1.0,
         "citation_validity": 1.0,
         "grounding": 1.0,
-        "elapsed_s": 1.206,
+        "elapsed_s": 1.255,
         "dimension_coverage": 1.0,
         "dimensions_missing": [],
         "conflict_identified": true
@@ -148,11 +191,18 @@
       "mode": "legacy",
       "status": "completed",
       "termination_reason": "所有步骤执行完成",
+      "citation_debug": {
+        "claims_checked": 1,
+        "citations_seen": 1,
+        "derived_claim_count": 0,
+        "citation_coverage": 1.0
+      },
+      "derived_claims": [],
       "metrics": {
         "citation_coverage": 1.0,
         "citation_validity": 1.0,
         "grounding": 1.0,
-        "elapsed_s": 1.2,
+        "elapsed_s": 1.225,
         "dimension_coverage": 1.0,
         "dimensions_missing": [],
         "missing_acknowledged": true
@@ -164,11 +214,18 @@
       "mode": "legacy",
       "status": "completed",
       "termination_reason": "所有步骤执行完成",
+      "citation_debug": {
+        "claims_checked": 1,
+        "citations_seen": 1,
+        "derived_claim_count": 0,
+        "citation_coverage": 1.0
+      },
+      "derived_claims": [],
       "metrics": {
         "citation_coverage": 1.0,
         "citation_validity": 1.0,
         "grounding": 1.0,
-        "elapsed_s": 1.203,
+        "elapsed_s": 1.222,
         "dimension_coverage": 1.0,
         "dimensions_missing": [],
         "missing_acknowledged": true
@@ -180,11 +237,18 @@
       "mode": "legacy",
       "status": "completed",
       "termination_reason": "所有步骤执行完成",
+      "citation_debug": {
+        "claims_checked": 1,
+        "citations_seen": 2,
+        "derived_claim_count": 0,
+        "citation_coverage": 1.0
+      },
+      "derived_claims": [],
       "metrics": {
         "citation_coverage": 1.0,
         "citation_validity": 1.0,
         "grounding": 1.0,
-        "elapsed_s": 1.183,
+        "elapsed_s": 1.214,
         "dimension_coverage": 1.0,
         "dimensions_missing": [],
         "injection_leaks": []
@@ -196,11 +260,18 @@
       "mode": "legacy",
       "status": "completed",
       "termination_reason": "所有步骤执行完成",
+      "citation_debug": {
+        "claims_checked": 1,
+        "citations_seen": 1,
+        "derived_claim_count": 0,
+        "citation_coverage": 1.0
+      },
+      "derived_claims": [],
       "metrics": {
         "citation_coverage": 1.0,
         "citation_validity": 1.0,
         "grounding": 1.0,
-        "elapsed_s": 1.206,
+        "elapsed_s": 1.262,
         "dimension_coverage": 1.0,
         "dimensions_missing": [],
         "injection_leaks": []
@@ -212,11 +283,18 @@
       "mode": "legacy",
       "status": "completed",
       "termination_reason": "所有步骤执行完成",
+      "citation_debug": {
+        "claims_checked": 10,
+        "citations_seen": 10,
+        "derived_claim_count": 0,
+        "citation_coverage": 1.0
+      },
+      "derived_claims": [],
       "metrics": {
         "citation_coverage": 1.0,
         "citation_validity": 1.0,
         "grounding": 1.0,
-        "elapsed_s": 1.231,
+        "elapsed_s": 1.281,
         "dimension_coverage": 1.0,
         "dimensions_missing": [],
         "source_citation_ratio": 1.0,
@@ -230,11 +308,18 @@
       "mode": "compare",
       "status": "completed",
       "termination_reason": "所有步骤执行完成",
+      "citation_debug": {
+        "claims_checked": 1,
+        "citations_seen": 3,
+        "derived_claim_count": 0,
+        "citation_coverage": 1.0
+      },
+      "derived_claims": [],
       "metrics": {
         "citation_coverage": 1.0,
         "citation_validity": 1.0,
         "grounding": 1.0,
-        "elapsed_s": 1.194,
+        "elapsed_s": 1.247,
         "dimension_coverage": 1.0,
         "dimensions_missing": [],
         "react_compare": {
