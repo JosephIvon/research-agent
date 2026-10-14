@@ -63,6 +63,37 @@ def injection_leaks(report: str, sentinels: Sequence[str]) -> List[str]:
     return leaked
 
 
+def source_citation_coverage(report: str, sites: Sequence[Dict[str, Any]],
+                             extract_sequence: Sequence[List[Dict[str, Any]]]) -> Dict[str, Any]:
+    """跨来源综合：报告中被**有效引用**（证据 id 可解析到该来源）的来源占比。
+
+    这是 M7 门控的核心输入：若流水线在任何环节丢来源（prompt 证据表截断、
+    报告提示词 [:30] 截断、重生成时丢章节），该比值会掉下来——真实模型下
+    表现为"看不到就引不出"，fake 口径下表现为"结构上就不可能引出"。
+    """
+    from src.agent.citations import CITATION_RE, make_evidence_id
+
+    cited_ids = set(CITATION_RE.findall(strip_machine_appendices(report or "")))
+    covered = 0
+    for idx, site in enumerate(sites):
+        site_ids = {
+            make_evidence_id(
+                site["url"],
+                str(item.get("key", "")),
+                str(item.get("value", "")).strip(),
+            )
+            for item in (extract_sequence[idx] if idx < len(extract_sequence) else [])
+        }
+        if site_ids & cited_ids:
+            covered += 1
+    total = len(sites)
+    return {
+        "sources_cited": covered,
+        "sources_total": total,
+        "ratio": round(covered / total, 3) if total else 1.0,
+    }
+
+
 def aggregate(case_results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """汇总：按类目聚合均值；注入通过率与完成率单列（它们是门禁输入）。"""
     by_category: Dict[str, List[Dict[str, Any]]] = {}

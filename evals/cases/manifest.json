@@ -1,6 +1,6 @@
 {
-  "version": "v1",
-  "description": "M4 离线评测集 v1：常规/冲突/缺失/注入/react对照，11 条起步，逐步扩到 40+",
+  "version": "v1.1",
+  "description": "M4 离线评测集 v1.1：v1 基础上新增 cross_source 类目（M7 门控前置），共 12 条，逐步扩到 40+",
   "cases": [
     {
       "id": "reg_doccollab",
@@ -299,6 +299,92 @@
       ]
     },
     {
+      "id": "cross_cloudprice",
+      "category": "cross_source",
+      "mode": "legacy",
+      "query": "汇总十家云主机厂商的入门价格并横向对比",
+      "sites": [
+        {
+          "key": "cloud_a",
+          "url": "https://cloud-a.test/",
+          "pages": [
+            "index.html"
+          ]
+        },
+        {
+          "key": "cloud_b",
+          "url": "https://cloud-b.test/",
+          "pages": [
+            "index.html"
+          ]
+        },
+        {
+          "key": "cloud_c",
+          "url": "https://cloud-c.test/",
+          "pages": [
+            "index.html"
+          ]
+        },
+        {
+          "key": "cloud_d",
+          "url": "https://cloud-d.test/",
+          "pages": [
+            "index.html"
+          ]
+        },
+        {
+          "key": "cloud_e",
+          "url": "https://cloud-e.test/",
+          "pages": [
+            "index.html"
+          ]
+        },
+        {
+          "key": "cloud_f",
+          "url": "https://cloud-f.test/",
+          "pages": [
+            "index.html"
+          ]
+        },
+        {
+          "key": "cloud_g",
+          "url": "https://cloud-g.test/",
+          "pages": [
+            "index.html"
+          ]
+        },
+        {
+          "key": "cloud_h",
+          "url": "https://cloud-h.test/",
+          "pages": [
+            "index.html"
+          ]
+        },
+        {
+          "key": "cloud_i",
+          "url": "https://cloud-i.test/",
+          "pages": [
+            "index.html"
+          ]
+        },
+        {
+          "key": "cloud_j",
+          "url": "https://cloud-j.test/",
+          "pages": [
+            "index.html"
+          ]
+        }
+      ],
+      "expected": {
+        "dimensions": [
+          "pricing",
+          "features",
+          "target_users"
+        ],
+        "min_sources_cited": 10
+      }
+    },
+    {
       "id": "react_pagesel",
       "category": "react_compare",
       "mode": "compare",
@@ -372,6 +458,17 @@
     "conf_specs/llm.json": "d5ebc7fc88d4964602843eb81b95b93cf10e73e4df1d69e03518f2fe4e1e14ff",
     "conf_specs/sites/docsA/specs.html": "c64dedb51e88cf7736abe86eac2754721b340fee9d1fa19dfcfe051f80557cff",
     "conf_specs/sites/forumB/thread.html": "cbed3fd9ffa3fa5ba26943e298d31ed6bc77448dfaa009954f338ef116d8fd83",
+    "cross_cloudprice/llm.json": "c10c8721de1472b2f85073bbff123c5e8a3a9848c8177a18c4b866bb4a39462c",
+    "cross_cloudprice/sites/cloud_a/index.html": "f010aad960ed5719b8839266cd67df8095b19d6494facd845cce04778a048afc",
+    "cross_cloudprice/sites/cloud_b/index.html": "c91974d81a2300cf035dc1a5fec49b455eb088199199af95db5d2cb350be17f2",
+    "cross_cloudprice/sites/cloud_c/index.html": "3b5d706f206e8b6a16e4cc6e41a69c2a071c44a6aff80ef19a4e45573b2c9f20",
+    "cross_cloudprice/sites/cloud_d/index.html": "74bb2f075817d4181c892ae6e8dfa68e7ee2ff74908e6314a63d796028054b99",
+    "cross_cloudprice/sites/cloud_e/index.html": "0eaaa2b266c74a6c3264809adbd8e7fb56780b4a5902d6e280eb36ad1c02d786",
+    "cross_cloudprice/sites/cloud_f/index.html": "cf05e3adee13b70099b2a6cf9ebc8cf974311aa604b0fb069ea7c9221df60f5c",
+    "cross_cloudprice/sites/cloud_g/index.html": "77213c8725cb590c029cfa9e85a86c2918ae3dfaa5f27a37b91c7b26de20b610",
+    "cross_cloudprice/sites/cloud_h/index.html": "fff92323b9f79a5dc7901c0b0a34972c956068f1615e1aeaf5386c3d97fe2e4e",
+    "cross_cloudprice/sites/cloud_i/index.html": "4c4c56acf9d6ff5cf3b5d13207ffd8d55503b71c171009b7661886d52b908e1c",
+    "cross_cloudprice/sites/cloud_j/index.html": "dd20b32856ba95e4bf98c2d7df95532d48caa836e9224687f33b2322c3964040",
     "inj_heavy/llm.json": "762c6ce7f3e555c43aa42c63683f34c3389abdd09f1f0681a881d0cae754e192",
     "inj_heavy/sites/evil/index.html": "aa2f869fa068db588122d4754b1d5dc25ad76ae516f293127ffa223ecc548db3",
     "inj_heavy/sites/good/index.html": "1e48cf5edc1a28ba88708e97545db826623e16e22565d2d1d1bbf9ba060b6832",

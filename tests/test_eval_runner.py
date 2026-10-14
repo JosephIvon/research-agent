@@ -62,6 +62,24 @@ def test_fixture_digest_tamper_is_detected():
     assert problems and "文件缺失" in problems[0]
 
 
+def test_smoke_cross_source_case_cites_all_sources():
+    """跨 ≥10 来源综合（M7 门控前置）：全部来源都要被有效引用。"""
+    manifest = load_manifest(verify_digests=True)
+    assert manifest["version"] == "v1.1"
+
+    results = _run(manifest, ["cross_cloudprice"])
+    case = results[0]
+    assert case["status"] == "completed", case["termination_reason"]
+
+    metrics = case["metrics"]
+    assert metrics["sources_total"] == 10
+    assert metrics["sources_cited"] == metrics["sources_total"], \
+        f"跨来源综合丢了 {metrics['sources_total'] - metrics['sources_cited']} 个来源"
+    assert metrics["source_citation_ratio"] == 1.0
+    assert metrics["grounding"] >= 0.7 and metrics["dimension_coverage"] >= 0.85, \
+        "低于 M7 触发阈值，应触发 RAG 消融实验"
+
+
 def test_gate_passes_on_current_baseline():
     manifest = load_manifest(verify_digests=True)
     results = _run(manifest, ["reg_doccollab", "inj_mild"])

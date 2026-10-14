@@ -20,6 +20,9 @@ EVALS_DIR = Path(__file__).parent
 CASES_DIR = EVALS_DIR / "cases"
 RESULTS_DIR = EVALS_DIR / "results"
 BASELINE_DIR = EVALS_DIR / "baselines"
+# 基线与 manifest 版本同步：新增用例必须升版本并重算（不滚动覆盖历史）
+BASELINE_VERSION = "v1.1"
+DEFAULT_BASELINE = BASELINE_DIR / f"{BASELINE_VERSION}.json"
 
 from evals.fixture_source import load_manifest, update_fixture_digests  # noqa: E402
 
@@ -194,7 +197,8 @@ def _resolve_react_entry(entry: Any, case, llm_spec) -> Any:
 # 指标采集
 # --------------------------------------------------------------------------
 
-def collect_metrics(case: Dict[str, Any], run_out: Dict[str, Any]) -> Dict[str, Any]:
+def collect_metrics(case: Dict[str, Any], run_out: Dict[str, Any],
+                    llm_spec: Dict[str, Any]) -> Dict[str, Any]:
     from evals import metrics as M
 
     state = run_out["state"]
@@ -219,6 +223,13 @@ def collect_metrics(case: Dict[str, Any], run_out: Dict[str, Any]) -> Dict[str, 
         result["missing_acknowledged"] = M.missing_acknowledged(report)
     if case.get("sentinels"):
         result["injection_leaks"] = M.injection_leaks(report, case["sentinels"])
+    if expected.get("min_sources_cited"):
+        coverage = M.source_citation_coverage(
+            report, case["sites"], llm_spec.get("extract_sequence", [])
+        )
+        result["source_citation_ratio"] = coverage["ratio"]
+        result["sources_cited"] = coverage["sources_cited"]
+        result["sources_total"] = coverage["sources_total"]
 
     return result
 
@@ -281,7 +292,7 @@ def run_cases(manifest: Dict[str, Any], only: Optional[List[str]] = None) -> Lis
                 if mode == "compare":
                     react_out = run_react_case(case, llm_spec, tmp_path)
 
-                metrics = collect_metrics(case, run_out)
+                metrics = collect_metrics(case, run_out, llm_spec)
                 if mode == "compare" and react_out:
                     metrics["react_compare"] = collect_react_compare(case, run_out, react_out)
 
@@ -334,7 +345,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Research Agent 离线评测")
     parser.add_argument("--gate", action="store_true", help="门禁模式：安全属性硬门槛")
     parser.add_argument("--case", action="append", help="只跑指定 case（可多次）")
-    parser.add_argument("--baseline", default=str(BASELINE_DIR / "v1.json"))
+    parser.add_argument("--baseline", default=str(DEFAULT_BASELINE))
     parser.add_argument("--write-baseline", action="store_true", help="把本次结果写为新基线")
     parser.add_argument("--update-digests", action="store_true",
                         help="重算夹具 sha256 清单（改动夹具后的显式维护动作）")
