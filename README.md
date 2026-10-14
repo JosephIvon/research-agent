@@ -14,30 +14,55 @@ Research Agent 面向产品、市场和创业团队。你输入调研问题、�
 
 ### 核心能力
 
-- 竞品调研：支持自然语言需求、多个竞品网站、每站独立登录凭据。
-- 实时进度：任务队列 + SSE，展示需求理解、搜索、抓取、提取、报告和 PRD 生成阶段。
-- 报告交付：竞品报告、PRD、追问、多角色审查、报告版本对比。
-- 数据来源：默认 SearXNG，支持 Bing/SerpAPI 降级；Playwright 抓取网页内容。
-- 安全基线：JWT 登录、Legacy Token 兼容、CORS/Host 收紧、速率限制、SSRF 防护、审计日志。
-- 持久化：Redis 任务状态，SQLite 报告与版本数据，本地输出目录。
-- 导出同步：PDF、Word、HTML 导出；飞书与腾讯文档同步入口。
+- **双模式编排**：确定性流水线（默认）与有界 ReAct 工具循环（`AGENT_MODE=react`）灰度切换——runner 具步数/token/墙钟三重预算与六种显式终止原因，超限自动收束为部分结果。
+- **引用校验闭环**：报告事实句带 `[e:id]` 证据标记，确定性校验引用覆盖/有效/数值扎根/幻觉 URL，不过阈值带违规清单重生成一次，仍不过显式标记"低可信"交付，绝不静默（契约冻结点见 tag `citations-contract-frozen`）。
+- **间接提示注入纵深防护**：边界标记、扫描中和（先剥零宽再匹配）、只读工具白名单（URL 执行点二次 SSRF 校验）、出口回声校验、审计计数、62 条确定性回归夹具；单条注入中和而非整单失败。
+- **MCP Server**：调研能力以标准 MCP 协议暴露（`/mcp`，官方 SDK、无状态 streamable-http），工具 schema 与 Agent 注册表同源，一致性测试防漂移，可被 Claude Desktop / Cursor 等外部客户端调用。
+- **离线评测与 CI 门禁**：12 条确定性 case（常规/冲突口径/资料缺失/注入/ReAct 对照/跨 10 来源综合），夹具 sha256 防篡改，注入通过率=1.00 为硬门槛；报告页 👍/👎 反馈回流为评测用例种子。
+- **可观测与成本**：任务级 token/USD 计量与预算守卫（真实 usage 优先，估算必打标）；Langfuse 全链路 trace（contextvars 关联，未启用零开销）。
+- 竞品调研：自然语言需求、多竞品网站、每站独立登录凭据；任务队列 + SSE 实时进度（含 Agent 思考过程面板）。
+- 报告交付：竞品报告、PRD、追问、多角色审查、版本对比；PDF/Word/HTML 导出，飞书与腾讯文档同步。
+- 安全基线：JWT 登录、SQLite 租户隔离（无权一律 404）、特权端点查库鉴权（降权即时生效）、SSRF 全链路拦截、占位密钥生产三道硬失败。
+- 持久化：Redis 任务状态（WATCH 乐观锁防并发丢写），SQLite 报告/版本/反馈数据。
 
 ### 技术架构
 
 ```text
-Vue 3 + Element Plus
+Vue 3 + Element Plus（思考面板 / 注入提示 / 反馈 / Trace / 成本卡）
         |
-        | REST / SSE
-        v
-FastAPI server
+        | REST / SSE（agent_step 等事件流）      MCP 客户端
+        v                                            |
+FastAPI server ──── /mcp 挂载（无状态 streamable-http）
         |
-        +-- Redis TaskStore
-        +-- SQLite report storage
-        +-- SearXNG / Bing / SerpAPI search
-        +-- Playwright crawler
-        +-- LLM client with retry, timeout and circuit breaker
-        +-- Export and document sync tools
+        +-- AGENT_MODE=legacy：确定性流水线（分解→抓取→清洗→map-reduce 抽取→门禁→报告）
+        |       +-- 注入防护（边界/中和/canaries/出口校验）
+        |       +-- EvidenceStore + 引用校验四指标 → 不过重生成 → 低可信标记
+        +-- AGENT_MODE=react：有界 ReAct（web_search/fetch_site/extract_facts/compare）
+        |       +-- 只读工具注册表（白名单/入参校验/URL 二次 SSRF/超时/统一返回）
+        |       +-- TaskBudget 记账（token+USD，超额收束 PARTIAL）
+        +-- Redis TaskStore（WATCH CAS + pub/sub 分发）  +-- SQLite（报告/版本/反馈）
+        +-- SearXNG / Bing / SerpAPI 搜索  +-- Playwright 爬虫（批次共享实例）
+        +-- LLM 网关（5 provider + fake 确定性回放；熔断/退避/降级路由）
+        +-- Langfuse trace（contextvars，no-op 降级）
+
+evals/（离线评测 + CI 门禁）── 12 case 驱动真实工作流全链路，夹具 sha256 防篡改
 ```
+
+### 工程与评测指标
+
+全部数字可复现（命令见下），出自 `evals/baselines/v1.1.json` 与测试运行：
+
+| 指标 | 数值 |
+| --- | --- |
+| 后端 / 前端测试 | 466+ / 22 全绿 |
+| 离线评测门禁 | 12 case 全部完成，PASS |
+| 引用覆盖 / 有效 / 扎根（全类目） | 1.0 / 1.0 / 1.0 |
+| 注入夹具通过率（CI 硬门槛） | 1.00 |
+| ReAct 对照 | 抓取削减 66.7%（6 页→2 页），引用三率不降 |
+| 跨 10 来源综合 | 10/10 来源被有效引用 |
+
+> 引用四指标只证明"未发现格式性造假"，不证明事实正确；"数据完整度"独立呈现并声明
+> 不衡量结论正确性。评测说明见 `evals/`，面试问答见 `docs/interview-faq.md`。
 
 ### 业务流程
 
@@ -92,6 +117,10 @@ docker compose up -d redis searxng
 | `JWT_SECRET_KEY` | JWT 签名密钥，生产环境必须替换 |
 | `SEARXNG_SECRET` | SearXNG 服务密钥，生产环境必须替换 |
 | `SEARCH_PROVIDER` | 搜索提供方，默认 `searxng` |
+| `AGENT_MODE` | 编排模式：`legacy`（默认）或 `react`（有界 ReAct） |
+| `AGENT_MAX_STEPS` / `AGENT_TOKEN_BUDGET` / `AGENT_USD_BUDGET` / `AGENT_WALL_CLOCK_BUDGET` | ReAct 三重预算（默认 8 步 / 120k tokens / $0.5 / 180s） |
+| `LLM_PROVIDER` | LLM 提供商，支持 minimax/deepseek/doubao/glm/openai/fake（fake 为确定性回放，用于测试与评测） |
+| `LANGFUSE_ENABLED` | Langfuse 追踪开关，默认关闭（零开销 no-op） |
 | `REDIS_URL` | Redis 连接地址 |
 | `TASK_STORE_BACKEND` | 任务存储后端，Docker 默认 `redis` |
 | `ALLOWED_HOSTS` | 后端可信 Host |
@@ -102,6 +131,9 @@ docker compose up -d redis searxng
 ```bash
 # 后端测试
 uv run pytest tests/ -q --ignore=tests/e2e/
+
+# 离线评测 + 门禁（零网络零密钥，确定性）
+uv run python -m evals.runner --gate
 
 # 前端测试与构建
 cd frontend
@@ -134,10 +166,12 @@ E2E_API_URL=http://localhost:8080 uv run pytest tests/e2e/ -q
 | `/research/history` | GET | 历史报告列表 |
 | `/research/export` | POST | 导出 PDF、Word 或 HTML |
 | `/research/compare/{id1}/{id2}` | GET | 报告版本对比 |
+| `/research/reports/{id}/feedback` | POST/GET | 报告 👍/👎 反馈与计数（评测用例回流入口） |
+| `/mcp` | MCP | 标准 MCP 端点（无状态 streamable-http，需鉴权） |
 | `/settings` | GET | 运行配置摘要 |
 | `/sync/feishu` | POST | 同步到飞书文档 |
 | `/sync/tencent` | POST | 同步到腾讯文档 |
-| `/health` | GET | 健康检查 |
+| `/health` / `/health/ready` | GET | 存活 / 就绪（LLM 密钥与 MCP 依赖体检） |
 
 ### 上线检查
 
