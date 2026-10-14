@@ -11,6 +11,7 @@ from src.observability.langfuse_tracer import (
     is_enabled,
     llm_span,
     set_task_context,
+    trace_url,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "current_task_id",
     "current_trace",
     "llm_span",
+    "trace_url",
 ]

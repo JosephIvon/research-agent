@@ -97,8 +97,20 @@ def init_db():
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS report_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                report_id TEXT NOT NULL,
+                user_id TEXT,
+                rating TEXT NOT NULL,
+                comment TEXT DEFAULT '',
+                created_at TEXT NOT NULL
+            )
+        """)
+
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_reports_created ON reports(created_at)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_report_feedback_report ON report_feedback(report_id)")
 
         conn.commit()
     finally:
@@ -289,6 +301,49 @@ class ReportDB:
             if row is None:
                 return REPORT_NOT_IN_DB
             return row["user_id"]
+        finally:
+            conn.close()
+
+    def save_report_feedback(
+        self,
+        report_id: str,
+        user_id: Optional[str],
+        rating: str,
+        comment: str = "",
+    ) -> bool:
+        """保存一条报告反馈（M4 反馈闭环）。Returns True if successful."""
+        conn = self._conn()
+        try:
+            cursor = conn.cursor()
+            now = datetime.now().isoformat(timespec="seconds")
+            cursor.execute("""
+                INSERT INTO report_feedback (report_id, user_id, rating, comment, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (report_id, user_id, rating, comment, now))
+            conn.commit()
+            return True
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to save report feedback: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def report_feedback_summary(self, report_id: str) -> Dict[str, int]:
+        """统计报告的 up/down 反馈数；无记录时返回 {up: 0, down: 0}。"""
+        conn = self._conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT rating, COUNT(*) AS cnt FROM report_feedback
+                WHERE report_id = ?
+                GROUP BY rating
+            """, (report_id,))
+            summary = {"up": 0, "down": 0}
+            for row in cursor.fetchall():
+                if row["rating"] in summary:
+                    summary[row["rating"]] = row["cnt"]
+            return summary
         finally:
             conn.close()
 

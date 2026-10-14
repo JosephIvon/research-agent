@@ -74,6 +74,8 @@ from src.workflow.task_store import (
 )
 from src.storage import get_report_db, REPORT_NOT_IN_DB
 from src.logging import get_audit_logger, AuditEvent
+# trace_url 未收录于 src.observability 的 __all__，须从子模块导入
+from src.observability.langfuse_tracer import trace_url
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -306,6 +308,19 @@ class ExportRequest(BaseModel):
     report_id: str = Field(..., pattern=REPORT_ID_RE.pattern)
     format: str = Field(..., pattern="^(pdf|word|html)$")
     content_type: Optional[str] = Field(default="report", pattern="^(report|prd)$")
+
+
+class ReportFeedbackRequest(StrictModel):
+    """报告反馈请求体（M4 反馈闭环）：rating 仅允许 up/down，comment 上限 500 字。"""
+    rating: str
+    comment: str = Field(default="", max_length=500)
+
+    @field_validator("rating")
+    @classmethod
+    def validate_rating(cls, rating: str) -> str:
+        if rating not in {"up", "down"}:
+            raise ValueError("rating 仅支持 up 或 down")
+        return rating
 
 
 class UserRegister(BaseModel):
@@ -806,6 +821,9 @@ async def _run_research_task(task_id: str, req: TaskRequest, user_id: Optional[s
         "quality_score": result.get("quality_score"),
         "quality_grade": result.get("quality_grade"),
         "missing_dimensions": result.get("missing_dimensions", []),
+        # 提示注入检测命中数与成本报告：工作流产出的两个新指标，随终态一并落库
+        "injection_findings_count": result.get("injection_findings_count", 0),
+        "cost_report": result.get("cost_report"),
     }
 
     if result["status"] == "completed":
@@ -914,7 +932,13 @@ async def get_task(task_id: str, request: Request):
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     _require_task_access(task, request)
-    return task.to_dict()
+    payload = task.to_dict()
+    # 任务详情增强：Langfuse trace 跳转链接（未启用时为 None）、
+    # 提示注入检测命中数、成本报告（后两者由 task_store 持有，缺省 0/None）
+    payload["trace_url"] = trace_url(task_id)
+    payload["injection_findings_count"] = getattr(task, "injection_findings_count", 0)
+    payload["cost_report"] = getattr(task, "cost_report", None)
+    return payload
 
 
 @app.get("/research/tasks/{task_id}/events")
@@ -1100,6 +1124,24 @@ def get_report_versions(request: Request, report_id: str):
     _require_report_access(request, report_id)
     db = get_report_db()
     return db.get_report_versions(report_id)
+
+
+@limiter.limit(RATE_LIMIT_PER_TOKEN)
+@app.post("/research/reports/{report_id}/feedback", response_model=Dict[str, Any])
+def submit_report_feedback(request: Request, report_id: str, req: ReportFeedbackRequest):
+    """提交报告反馈（M4 反馈闭环）：写入一条 up/down 评价并返回最新统计。"""
+    _require_report_access(request, report_id)
+    user_id, _ = _principal(request)
+    db = get_report_db()
+    db.save_report_feedback(report_id, user_id, req.rating, req.comment)
+    return {"ok": True, "summary": db.report_feedback_summary(report_id)}
+
+
+@app.get("/research/reports/{report_id}/feedback", response_model=Dict[str, Any])
+def get_report_feedback(request: Request, report_id: str):
+    """获取报告反馈统计。"""
+    _require_report_access(request, report_id)
+    return get_report_db().report_feedback_summary(report_id)
 
 
 @app.delete("/research/history/{report_id}", response_model=Dict[str, Any])
@@ -1416,6 +1458,14 @@ def index():
 def main():
     """Console script entrypoint."""
     uvicorn.run(app, host=APP_HOST, port=APP_PORT)
+
+
+# ---------- MCP 子应用挂载（M5 接线）----------
+# 必须放在全部路由定义之后；鉴权由上方 enforce_auth 中间件统一把关——
+# /mcp 不在 PUBLIC_PATHS 白名单内，未认证请求在进入子应用前即被拦下。
+from src.mcpserver import create_mcp_asgi_app
+
+app.mount("/mcp", create_mcp_asgi_app())
 
 
 if __name__ == "__main__":
