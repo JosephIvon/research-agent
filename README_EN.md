@@ -10,31 +10,54 @@ Helps product managers and market researchers quickly complete competitive analy
 
 | Feature | Description |
 |---------|-------------|
-| 🔍 Smart Search | SearXNG/Bing/SerpAPI, auto-retrieve competitor info |
-| 🕷️ Web Crawling | Login scenarios, content extraction, SSRF protection |
-| 📊 Competitive Comparison | Multi-product comparison of features/pricing/users |
-| ✅ Quality Scoring | Data quality rating (A-F), missing dimension alerts |
-| 💬 Follow-up Questions | Deep-dive into specific dimensions |
-| 📄 PRD Generation | One-click from competitive report to product requirements |
-| 🔄 Multi-role Review | Development/testing/operations perspective review |
-| 📤 Doc Sync | One-click sync to Feishu/Tencent Docs |
+| � Dual-mode orchestration | Deterministic pipeline (default) + bounded ReAct tool loop (`AGENT_MODE=react`): step/token/wall-clock budgets, six explicit stop reasons, graceful PARTIAL fallback |
+| � Citation verification loop | Every numeric claim carries an `[e:id]` evidence marker; deterministic checks (coverage / validity / numeric grounding / hallucinated URLs); failed reports are regenerated once with a violation list, then explicitly marked "low-trust" — never silently delivered |
+| �️ Indirect prompt-injection defense | Boundary markers, scan-and-neutralize (zero-width stripped first), read-only tool whitelist with second-pass SSRF validation at execution points, output echo checking, audit counters, 62 deterministic regression fixtures |
+| 🔌 MCP Server | Research capabilities exposed over standard MCP (`/mcp`, official SDK, stateless streamable-http); tool schemas share a single source with the agent registry (consistency-tested); callable from Claude Desktop / Cursor |
+| � Offline evals + CI gate | 12 deterministic cases (regular / conflicting-sources / missing-data / injection / ReAct comparison / 10-source synthesis), sha256-pinned fixtures, injection pass rate = 1.00 as a hard gate; 👍/👎 report feedback feeds new eval cases |
+| � Observability & cost | Per-task token/USD accounting with budget guard (real usage first, estimates always flagged); Langfuse tracing via contextvars, zero-overhead when disabled |
+| � Smart Search | SearXNG/Bing/SerpAPI, auto-retrieve competitor info |
+| 🕷️ Web Crawling | Login scenarios, batch-shared browser instance, SSRF protection |
+| ✅ Data completeness scoring | Honest "completeness" scoring, separated from trustworthiness (which belongs to citation checks) |
+| 💬 Follow-up Questions / 📄 PRD / 🔄 Multi-role Review / 📤 Doc Sync | Deep-dive Q&A, one-click PRD, dev/test/ops review, Feishu/Tencent Docs sync |
 
 ## Architecture
 
 ```text
-Vue 3 + Element Plus
+Vue 3 + Element Plus (thinking panel / injection notice / feedback / trace / cost card)
         |
-        | REST / SSE
-        v
-FastAPI server
+        | REST / SSE (agent_step events)            MCP clients
+        v                                                 |
+FastAPI server ──── /mcp mount (stateless streamable-http)
         |
-        +-- Redis TaskStore
-        +-- SQLite report storage
-        +-- SearXNG / Bing / SerpAPI search
-        +-- Playwright crawler
-        +-- LLM client with retry, timeout and circuit breaker
-        +-- Export and document sync tools
+        +-- AGENT_MODE=legacy: deterministic pipeline (decompose→crawl→sanitize→map-reduce extract→gates→report)
+        |       +-- injection defense (boundary / neutralize / canaries / output check)
+        |       +-- EvidenceStore + 4 citation metrics → regenerate-once → low-trust marking
+        +-- AGENT_MODE=react: bounded ReAct (web_search/fetch_site/extract_facts/compare)
+        |       +-- read-only tool registry (whitelist / arg validation / URL re-validation / timeouts)
+        |       +-- TaskBudget accounting (token+USD, PARTIAL on overrun)
+        +-- Redis TaskStore (WATCH-based CAS + pub/sub fanout)   +-- SQLite (reports/versions/feedback)
+        +-- SearXNG / Bing / SerpAPI search   +-- Playwright crawler (batch-shared instance)
+        +-- LLM gateway (5 providers + deterministic fake playback; breaker/backoff/failover)
+        +-- Langfuse tracing (contextvars, no-op fallback)
+
+evals/ (offline evals + CI gate) ── 12 cases drive the real workflow end-to-end, sha256-pinned fixtures
 ```
+
+## Engineering & Eval Metrics
+
+All numbers are reproducible (commands below); sources: `evals/baselines/v1.1.json` and test runs.
+
+| Metric | Value |
+|--------|-------|
+| Backend / frontend tests | 466+ / 22, all green |
+| Offline eval gate | 12/12 cases completed, PASS |
+| Citation coverage / validity / grounding (all categories) | 1.0 / 1.0 / 1.0 |
+| Injection fixture pass rate (hard CI gate) | 1.00 |
+| ReAct comparison | 66.7% fewer pages fetched (6→2), citation metrics not degraded |
+| 10-source synthesis | 10/10 sources cited with valid evidence |
+
+> The four citation metrics prove "no format-level fabrication", not factual correctness; "data completeness" is presented separately and explicitly declared as not measuring correctness. See `evals/` for the harness and `docs/interview-faq.md` (Chinese) for details.
 
 ## Workflow
 
@@ -111,6 +134,10 @@ Switch: `LLM_PROVIDER=deepseek`
 | `JWT_SECRET_KEY` | JWT signing secret; **required in production** |
 | `SEARXNG_SECRET` | SearXNG secret; **required in production** |
 | `SEARCH_PROVIDER` | Search provider, defaults to `searxng` |
+| `AGENT_MODE` | Orchestration mode: `legacy` (default) or `react` (bounded ReAct) |
+| `AGENT_MAX_STEPS` / `AGENT_TOKEN_BUDGET` / `AGENT_USD_BUDGET` / `AGENT_WALL_CLOCK_BUDGET` | ReAct budgets (defaults: 8 steps / 120k tokens / $0.5 / 180s) |
+| `LLM_PROVIDER` | LLM provider: minimax/deepseek/doubao/glm/openai, plus `fake` for deterministic playback (tests & evals) |
+| `LANGFUSE_ENABLED` | Langfuse tracing toggle, off by default (zero-overhead no-op) |
 | `REDIS_URL` | Redis connection URL |
 | `TASK_STORE_BACKEND` | Task storage backend, `redis` in Docker |
 | `ALLOWED_HOSTS` | Trusted backend hosts |
@@ -124,6 +151,9 @@ Switch: `LLM_PROVIDER=deepseek`
 ```bash
 # Backend tests
 uv run pytest tests/ -q --ignore=tests/e2e/
+
+# Offline evals + gate (deterministic, zero network & credentials)
+uv run python -m evals.runner --gate
 
 # Frontend tests and build
 cd frontend
@@ -148,15 +178,20 @@ Full external search and LLM path requires real credentials. Enable with `E2E_RU
 research-agent/
 ├── frontend/              # Vue 3 Frontend UI
 ├── src/
+│   ├── agent/            # Bounded ReAct runner, tool registry, citations
 │   ├── auth/             # JWT authentication & user management
 │   ├── config/           # Configuration management
 │   ├── crawler/          # Playwright web crawler
-│   ├── llm/              # Multi-LLM provider abstraction
+│   ├── llm/              # Multi-LLM provider abstraction + token budget
 │   ├── logging/          # Audit logging
-│   ├── storage/          # SQLite report storage
+│   ├── mcpserver/        # Standard MCP endpoint (stateless streamable-http)
+│   ├── observability/    # Langfuse tracing (contextvars, no-op fallback)
+│   ├── security/         # URL validation & injection defense
+│   ├── storage/          # SQLite report/feedback storage
 │   ├── sync/             # Feishu/Tencent Doc sync
 │   ├── tools/            # Search, scoring, follow-up, PRD
-│   └── workflow/         # Research workflow orchestration
+│   └── workflow/         # Research workflow orchestration (legacy & react)
+├── evals/                # Offline deterministic eval suite + CI gate
 ├── tests/                # Test suite
 ├── docker-compose.yml
 └── README.md
@@ -188,6 +223,7 @@ research-agent/
 | `/research/history/{id}` | DELETE | Delete report |
 | `/research/compare/{id1}/{id2}` | GET | Compare report versions |
 | `/research/versions/{id}` | GET | Get report version chain |
+| `/research/reports/{id}/feedback` | POST/GET | 👍/👎 report feedback & counts (feeds the eval suite) |
 | `/research/export` | POST | Export PDF, Word or HTML |
 
 ### Settings & Sync
@@ -197,12 +233,13 @@ research-agent/
 | `/settings` | GET | Get runtime settings summary |
 | `/sync/feishu` | POST | Sync to Feishu Docs |
 | `/sync/tencent` | POST | Sync to Tencent Docs |
+| `/mcp` | MCP | Standard MCP endpoint (stateless streamable-http, auth required) |
 
 ### Monitoring
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/health` | GET | Health check |
+| `/health` / `/health/ready` | GET | Liveness / readiness (LLM credential & MCP dependency checks) |
 | `/llm/status` | GET | LLM provider circuit breaker status |
 | `/llm/circuit/reset` | POST | Reset LLM circuit breaker |
 
@@ -220,7 +257,7 @@ research-agent/
 - [README.md](./README.md) - Chinese documentation (中文文档)
 - This file - English documentation
 
-> **Note**: Both documentation files are maintained in sync. Last updated: 2026-05-21.
+> **Note**: Both documentation files are maintained in sync. Last updated: 2026-10-14.
 
 ## License
 
