@@ -139,3 +139,6 @@ reports/
 searxng-default.yml
 searxng/
 searxng-data/
+
+# pytest tmpdirs (per-user, e.g. pytest-of-<user>/)
+pytest-of-*/
