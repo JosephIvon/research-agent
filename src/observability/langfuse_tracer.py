@@ -83,12 +83,19 @@ def start_trace(name: str, input: Optional[Dict[str, Any]] = None,
     tid = task_id or current_task_id()
     if not tid:
         return None
-    trace = _langfuse.trace(
-        id=tid,
-        name=name,
-        user_id=user_id or _user_id_var.get(),
-        input=input,
-    )
+    # 观测绝不能拖垮主流程（模块 docstring 的红线），启用态尤其要守：
+    # 这段已经被接进 FastAPI 任务入口，SDK 一旦故障就会把整个调研任务打死。
+    try:
+        trace = _langfuse.trace(
+            id=tid,
+            name=name,
+            user_id=user_id or _user_id_var.get(),
+            input=input,
+        )
+    except Exception:
+        logger.warning("[observability] start_trace 失败，本次运行不产生 trace", exc_info=True)
+        _trace_var.set(None)
+        return None
     _trace_var.set(trace)
     return trace
 
@@ -115,11 +122,16 @@ def llm_span(name: str, model: Optional[str] = None,
     if not is_enabled() or trace is None:
         yield None
         return
-    span = trace.generation(
-        name=name,
-        model=model,
-        model_parameters=model_parameters or {},
-    )
+    # 同 start_trace：开启 span 失败只能放弃这次 span，不能把调用方的 LLM 请求带崩。
+    try:
+        span = trace.generation(
+            name=name,
+            model=model,
+            model_parameters=model_parameters or {},
+        )
+    except Exception:
+        logger.warning("[observability] llm_span 开启失败，跳过该 span", exc_info=True)
+        span = None
     try:
         yield span
         if span is not None:

@@ -85,7 +85,8 @@ class TaskBudget:
     max_usd: float = 0.50
     prompt_tokens: int = 0
     completion_tokens: int = 0
-    estimated_tokens: int = 0     # 估算计入了多少（真值缺口的量化）
+    estimated_calls: int = 0     # 有多少次调用没拿到 usage、只能靠估算
+    estimated_tokens: int = 0    # 这些估算一共贡献了多少 token（真值缺口的量化）
     calls: int = 0
     by_model: Dict[str, Dict[str, int]] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
@@ -112,7 +113,12 @@ class TaskBudget:
                 self.completion_tokens += completion_tokens
                 entry["completion"] += completion_tokens
             if estimated:
-                self.estimated_tokens += 1
+                # 次数与 token 数分开记：老字段名 estimated_tokens 实际累加的是
+                # 调用次数，字段名与语义不符会让人把 3 次估算读成 3 个 token。
+                self.estimated_calls += 1
+                self.estimated_tokens += (
+                    (prompt_tokens or 0) + (completion_tokens or 0)
+                )
 
     def record_estimated(self, provider: str, model: Optional[str], prompt_text: str,
                          completion_text: str = "") -> None:
@@ -153,7 +159,11 @@ class TaskBudget:
                 "total_tokens": self.total_tokens,
                 "calls": self.calls,
                 "estimated_usd": self.estimate_usd(),
-                "estimated": self.estimated_tokens > 0,
+                # estimated 语义不变：**本任务里是否出现过估算**（有任一次
+                # 估算记账就为 True），前端据此决定要不要给数字打"约"字。
+                "estimated": self.estimated_calls > 0,
+                "estimated_calls": self.estimated_calls,
+                "estimated_tokens": self.estimated_tokens,
                 "by_model": {k: dict(v) for k, v in self.by_model.items()},
                 "limits": {"max_tokens": self.max_tokens, "max_usd": self.max_usd},
             }

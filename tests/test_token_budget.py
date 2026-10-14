@@ -59,6 +59,33 @@ def test_estimated_records_are_flagged():
     assert snap["prompt_tokens"] > 0
 
 
+def test_estimated_calls_and_tokens_are_counted_separately():
+    """次数与 token 数是两个量：老字段名 estimated_tokens 实际累加的是调用次数，
+    3 次估算读成"3 个 token"会把真值缺口算错一个数量级。"""
+    budget = TaskBudget("t")
+    budget.record_estimated("fake", "scripted", "x" * 300, "y" * 60)
+    budget.record_estimated("fake", "scripted", "x" * 300, "")
+    snap = budget.snapshot()
+
+    assert snap["estimated_calls"] == 2
+    assert snap["estimated_tokens"] == snap["total_tokens"] == snap["prompt_tokens"] + \
+        snap["completion_tokens"]
+    assert snap["estimated_tokens"] > 2, "估算 token 必须是量级值，不是次数"
+    assert snap["calls"] == 2
+
+
+def test_estimated_flag_is_false_when_all_calls_have_real_usage():
+    """estimated 只看"有没有发生过估算"，与估算 token 数无关。"""
+    budget = TaskBudget("t")
+    budget.record("minimax", "abab", prompt_tokens=1000, completion_tokens=500)
+    assert budget.snapshot()["estimated"] is False
+
+    budget.record_estimated("fake", "scripted", "z")
+    snap = budget.snapshot()
+    assert snap["estimated"] is True
+    assert snap["estimated_calls"] == 1 and snap["calls"] == 2
+
+
 def test_budget_guard_lifecycle():
     guard = BudgetGuard()
     guard.create("task-a", max_tokens=50, max_usd=1)

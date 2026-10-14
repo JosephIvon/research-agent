@@ -7,7 +7,7 @@ import time
 import logging
 import re
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional, Any, Union, Type
+from typing import Callable, List, Dict, Optional, Any, Union, Type
 from urllib.error import URLError, HTTPError
 from src.config.settings import (
     LLM_PROVIDER,
@@ -72,6 +72,65 @@ def strip_thinking(content: Optional[str]) -> str:
     return text.strip()
 
 
+# --------------------------------------------------------------------------
+# usage 真值：抽取与投递
+#
+# 背景：provider 返回的 prompt/completion tokens 是唯一真值，字符估算只在
+# usage 缺失时兜底。但历史上只有 chat_completion_raw 读得到 usage——
+# chat_completion（只回正文或首个 tool_call）与 stream_completion（回纯字符串）
+# 都把它整个丢掉，于是除 ReAct 外的所有调用路径永远只有估算。
+#
+# 补法不改这两个方法的返回类型（它们被全仓按 str | dict 使用），改为**可选**
+# usage_sink 回调：默认 None 时连 response.usage 都不碰，与改造前逐字一致。
+# --------------------------------------------------------------------------
+UsageSink = Callable[[Dict[str, Optional[int]]], None]
+
+
+def _extract_usage(source: Any) -> Dict[str, Optional[int]]:
+    """从响应对象或流式 chunk 抽 usage 真值。字段缺失一律 None，交调用方估算。"""
+    usage = source.get("usage") if isinstance(source, dict) else getattr(source, "usage", None)
+    if usage is None:
+        return {"prompt_tokens": None, "completion_tokens": None}
+
+    def _int(value: Any) -> Optional[int]:
+        # bool 是 int 的子类：True 不能被当成 1 个 token 记进去
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    if isinstance(usage, dict):
+        return {
+            "prompt_tokens": _int(usage.get("prompt_tokens")),
+            "completion_tokens": _int(usage.get("completion_tokens")),
+        }
+    return {
+        "prompt_tokens": _int(getattr(usage, "prompt_tokens", None)),
+        "completion_tokens": _int(getattr(usage, "completion_tokens", None)),
+    }
+
+
+def _notify_usage(sink: Optional[UsageSink], usage: Dict[str, Optional[int]]) -> None:
+    """投递 usage 真值。sink 自身的异常不许打断 LLM 调用——记账失败最多丢一笔账，
+    抛出去会让已经付过费的这次调用整条链路失败。"""
+    if sink is None:
+        return
+    try:
+        sink(usage)
+    except Exception:
+        logger.debug("[llm] usage_sink 回调失败（不影响主流程）", exc_info=True)
+
+
+def _stream_usage_default() -> bool:
+    """流式 usage 的默认开关。
+
+    默认**关闭**：并非所有 OpenAI 兼容后端都认 stream_options（部分自建网关、
+    老版本 vLLM 会直接 400），默认打开等于把所有流式调用打成故障。确认后端
+    支持后置 LLM_STREAM_INCLUDE_USAGE=true，或按调用点传 include_usage=True
+    局部打开。
+    """
+    return os.getenv("LLM_STREAM_INCLUDE_USAGE", "false").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 class LLMError(Exception):
     """LLM 调用基础异常"""
     pass
@@ -98,9 +157,15 @@ class LLMClient(ABC):
         temperature: float = 0.2,
         max_tokens: int = 4096,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: str = "auto"
+        tool_choice: str = "auto",
+        usage_sink: Optional[UsageSink] = None,
     ) -> Union[str, Dict[str, Any], None]:
-        """对话补全"""
+        """对话补全
+
+        usage_sink：可选回调，命中时收到 provider 返回的 usage 真值
+        （{"prompt_tokens": int|None, "completion_tokens": int|None}）。
+        默认 None 时不读 usage、不回调，与加此参数前的行为逐字一致。
+        """
         pass
     
     @abstractmethod
@@ -109,9 +174,14 @@ class LLMClient(ABC):
         messages: List[Dict[str, str]],
         model: Optional[str] = None,
         temperature: float = 0.2,
-        max_tokens: int = 4096
+        max_tokens: int = 4096,
+        usage_sink: Optional[UsageSink] = None,
+        include_usage: Optional[bool] = None,
     ) -> str:
-        """流式对话补全"""
+        """流式对话补全
+
+        usage_sink/include_usage 语义同 chat_completion 与 OpenAICompatibleClient。
+        """
         pass
 
     async def achat_completion(self, messages: List[Dict[str, str]], **kwargs):
@@ -124,6 +194,8 @@ class LLMClient(ABC):
 
         这里统一丢进线程池执行。熔断器用的是 threading.Lock，保护的是跨线程共享
         的状态机，在多线程下正是需要的。
+
+        kwargs 原样透传给 chat_completion，`usage_sink=...` 照常可用。
         """
         return await asyncio.to_thread(self.chat_completion, messages, **kwargs)
 
@@ -270,7 +342,8 @@ class OpenAICompatibleClient(LLMClient):
         max_tokens: int = 4096,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: str = "auto",
-        timeout: Optional[int] = None
+        timeout: Optional[int] = None,
+        usage_sink: Optional[UsageSink] = None,
     ) -> Union[str, Dict[str, Any], None]:
         """
         对话补全 - 带超时控制、熔断和智能重试
@@ -283,9 +356,13 @@ class OpenAICompatibleClient(LLMClient):
             tools: 工具定义
             tool_choice: 工具选择策略
             timeout: 请求超时（秒），默认使用配置值
+            usage_sink: 可选 usage 回调。**不传则完全不读 response.usage**
+                （零开销，行为与加此参数前逐字一致）；传了则在拿到响应的
+                那一刻回调一次，usage 由 TaskBudget.record / record_estimated
+                之类的记账函数接管——provider 没给就是 None 值，由它决定是否估算。
 
         Returns:
-            对话补全结果
+            对话补全结果（正文，或首个 tool_call 的 dict）
 
         Raises:
             LLMTimeoutError: 请求超时
@@ -321,6 +398,11 @@ class OpenAICompatibleClient(LLMClient):
                         params["tool_choice"] = tool_choice
 
                     response = self.client.chat.completions.create(**params)
+
+                    # usage 只在有人要账时才读：回调放在 choices 判断之前，
+                    # 因为"有响应但无 choices"同样计费，漏记就是真金白银的缺口。
+                    if usage_sink is not None:
+                        _notify_usage(usage_sink, _extract_usage(response))
 
                     if not response.choices:
                         return None
@@ -417,11 +499,7 @@ class OpenAICompatibleClient(LLMClient):
                     response = self.client.chat.completions.create(**params)
 
                     def _usage():
-                        u = getattr(response, "usage", None)
-                        return {
-                            "prompt_tokens": getattr(u, "prompt_tokens", None) if u else None,
-                            "completion_tokens": getattr(u, "completion_tokens", None) if u else None,
-                        }
+                        return _extract_usage(response)
 
                     if not response.choices:
                         return {"content": None, "tool_calls": [], "finish_reason": None,
@@ -474,29 +552,54 @@ class OpenAICompatibleClient(LLMClient):
         model: Optional[str] = None,
         temperature: float = 0.2,
         max_tokens: int = 4096,
-        timeout: Optional[int] = None
+        timeout: Optional[int] = None,
+        usage_sink: Optional[UsageSink] = None,
+        include_usage: Optional[bool] = None,
     ) -> str:
         """
         流式对话补全 - 带超时控制
+
+        usage 真值只在流末尾的最后一批 chunk 里（choices 为空的收尾块），
+        所以必须显式要：`stream_options={"include_usage": True}`。
+        该参数并非所有 OpenAI 兼容后端都认（部分自建网关直接 400），因此做成
+        双层开关且**默认关闭**：
+        - include_usage 为 None → 读环境变量 LLM_STREAM_INCLUDE_USAGE（默认 false）
+        - 显式传 True/False → 覆盖环境变量，供单点强制打开/关闭
+        并且只有真的传了 usage_sink 才会带上这个参数——没人在账上就不发。
 
         Note: 流式调用暂不支持熔断（因为 SSE 需要保持连接）
         """
         request_timeout = timeout or self._timeout
 
+        want_usage = usage_sink is not None and (
+            _stream_usage_default() if include_usage is None else bool(include_usage)
+        )
+
         last_error = None
         for attempt in range(self.max_retries):
             try:
-                response = self.client.chat.completions.create(
-                    model=model or self.default_model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    stream=True,
-                    timeout=request_timeout
-                )
+                params = {
+                    "model": model or self.default_model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "stream": True,
+                    "timeout": request_timeout,
+                }
+                if want_usage:
+                    params["stream_options"] = {"include_usage": True}
+                response = self.client.chat.completions.create(**params)
 
                 full_content = ""
+                usage: Optional[Dict[str, Optional[int]]] = None
                 for chunk in response:
+                    # 收尾块的 choices 为空、只带 usage——必须先取 usage 再判 choices，
+                    # 否则这段真值会被 `continue` 跳过，流式路径就永远只有估算。
+                    if want_usage:
+                        chunk_usage = _extract_usage(chunk)
+                        if chunk_usage["prompt_tokens"] is not None or \
+                                chunk_usage["completion_tokens"] is not None:
+                            usage = chunk_usage
                     if not chunk.choices:
                         continue
                     delta = chunk.choices[0].delta
@@ -504,11 +607,20 @@ class OpenAICompatibleClient(LLMClient):
                         full_content += delta.content
 
                 # 推理块跨多个 delta 到达，只能在拼接完之后整体剥离
-                return strip_thinking(full_content)
+                text = strip_thinking(full_content)
+                # 后端不支持或未回传 usage 时回 None 值，让调用方照旧走估算
+                _notify_usage(usage_sink, usage or _extract_usage(None))
+                return text
 
             except Exception as e:
                 last_error = e
                 if not self._is_retryable_error(e):
+                    if want_usage:
+                        logger.warning(
+                            f"[{self.provider_name}] 流式请求带了 stream_options 却失败，"
+                            f"疑似后端不支持：该调用点传 include_usage=False 可绕过。"
+                            f"{type(e).__name__}: {e}"
+                        )
                     raise LLMError(f"[{self.provider_name}] stream_completion failed: {e}") from e
 
                 if attempt < self.max_retries - 1:
@@ -650,14 +762,20 @@ class ScriptedLLMClient(LLMClient):
     - `calls` 记录每次调用的 intent/step/messages/tools，是 prompt 快照测试的锚点。
     - 脚本来源优先级：构造参数 > `LLM_FAKE_SCRIPT`（JSON 文件，按键覆盖）> 内置缺省。
     - 与真实客户端同样遵守返回约定：str 或首个 tool_call 的 dict。
+    - `usage` 构造参数（可选）：脚本客户端默认**没有** usage 真值（回 None 值，
+      调用方据此走估算并打 estimated 标记）。传入后 chat_completion 的
+      usage_sink 与 chat_completion_raw 的 usage 都按它上报——接线测试可以
+      在零网络下验证"拿到真值就不估算"这条分支。
     """
 
     provider_name = "fake"
 
-    def __init__(self, script: Optional[Dict[str, List[Any]]] = None):
+    def __init__(self, script: Optional[Dict[str, List[Any]]] = None,
+                 usage: Optional[Dict[str, int]] = None):
         self.default_model = "scripted"
         self.api_key = "not-needed"
         self.base_url = None
+        self.usage = dict(usage) if usage else None
         merged: Dict[str, List[Any]] = {k: list(v) for k, v in DEFAULT_FAKE_SCRIPT.items()}
         env_path = os.getenv("LLM_FAKE_SCRIPT")
         if env_path:
@@ -735,23 +853,34 @@ class ScriptedLLMClient(LLMClient):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: str = "auto",
         timeout=None,
+        usage_sink: Optional[UsageSink] = None,
     ) -> Union[str, Dict[str, Any], None]:
         entry = self._next_entry(messages, tools)
+        _notify_usage(usage_sink, self._usage_value())
         # legacy 单返回路径降维取首个（raw 路径保留全部）
         if isinstance(entry, dict) and entry.get("type") == "tool_calls":
             return entry["calls"][0]
         return entry
 
+    def _usage_value(self) -> Dict[str, Optional[int]]:
+        """脚本客户端的 usage：没配就是 None 值（调用方据此决定是否估算）。"""
+        if not self.usage:
+            return {"prompt_tokens": None, "completion_tokens": None}
+        return {
+            "prompt_tokens": self.usage.get("prompt_tokens"),
+            "completion_tokens": self.usage.get("completion_tokens"),
+        }
+
     def chat_completion_raw(self, messages, model=None, temperature=0.2, max_tokens=4096,
                             tools=None, tool_choice="auto", timeout=None) -> Dict[str, Any]:
         """脚本版 raw：tool_call 自动补 id（call_<序号>），多调用条目原样展开。"""
         entry = self._next_entry(messages, tools)
-        none_usage = {"prompt_tokens": None, "completion_tokens": None}
+        usage = self._usage_value()
         if isinstance(entry, dict) and entry.get("type") == "tool_call":
             call = dict(entry)
             call.setdefault("id", f"call_{len(self.calls)}")
             return {"content": None, "tool_calls": [call], "finish_reason": "tool_calls",
-                    "usage": none_usage}
+                    "usage": usage}
         if isinstance(entry, dict) and entry.get("type") == "tool_calls":
             calls = []
             for i, call in enumerate(entry["calls"]):
@@ -759,9 +888,9 @@ class ScriptedLLMClient(LLMClient):
                 call.setdefault("id", f"call_{len(self.calls)}_{i}")
                 calls.append(call)
             return {"content": None, "tool_calls": calls, "finish_reason": "tool_calls",
-                    "usage": none_usage}
+                    "usage": usage}
         return {"content": entry if isinstance(entry, str) else None, "tool_calls": [],
-                "finish_reason": "stop" if entry else None, "usage": none_usage}
+                "finish_reason": "stop" if entry else None, "usage": usage}
 
     def stream_completion(
         self,
@@ -769,10 +898,14 @@ class ScriptedLLMClient(LLMClient):
         model: Optional[str] = None,
         temperature: float = 0.2,
         max_tokens: int = 4096,
+        usage_sink: Optional[UsageSink] = None,
+        include_usage: Optional[bool] = None,
     ) -> str:
         # 脚本没有流式语义：直接返回全量文本
+        # （include_usage 无意义——不发网络请求，没有 stream_options 可塞）
         result = self.chat_completion(
-            messages, model=model, temperature=temperature, max_tokens=max_tokens
+            messages, model=model, temperature=temperature, max_tokens=max_tokens,
+            usage_sink=usage_sink,
         )
         return result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
 
