@@ -25,18 +25,24 @@ MCP 是**可选的对外能力**（让外部 MCP 客户端调搜索/抓取/报�
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from starlette.applications import Starlette
 from starlette.routing import Mount
 from starlette.testclient import TestClient
 
-REPO = r"D:\workspace\research-agent"
+# 动态推导仓库根：曾硬编码 Windows 绝对路径，Linux CI 上 FileNotFoundError
+# （子进程 cwd 不存在），三个用例全红——教训：路径永远从 __file__ 推。
+REPO = str(Path(__file__).resolve().parents[1])
 
 # 子进程 stdout 在 Windows 上默认走本地编码（cp936），而 body 里含中文。
 # 不强制 UTF-8 的话父进程解码会直接抛 UnicodeDecodeError——那是**测试的**故障，
 # 不是被测代码的，会把红绿判反。
 _CHILD_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+
+# -c 模式下 sys.path 是否含 cwd 存在版本差异，显式注入不赌默认行为
+_PATH_SETUP = "import os, sys; sys.path.insert(0, os.getcwd())\n"
 
 
 def _run_child(script):
@@ -54,7 +60,7 @@ def _force_sdk_missing():
     导入 `server` 的那一刻就已经执行完了。父进程里改 `_SDK_AVAILABLE` 只会影响
     之后新建的对象，已经挂上去的那个子应用不会变。
     """
-    script = """
+    script = _PATH_SETUP + """
 import src.mcpserver.server as m
 from starlette.applications import Starlette
 from starlette.routing import Mount
@@ -94,7 +100,8 @@ def test_importing_server_survives_a_missing_sdk():
     包括后来者想验证自己的改动。
     """
     script = (
-        "import src.mcpserver.server as m\n"
+        _PATH_SETUP
+        + "import src.mcpserver.server as m\n"
         "m._SDK_AVAILABLE = False\n"
         "import server\n"
         "print('IMPORT_OK')\n"
