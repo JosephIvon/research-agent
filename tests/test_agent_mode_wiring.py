@@ -384,3 +384,47 @@ def test_redis_apply_update_fields_supports_new_fields():
     )
     assert ts.injection_findings_count == 5
     assert ts.cost_report == {"b": 2}
+
+
+def test_workflow_hands_its_budget_to_the_tool_registry(tmp_path, monkeypatch):
+    """生产路径（mvp_workflow）必须把 TaskBudget 透给工具闭包。
+
+    变异验证时发现：只在 ReActRunner 层测记账，工作流这一层的透传断了也**不会**
+    有任何用例变红——而真实任务走的正是工作流这一层。没有它，extract_facts 的
+    逐页 LLM 调用照旧绕开预算账本，token/USD 两道守卫继续按"只有 ReAct 轮"
+    的口径放行。
+    """
+    monkeypatch.setenv("AGENT_MODE", "react")
+    site_url = "https://budgetwire.example.com"
+    llm = ScriptedLLMClient(script={
+        "react": [
+            {"type": "tool_call", "name": "fetch_site",
+             "arguments": json.dumps({"url": site_url})},
+            {"type": "tool_call", "name": "extract_facts",
+             "arguments": json.dumps({"url": site_url})},
+            "## 结论\n\n定价如上。",
+        ],
+        "extract": [json.dumps([{"key": "pricing", "value": "$49/月", "confidence": 0.9}])],
+    })
+    _wire_offline(monkeypatch, tmp_path, llm)
+    _wire_react_tools(monkeypatch, react_crawler_cls=lambda: _StaticReactCrawler(f"{site_url}/p"))
+
+    from src.workflow import mvp_workflow
+    from src.llm.token_budget import TaskBudget
+
+    captured = {}
+    real_builder = mvp_workflow.build_default_tools
+
+    def _spy(llm_client, workspace, budget=None):
+        captured["budget"] = budget
+        return real_builder(llm_client, workspace, budget=budget)
+
+    monkeypatch.setattr(mvp_workflow, "build_default_tools", _spy)
+
+    workflow = mvp_workflow.MVPWorkflow()
+    asyncio.run(workflow.run("接线调研", enable_search=False, task_id="budget-wire-0001"))
+
+    assert "budget" in captured, "工作流根本没调 build_default_tools，用例失去意义"
+    assert isinstance(captured["budget"], TaskBudget), (
+        f"工作流必须把 TaskBudget 透给工具闭包，实得 {type(captured['budget']).__name__}"
+    )

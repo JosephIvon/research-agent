@@ -14,6 +14,8 @@ import asyncio
 import json
 from typing import Any, Dict, List, get_args
 
+import pytest
+
 from src.agent import tool_specs
 from src.agent.runner import ReActRunner
 from src.agent.trace import AgentResult, AgentStep
@@ -418,3 +420,58 @@ def test_real_runner_emits_partial_event_not_completed(tmp_path, monkeypatch):
     payload = collector.of("partial")[0].payload
     assert payload["status"] == "partial"
     assert payload["stop_reason"] == "budget_exceeded"
+
+
+def _sqlite_task_row(task_id):
+    """从离线 SQLite 里读回 tasks 行（_wire_offline 已把库指到 tmp_path）。"""
+    from src.storage import database as dbmod
+    return dbmod.get_report_db().get_task(task_id)
+
+
+@pytest.mark.parametrize("expected", ["partial", "completed", "failed"])
+def test_terminal_status_actually_reaches_sqlite(tmp_path, monkeypatch, expected):
+    """终态必须真的写进 SQLite 的 tasks.status。
+
+    `_persist_to_sqlite` 写的 `status=state.get("status")` 是在**报告落盘那一刻**
+    取的，那一刻 status 还是 `reacting`——所以库里存的永远是中间态。此前没人
+    发现，是因为 tasks 表只写不读（`ReportDatabase.get_task` 零调用方），缺陷
+    一直隐身。本条把库行拉出来断言终态，堵住"只断言 state 不看落库"的空档。
+    """
+    monkeypatch.setenv("AGENT_MODE", "react")
+
+    if expected == "partial":
+        llm = _BudgetExhaustedRunner  # noqa: F841 - 仅作为哨兵，实际用下面的 monkeypatch
+        from src.workflow import mvp_workflow
+        monkeypatch.setattr(mvp_workflow, "ReActRunner", _BudgetExhaustedRunner)
+        monkeypatch.setattr(mvp_workflow, "verify_report", lambda report, store: {
+            "passed": True, "coverage": 1.0, "valid_ratio": 1.0, "grounding": 1.0,
+            "violations": [],
+        })
+        _wire_offline(monkeypatch, tmp_path, _react_llm("不会被调用"))
+    elif expected == "completed":
+        _wire_offline(monkeypatch, tmp_path, _react_llm("正常终答。"))
+    else:
+        # 无终答 -> failed：runner 永远只吐工具调用
+        _wire_offline(monkeypatch, tmp_path,
+                      _react_llm(_call("web_search", query="a"),
+                                 _call("web_search", query="b")))
+    _wire_react_tools(monkeypatch)
+
+    from src.workflow import mvp_workflow
+
+    task_id = f"sqlite-terminal-{expected}-0001"
+    workflow = mvp_workflow.MVPWorkflow()
+    workflow._event_emitter = _EventCollector()
+    state = asyncio.run(_drive(workflow, enable_search=False, task_id=task_id))
+
+    assert state["status"] == expected, f"工作流终态应为 {expected}，实得 {state['status']!r}"
+
+    row = _sqlite_task_row(task_id)
+    assert row is not None, "任务行必须已落库（_wire_offline 把库指到 tmp_path）"
+    assert row["status"] == expected, (
+        f"SQLite tasks.status 应为终态 {expected!r}，实得 {row['status']!r}——"
+        f"中间态 {row['status']!r} 说明终态补写没接上"
+    )
+    assert row["report_id"] == state.get("report_id"), (
+        "report_id 应与工作流 state 一致，避免库里指向另一份报告"
+    )

@@ -62,9 +62,13 @@ def price_for(model: Optional[str]) -> Dict[str, float]:
     if not model:
         return DEFAULT_PRICE
     model_lower = model.lower()
-    for prefix, price in PRICING_PER_MTOK.items():
+    # 必须按前缀长度从长到短匹配。表里 `gpt-4o` 排在 `gpt-4o-mini` 之前，
+    # 直接遍历 dict 会把 `gpt-4o-mini` 判成 `gpt-4o`（2.5/10 而非 0.15/0.6，
+    # 高 16.7 倍），USD 预算守卫因此对 mini 提前约 17 倍触发。
+    # 同长度的前缀相对顺序仍由插入序决定，结果与输入无关、可复现。
+    for prefix in sorted(PRICING_PER_MTOK, key=len, reverse=True):
         if prefix in model_lower:
-            return price
+            return PRICING_PER_MTOK[prefix]
     return DEFAULT_PRICE
 
 

@@ -946,11 +946,13 @@ class MVPWorkflow:
             state["status"] = "completed"
             state["termination_reason"] = "所有步骤执行完成"
             self._emit("completed", "completed", "completed", "全部完成")
+            self._update_task_status_in_sqlite(state)
 
         except Exception as e:
             logger.error(f"工作流执行失败: {e}", exc_info=True)
             state["status"] = "failed"
             state["termination_reason"] = f"执行失败: {str(e)}"
+            self._update_task_status_in_sqlite(state)
             state["errors"].append({
                 "timestamp": datetime.now(),
                 "stage": "workflow",
@@ -1007,7 +1009,10 @@ class MVPWorkflow:
 
             runner = ReActRunner(
                 self.llm_client,
-                tools=build_default_tools(self.llm_client, workspace),
+                # budget 要透给工具闭包：extract_facts 的逐页 LLM 调用是单任务
+                # 最大的 token 开销，不接进 TaskBudget 的话 token/USD 两道守卫
+                # 会按"只有 ReAct 轮"的账放行，系统性低估。
+                tools=build_default_tools(self.llm_client, workspace, budget=budget),
                 workspace=workspace,
                 budget=budget,
                 on_step=_on_step,
@@ -1060,9 +1065,11 @@ class MVPWorkflow:
                 else:
                     state["status"] = "completed"
                     self._emit("completed", "completed", "completed", "全部完成")
+                self._update_task_status_in_sqlite(state)
             else:
                 state["status"] = "failed"
                 state["termination_reason"] = f"react:{result.stop_reason}"
+                self._update_task_status_in_sqlite(state)
                 state["report_final"] = (
                     f"❌ ReAct 调研未产出终答（stop_reason={result.stop_reason}，"
                     f"共执行 {len(result.steps)} 轮），可查看 agent_step 事件了解已完成的工具调用。"
@@ -1088,6 +1095,7 @@ class MVPWorkflow:
                 f"执行失败: {str(e)}",
                 payload={"stage": "workflow", "error_type": type(e).__name__}
             )
+            self._update_task_status_in_sqlite(state)
 
         # react 路径不走入口抓取，injection_findings 天然为空；统一记录计数保持口径一致
         state["injection_findings_count"] = len(state.get("injection_findings") or [])
@@ -1470,6 +1478,39 @@ class MVPWorkflow:
             )
         except Exception as e:
             logger.warning(f"Failed to persist to SQLite: {e}")
+
+    def _update_task_status_in_sqlite(self, state: Dict[str, Any]):
+        """把**终态**补写进 SQLite 的 tasks 表。
+
+        `_persist_to_sqlite` 写的是 `state.get("status")`，而它必须在报告落盘后
+        立刻调用（PRD 生成、文档同步可能再抛异常，那时报告已经写完却还没进库）。
+        于是那一刻 status 仍是 `reacting` / `writing` 之类的中间态——库里的行
+        会永远停在中间态，因为 tasks 表此前只写不读，缺陷一直没暴露。
+
+        行不存在时（未产出终答的 failed 路径压根到不了 `_persist_to_sqlite`）
+        退回 save_task 建行，否则 UPDATE 打在空行上是 no-op，失败任务仍然留不下
+        任何痕迹。异常同样吞成 warning：状态补写失败不该让已交付的任务反过来失败。
+        """
+        task_id = state.get("task_id")
+        status = state.get("status")
+        if not task_id or not status:
+            return
+        try:
+            from src.storage import get_report_db
+            db = get_report_db()
+            updated = db.update_task_status(
+                task_id, status, report_id=state.get("report_id"),
+            )
+            if not updated:
+                db.save_task(
+                    task_id=task_id,
+                    user_query=state.get("user_query"),
+                    status=status,
+                    report_id=state.get("report_id"),
+                    user_id=state.get("user_id"),
+                )
+        except Exception as e:
+            logger.warning(f"Failed to update task status in SQLite: {e}")
 
     async def _sync_documents(self, state: Dict[str, Any], sync_targets: List[str]) -> Dict[str, Any]:
         """同步到外部文档平台"""

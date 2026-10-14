@@ -36,8 +36,18 @@ api_flow、workflow、limitations、reviews。value 保留可核验事实与数�
 不要概括性形容词。只输出 JSON。"""
 
 
-def build_default_tools(llm_client, workspace: Dict[str, Any]) -> ToolRegistry:
-    """构造一次 react 运行的工具集。llm_client 供 extract_facts 使用。"""
+def build_default_tools(llm_client, workspace: Dict[str, Any], budget: Any = None) -> ToolRegistry:
+    """构造一次 react 运行的工具集。llm_client 供 extract_facts 使用。
+
+    `budget` 是可选的 TaskBudget（M6）。传了就让 `extract_facts` 的逐页 LLM
+    调用记账，不传则完全保持原样——连 `usage_sink` 都不传，因而客户端不会去读
+    `response.usage`（零开销红线）。
+
+    为什么必须记账：逐页抽取通常是单任务最大的 token 开销，而它此前**整段绕开**
+    了 TaskBudget——`runner._record_budget` 只对 ReAct 轮次记账，工具闭包构造时
+    压根没拿到 budget。结果是 token/USD 两道守卫按"只有 ReAct 轮"的账去放行，
+    系统性低估真实开销。
+    """
     registry = ToolRegistry()
 
     # ------------------------------------------------------------------
@@ -122,14 +132,50 @@ def build_default_tools(llm_client, workspace: Dict[str, Any]) -> ToolRegistry:
         pages = profile.get("pages", [])[:EXTRACT_MAX_PAGES]
 
         async def _extract_page(page_url: str, text: str):
+            prompt_text = f"来源: {page_url}\n内容:\n{text}"
+            seen_usage: List[Dict[str, Any]] = []
+
+            def _usage_sink(usage: Dict[str, Any]) -> None:
+                """真值路径：provider 报了 usage 就直接记账。
+
+                回调在客户端解析 choices **之前**触发，所以"有响应但无正文"
+                这种照样计费的情况也能被接住——抽取页返回空 JSON 正是这种。
+
+                usage 缺失时**不在这里**估算：此刻响应正文还没解析出来，
+                completion 侧只能估成 0。留给下面的兜底分支，那里两边都拿得到。
+                """
+                seen_usage.append(usage)
+                prompt = usage.get("prompt_tokens")
+                completion = usage.get("completion_tokens")
+                if prompt is None or completion is None:
+                    return
+                budget.record(
+                    getattr(llm_client, "provider_name", "unknown"),
+                    getattr(llm_client, "default_model", None),
+                    prompt, completion,
+                )
+
             raw = await llm_client.achat_completion(
                 [
                     {"role": "system", "content": _EXTRACT_SYSTEM},
-                    {"role": "user", "content": f"来源: {page_url}\n内容:\n{text}"},
+                    {"role": "user", "content": prompt_text},
                 ],
                 temperature=0.1,
+                # 不传 budget 就不传 sink：客户端据此不碰 response.usage
+                usage_sink=_usage_sink if budget is not None else None,
             )
             text_result = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False)
+            if budget is not None and not any(
+                u.get("prompt_tokens") is not None and u.get("completion_tokens") is not None
+                for u in seen_usage
+            ):
+                # 一个真值都没报：按字符估算，口径与 runner._record_budget 一致
+                budget.record_estimated(
+                    getattr(llm_client, "provider_name", "unknown"),
+                    getattr(llm_client, "default_model", None),
+                    prompt_text=prompt_text,
+                    completion_text=text_result,
+                )
             try:
                 data = json.loads(text_result.strip().removeprefix("```json").removeprefix("```").removesuffix("```"))
             except json.JSONDecodeError:

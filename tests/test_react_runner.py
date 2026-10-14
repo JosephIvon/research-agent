@@ -7,6 +7,7 @@ budget_exceeded / empty_observations / duplicate_loop / error 各终止路径、
 """
 import asyncio
 import json
+from typing import List
 
 import pytest
 
@@ -313,9 +314,18 @@ def test_result_is_empty_and_dedup_key_semantics():
 def test_estimate_tokens_and_render_observation_budget():
     assert estimate_tokens("") == 0
     assert estimate_tokens("x" * 8) == 2
-    rendered = render_observation({"ok": True, "data": "y" * 20000, "error": None}, char_budget=1000)
+    result = {"ok": True, "data": "y" * 20000, "error": None}
+    rendered = render_observation(result, char_budget=1000)
     assert len(rendered) < 2200
-    assert "省略" in rendered and rendered.startswith("{") is False or True  # 头部保留
+    # 超预算时保头保尾并标注省略量。原先这里是
+    # `... is False or True`——`X or True` 对任意 X 恒真，这行永远不会红，
+    # 而且 `startswith("{") is False` 与"保头"语义正好相反（保头就该以 { 开头）。
+    assert "省略" in rendered
+    assert rendered.startswith('{"ok": true'), "掐中间不能把 JSON 头掐掉"
+    assert rendered.rstrip().endswith('}'), "保尾必须留下结尾的闭合括号"
+    # 未超预算时原样返回，不该凭空插入省略标记
+    short = render_observation({"ok": True, "data": "短", "error": None}, char_budget=1000)
+    assert "省略" not in short
 
 
 def test_map_reduce_extract_merges_and_dedups():
@@ -475,3 +485,92 @@ def test_budget_convergence_cost_is_recorded(offline):
     assert report["calls"] >= 2, f"收敛那次也要记账，实际 calls={report['calls']}"
     assert report["total_tokens"] > 0
     assert result.answer is not None
+
+
+# --------------------------------------------------------------------------
+# extract_facts 的开销必须进 TaskBudget（M6 记账覆盖）
+# --------------------------------------------------------------------------
+
+def _extract_chain_llm(usage=None):
+    site = "https://billing.example.com"
+    script = {
+        "react": [
+            _call("fetch_site", url=site),
+            _call("extract_facts", url=site),
+            "## 结论\n\n定价如上。",
+        ],
+        "extract": [json.dumps([{"key": "pricing", "value": "$49/月", "confidence": 0.9}])],
+    }
+    return ScriptedLLMClient(script=script, usage=usage), site
+
+
+def test_extract_facts_charges_the_task_budget_with_real_usage(offline, monkeypatch):
+    """provider 报了 usage 时，抽取开销按真值进账，不走估算。
+
+    这条盯的是 M6 记账链路的真实缺口：`extract_facts` 的逐页 LLM 调用此前整段
+    绕开了 TaskBudget（工具闭包构造时压根没拿到 budget），而抽取通常是单任务
+    最大的 token 开销——于是 token/USD 两道守卫按"只有 ReAct 轮"的账去放行。
+    """
+    from src.agent import tools as agent_tools
+    from src.llm.token_budget import TaskBudget
+
+    monkeypatch.setattr(agent_tools, "validate_fetch_url", lambda u: u)
+    llm, _site = _extract_chain_llm(usage={"prompt_tokens": 900, "completion_tokens": 120})
+    budget = TaskBudget("extract-usage", max_tokens=10**9, max_usd=10.0)
+
+    result = asyncio.run(ReActRunner(llm, max_steps=6, budget=budget).run("查定价"))
+
+    report = result.cost_report
+    # 3 轮 ReAct + 1 次 extract；extract 的 900/120 必须落进同一个账本
+    assert report["calls"] >= 4, f"抽取调用没记进账，calls={report['calls']}"
+    assert report["total_tokens"] >= 900 + 120, report
+
+
+def test_extract_facts_estimates_when_provider_has_no_usage(offline, monkeypatch):
+    """provider 不报 usage 时按字符估算，并且计入 estimated 口径。"""
+    from src.agent import tools as agent_tools
+    from src.llm.token_budget import TaskBudget
+
+    monkeypatch.setattr(agent_tools, "validate_fetch_url", lambda u: u)
+    llm, _site = _extract_chain_llm(usage=None)
+    budget = TaskBudget("extract-estimated", max_tokens=10**9, max_usd=10.0)
+
+    result = asyncio.run(ReActRunner(llm, max_steps=6, budget=budget).run("查定价"))
+
+    report = result.cost_report
+    assert report["estimated_calls"] >= 4, f"无 usage 时应逐次估算，{report}"
+    assert report["estimated_tokens"] > 0
+
+
+def test_without_budget_the_extract_call_never_touches_usage(offline, monkeypatch):
+    """不传 budget 就不传 usage_sink——零开销红线不能因为这次接线被破掉。
+
+    不传 sink 时客户端连 `response.usage` 都不许读；一旦这里无条件传 sink，
+    每次抽取都会白白读一次 usage 并触发回调。
+    """
+    from src.agent import tools as agent_tools
+
+    monkeypatch.setattr(agent_tools, "validate_fetch_url", lambda u: u)
+    site = "https://nobudget.example.com"
+    seen: List[object] = []
+
+    class _SinkSpyLLM(ScriptedLLMClient):
+        def achat_completion(self, messages, **kwargs):
+            seen.append(kwargs.get("usage_sink", "ABSENT"))
+            return super().achat_completion(messages, **kwargs)
+
+    llm = _SinkSpyLLM(script={
+        "react": [_call("fetch_site", url=site), "## 结论\n\n定价如上。"],
+        "extract": [json.dumps([{"key": "pricing", "value": "$49/月", "confidence": 0.9}])],
+    })
+    # 显式用默认工具集（budget=None），绕开 runner 自己那条接线
+    registry = tool_specs.build_default_tools(llm, {}, budget=None)
+    asyncio.run(registry.execute("fetch_site", {"url": site}))
+    asyncio.run(registry.execute("extract_facts", {"url": site}))
+
+    # 判据是"没有可调用的 sink"，而不是"键必须不存在"：客户端一律按
+    # `if usage_sink is not None` 判定，显式传 None 与不传语义等价。
+    assert seen, "extract_facts 根本没调 LLM，用例失去意义"
+    assert all(not callable(sink) for sink in seen), (
+        f"无 budget 时不得传入可调用的 usage_sink，实测 {seen}"
+    )

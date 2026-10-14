@@ -155,22 +155,30 @@ if RATE_LIMIT_ENABLED:
 # ——请求被当成"无主路由"整条跳过限流。所以只挂 SlowAPIMiddleware 等于给 /mcp
 # 装了一道看着有、实际不设防的门。方案文档 §4-M5 要的"复用限流"仍然没兑现。
 #
-# 这里改用 limits 的公开 hit() 接口直接计次，并抛 RateLimitExceeded 走
-# 已注册的同一个处理器，保证 429 的响应体与其它路由完全一致。
+# 这里改用 limits 的公开 hit() 接口直接计次，命中就**直接返回** 429。
+# 不抛 RateLimitExceeded：那个处理器要一个完整的 Limit 对象，而这里只需要一个
+# 窗口计数器——为了一次 429 去拼 9 个构造参数不划算，也脆。
+#
+# 两个开关都必须看：
+#   - RATE_LIMIT_ENABLED：与上面 SlowAPIMiddleware 同源。否则运维设 false 时
+#     全站解除限流，唯独 /mcp 还硬限——这守卫反而成了唯一关不掉的。
+#   - limiter.enabled：slowapi 的全局关停开关，`tests/conftest.py` 的 autouse
+#     fixture 正是靠它关限流。直连 `limiter.limiter.hit()` 走的是底层 limits
+#     策略对象，绕开这个标志（实测置 False 后连打仍在拒绝），于是 /mcp 用例
+#     不受该 fixture 保护，429 取决于执行顺序与机器快慢——正是它要消除的 flake。
 _MCP_RATE_LIMIT = parse(RATE_LIMIT_PER_TOKEN)
 
 
 @app.middleware("http")
 async def limit_mcp_endpoint(request: Request, call_next):
-    path = request.url.path
-    if path == "/mcp" or path.startswith("/mcp/"):
-        if not limiter.limiter.hit(_MCP_RATE_LIMIT, get_token_key(request)):
-            # 响应体与 slowapi 已注册的 _rate_limit_exceeded_handler 保持一致。
-            # 走不到那个处理器：它要一个完整的 Limit 对象，而这里只需要一个
-            # 窗口计数器——为了一次 429 去拼 9 个构造参数不划算，也脆。
-            return JSONResponse(
-                {"error": f"Rate limit exceeded: {_MCP_RATE_LIMIT}"}, status_code=429
-            )
+    if RATE_LIMIT_ENABLED and limiter.enabled:
+        path = request.url.path
+        if path == "/mcp" or path.startswith("/mcp/"):
+            if not limiter.limiter.hit(_MCP_RATE_LIMIT, get_token_key(request)):
+                # 响应体与 slowapi 已注册的 _rate_limit_exceeded_handler 保持一致。
+                return JSONResponse(
+                    {"error": f"Rate limit exceeded: {_MCP_RATE_LIMIT}"}, status_code=429
+                )
     return await call_next(request)
 
 # JWT Authentication middleware - supports both legacy API_AUTH_TOKEN and new JWT

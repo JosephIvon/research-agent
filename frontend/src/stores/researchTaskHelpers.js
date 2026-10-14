@@ -46,6 +46,25 @@ export function isTerminalRunStatus(status) {
   return TERMINAL_RUN_STATUSES.includes(status)
 }
 
+// SSE 流是否已到终态；返回应上报的终态名，未到则返回 null。
+//
+// **终态只看事件名，不看 status。** 后端的 `status` 是**阶段进度**而不是终态标志：
+// crawl_complete / citation_check / artifact_ready / injection_detected 全都发
+// status="completed"，那是"这一步做完了"；把它们当终态会让 SSE 在第一次
+// crawl_complete 就被拆掉，报告再也取不回来。
+//
+// `error` 要额外排除 crawl 阶段：单个竞品抓取失败时后端同样发
+// error + stage="crawl" + status="failed"（mvp_workflow._fetch_single_competitor），
+// 任务还在继续。原判定只看 `status === 'failed'`，于是第一次抓取失败就把前端
+// 拆停并报成 failed，后端照跑不误、真正的报告再也没人收。
+export function resolveStreamTerminal(backendEvent, status, eventStage) {
+  if (backendEvent === 'completed') return 'completed'
+  if (backendEvent === 'partial') return 'partial'
+  if (eventStage === 'crawl') return null
+  if (backendEvent === 'error' || status === 'failed') return 'failed'
+  return null
+}
+
 export function getRunStatusLabel(status) {
   return {
     pending: '等待开始',

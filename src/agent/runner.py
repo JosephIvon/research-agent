@@ -38,15 +38,16 @@ class ReActRunner:
     ):
         self.llm = llm_client
         self.workspace = workspace if workspace is not None else {}
-        self.tools = tools or build_default_tools(llm_client, self.workspace)
+        # TaskBudget（M6）：token+USD 双口径记账，真实 usage 优先；提供时
+        # 与 token_budget 参数并存（TaskBudget 更严的一方先生效）。
+        # 必须早于 build_default_tools 赋值——工具闭包要拿它给 extract_facts 记账。
+        self.budget = budget
+        self.tools = tools or build_default_tools(llm_client, self.workspace, budget=budget)
         self.max_steps = max_steps if max_steps is not None else config.AGENT_MAX_STEPS
         self.token_budget = token_budget if token_budget is not None else config.AGENT_TOKEN_BUDGET
         self.wall_clock_budget = (
             wall_clock_budget if wall_clock_budget is not None else config.AGENT_WALL_CLOCK_BUDGET
         )
-        # TaskBudget（M6）：token+USD 双口径记账，真实 usage 优先；提供时
-        # 与 token_budget 参数并存（TaskBudget 更严的一方先生效）
-        self.budget = budget
         self.on_step = on_step
 
     async def run(self, user_query: str, target_urls: Optional[List[str]] = None) -> AgentResult:

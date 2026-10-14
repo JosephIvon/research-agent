@@ -13,7 +13,8 @@ import {
   makeResearchRunId,
   mergeReportMeta,
   normalizeDeliverables,
-  resolveFrontendStage
+  resolveFrontendStage,
+  resolveStreamTerminal
 } from './researchTaskHelpers'
 
 const REPORT_INDEX_KEY = 'research_report_index'
@@ -175,7 +176,10 @@ function connectTaskSSE(runId, taskId, callbacks = {}, handlers = {}) {
 
       // partial = 预算超额收束：报告已产出但不完整。它必须和 completed 一样终止
       // 订阅并走完取报告的流程，否则前端会一直转圈等一个永远不会来的 completed。
-      if (backendEvent === 'completed' || backendEvent === 'partial' || status === 'failed') {
+      //
+      // 终态判定统一走 resolveStreamTerminal（本文件上方就写了这条规则）。
+      const terminalStatus = resolveStreamTerminal(backendEvent, status, stage)
+      if (terminalStatus) {
         cleanup()
         handlers.onComplete?.({
           runId,
@@ -185,7 +189,7 @@ function connectTaskSSE(runId, taskId, callbacks = {}, handlers = {}) {
           agentSteps,
           injectionFindings,
           injectionTotal,
-          status: status === 'failed' ? 'failed' : backendEvent,
+          status: terminalStatus,
           callbacks
         })
       }

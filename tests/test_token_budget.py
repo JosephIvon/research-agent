@@ -23,6 +23,19 @@ def test_price_for_matches_model_substring():
     assert default == price_for(None)
 
 
+def test_price_for_prefers_longest_matching_prefix():
+    """`gpt-4o-mini` 不能被更短的 `gpt-4o` 前缀吃掉。
+
+    表里 `gpt-4o` 的插入序在 `gpt-4o-mini` 之前，按插入序遍历会把 mini 的
+    估价读成 2.5/10（高 16.7 倍），USD 预算守卫随之提前约 17 倍触发。
+    """
+    assert price_for("gpt-4o-mini") == {"input": 0.15, "output": 0.60}
+    assert price_for("gpt-4o-mini-2024-07-18") == {"input": 0.15, "output": 0.60}
+    # 长前缀生效后，裸 gpt-4o 仍要命中原价，不能被 mini 抢走
+    assert price_for("gpt-4o") == {"input": 2.50, "output": 10.00}
+    assert price_for("openai/gpt-4o-mini") == {"input": 0.15, "output": 0.60}
+
+
 def test_record_accumulates_usage_by_model():
     budget = TaskBudget("t1", max_tokens=1000, max_usd=1.0)
     budget.record("minimax", "abab6.5s", prompt_tokens=100, completion_tokens=50)

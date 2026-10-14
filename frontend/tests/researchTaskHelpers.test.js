@@ -18,6 +18,7 @@ import {
   normalizeDeliverables,
   mapBackendStageField,
   resolveFrontendStage,
+  resolveStreamTerminal,
   STAGE_MAP
 } from '../src/stores/researchTaskHelpers.js'
 
@@ -245,4 +246,32 @@ test('mergeReportMeta never overwrites existing values with undefined', () => {
   )
   assert.equal(report.trace_url, 'https://trace.test/keep')
   assert.deepEqual(report.cost_report, { total_tokens: 9 })
+})
+
+test('resolveStreamTerminal ignores status="completed" on progress events', () => {
+  // 后端把 status 当**阶段进度**用，不是终态标志：crawl_complete /
+  // citation_check / artifact_ready / injection_detected 全都发 status="completed"。
+  // 按 status 判终态会让 SSE 在第一次 crawl_complete 就被拆掉，报告再也取不回来。
+  assert.equal(resolveStreamTerminal('agent_step', 'completed', 'agent'), null)
+  assert.equal(resolveStreamTerminal('crawl_complete', 'completed', 'crawl'), null)
+  assert.equal(resolveStreamTerminal('citation_check', 'completed', 'verify'), null)
+  assert.equal(resolveStreamTerminal('artifact_ready', 'completed', 'report_generate'), null)
+  assert.equal(resolveStreamTerminal('injection_detected', 'completed', 'report_generate'), null)
+  assert.equal(resolveStreamTerminal('agent_step', 'running', 'agent'), null)
+})
+
+test('resolveStreamTerminal terminates on the real terminal events', () => {
+  assert.equal(resolveStreamTerminal('completed', 'completed', 'completed'), 'completed')
+  assert.equal(resolveStreamTerminal('partial', 'partial', 'completed'), 'partial')
+  // 任务级失败：verify / workflow 两个阶段
+  assert.equal(resolveStreamTerminal('error', 'failed', 'workflow'), 'failed')
+  assert.equal(resolveStreamTerminal('error', 'failed', 'verify'), 'failed')
+})
+
+test('resolveStreamTerminal does not terminate on a per-competitor crawl error', () => {
+  // 单个竞品抓取失败时后端同样发 error + stage=crawl + status=failed
+  // （mvp_workflow._fetch_single_competitor），任务仍在继续。原判定只看
+  // status==='failed'，于是第一次抓取失败就把前端拆停并报成 failed，后端照跑
+  // 不误、真正的报告再也没人收。
+  assert.equal(resolveStreamTerminal('error', 'failed', 'crawl'), null)
 })

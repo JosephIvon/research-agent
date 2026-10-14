@@ -108,15 +108,45 @@ def test_login_is_never_throttled_by_the_global_backstop(limited_client):
         assert r.status_code != 429, f"登录接口在第 {i + 1} 次被限流了"
 
 
-def test_disabling_the_limiter_stops_all_of_it(auth_headers):
-    """关掉限流后连打也不会 429——这是运维开关的兜底保证。"""
+def test_disabling_the_limiter_stops_all_of_it(monkeypatch, auth_headers):
+    """关掉限流后连打也不会 429——这是运维开关的兜底保证。
+
+    必须把阈值压到极小，否则这条用例是**假绿**：用真实 RATE_LIMIT_PER_TOKEN
+    （120/min）打 8 次根本碰不到阈值，守卫拦没拦都看不出区别。守卫直连
+    `limiter.limiter.hit()` 会绕过 slowapi 的 `enabled` 标志，所以这里要能
+    在"真会触发 429"的条件下证明限流确实停住了。
+    """
+    monkeypatch.setattr(server, "_MCP_RATE_LIMIT", parse(TINY))
+    server.limiter.reset()
     server.limiter.enabled = False
     try:
         with TestClient(server.app) as client:  # /mcp 需要 lifespan（见 limited_client 注释）
             codes = [client.get("/mcp/", headers=auth_headers).status_code for _ in range(8)]
-            assert 429 not in codes
+            assert 429 not in codes, f"limiter.enabled=False 后期望完全不限流，实测 {codes}"
     finally:
         server.limiter.enabled = False
+        server.limiter.reset()
+
+
+def test_rate_limit_enabled_false_stops_the_mcp_guard(monkeypatch, auth_headers):
+    """运维把 RATE_LIMIT_ENABLED 关掉时，/mcp 守卫也必须跟着停。
+
+    守卫此前是无条件注册的模块级中间件，只有上面那层 SlowAPIMiddleware 看开关。
+    结果是设 RATE_LIMIT_ENABLED=false 后全站解除限流，唯独 /mcp 还按
+    RATE_LIMIT_PER_TOKEN 硬限——调试期无路可关，行为与配置项语义直接矛盾。
+    同样把阈值压到极小，保证这条不是碰巧够不着。
+    """
+    monkeypatch.setattr(server, "_MCP_RATE_LIMIT", parse(TINY))
+    monkeypatch.setattr(server, "RATE_LIMIT_ENABLED", False)
+    server.limiter.reset()
+    server.limiter.enabled = True
+    try:
+        with TestClient(server.app) as client:
+            codes = [client.get("/mcp/", headers=auth_headers).status_code for _ in range(8)]
+            assert 429 not in codes, f"RATE_LIMIT_ENABLED=False 后期望完全不限流，实测 {codes}"
+    finally:
+        server.limiter.enabled = False
+        server.limiter.reset()
 
 
 def test_mcp_still_requires_authentication(limited_client):
