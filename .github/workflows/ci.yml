@@ -127,7 +127,12 @@ jobs:
           set -euo pipefail
           uv run --extra dev pytest tests/e2e/ \
             -m "not real_services" \
-            -v -rsx --strict-markers -p no:cacheprovider
+            -v -rsx --strict-markers -p no:cacheprovider \
+            --junitxml=pytest-report.xml || E2E_FAILED=1
+          if [ "${E2E_FAILED:-0}" = "1" ]; then
+            uv run python .github/scripts/parse_junit.py pytest-report.xml || true
+            exit 1
+          fi
         env:
           E2E_API_URL: http://localhost:8080
           E2E_FRONTEND_URL: http://localhost:3000
