@@ -18,6 +18,7 @@ import pytest
 
 from src.workflow.task_store import (
     RedisTaskStore,
+    TaskArtifact,
     TaskEvent,
     TaskEventType,
 )
@@ -165,8 +166,61 @@ async def test_listener_survives_unknown_payload_keys():
     await asyncio.sleep(SETTLE_SECONDS)
 
     assert len(delivered) == 1, (
-        f"带来源标记的跨进程消息未被正确解析/投递，实际收到 {len(delivered)} 条"
+        f"带来源标记的跨进程消息未被正确解析/投递，实际收到 {len(delivered)}"
     )
     assert delivered[0].id == 7
+
+    await store.close()
+
+
+# ---------------------------------------------------------------------------
+# CAS（WATCH 乐观锁）：并发读改写不得丢数据（M6）
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_concurrent_add_events_do_not_lose_writes():
+    """20 个并发 add_event：状态里的 events 必须一条不少。
+
+    旧实现（get→改→hset）在并发下后写覆盖先写——多 worker 部署必现丢事件。
+    """
+    server = fakeredis.FakeServer()
+    store = _make_store(server)
+    await store.create("task-cas", "query", {"report": True, "prd": False})
+
+    total = 20
+    await asyncio.gather(*[
+        store.add_event("task-cas", _event("task-cas", i)) for i in range(total)
+    ])
+
+    task = await store.get("task-cas")
+    assert len(task.events) == total, f"并发写丢了 {total - len(task.events)} 条事件"
+
+    stored = await store._client.lrange("task:task-cas:events", 0, -1)
+    assert len(stored) == total, "events list 与状态条数不一致"
+
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_update_and_add_event_keep_both_effects():
+    """update 与 add_event 同时打：两类写手的效果都必须保留。"""
+    server = fakeredis.FakeServer()
+    store = _make_store(server)
+    await store.create("task-cas2", "query", {"report": True, "prd": False})
+
+    await asyncio.gather(
+        store.update("task-cas2", quality_score=7.5, quality_grade="B"),
+        store.add_event("task-cas2", _event("task-cas2", 1)),
+        store.update("task-cas2", report_id="rep-1"),
+        store.set_artifact("task-cas2", "report", TaskArtifact(
+            artifact_type="report", content="c",
+        )),
+    )
+
+    task = await store.get("task-cas2")
+    assert task.quality_score == 7.5 and task.quality_grade == "B"
+    assert task.report_id == "rep-1"
+    assert len(task.events) == 1, "add_event 的效果被并发 update 覆盖"
+    assert "report" in task.artifacts, "set_artifact 的效果被并发写覆盖"
 
     await store.close()

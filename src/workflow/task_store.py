@@ -10,6 +10,10 @@ import json
 import logging
 
 import redis.asyncio as redis
+from redis.exceptions import WatchError
+
+# CAS（WATCH 乐观锁）最大重试次数：正常并发下 1-2 次即可成功
+CAS_MAX_RETRIES = 5
 
 from src.config.settings import REDIS_URL, TASK_STORE_BACKEND
 
@@ -428,10 +432,40 @@ class RedisTaskStore(PersistenceBackend):
             return None
         return TaskState.from_dict(json.loads(data))
 
-    async def update(self, task_id: str, **kwargs) -> Optional[TaskState]:
-        ts = await self.get(task_id)
-        if not ts:
-            return None
+    async def _cas_write(self, task_id: str, mutator) -> Optional[TaskState]:
+        """读-改-写带 WATCH 乐观锁：并发写者以数据版本互斥，输家重读重放。
+
+        旧实现 get→改→hset 是裸读改写：两个并发 add_event 都基于同一快照各写
+        一份，后写覆盖先写——事件与状态静默丢失（多 worker 部署必现）。
+        mutator 每次重试都作用于**最新**已提交快照。任务不存在返回 None；
+        重试耗尽仍冲突则放弃本次写并告警——比静默覆盖丢数据诚实。
+        """
+        client = await self._get_client()
+        key = self._state_key(task_id)
+        for _ in range(CAS_MAX_RETRIES):
+            async with client.pipeline() as pipe:
+                try:
+                    await pipe.watch(key)
+                    raw = await pipe.hget(key, "data")
+                    if raw is None:
+                        await pipe.unwatch()
+                        return None
+                    ts = TaskState.from_dict(json.loads(raw))
+                    mutator(ts)
+                    pipe.multi()
+                    pipe.hset(key, "data", json.dumps(ts.to_dict()))
+                    await pipe.execute()
+                    return ts
+                except WatchError:
+                    continue
+        logger.warning(
+            "task %s CAS 重试 %d 次仍冲突，放弃本次写（读侧仍看到最新已提交状态）",
+            task_id, CAS_MAX_RETRIES,
+        )
+        return None
+
+    @staticmethod
+    def _apply_update_fields(ts: TaskState, kwargs: Dict[str, Any]) -> None:
         if "status" in kwargs and kwargs["status"] is not None:
             ts.status = TaskStatus(kwargs["status"])
         if "current_stage" in kwargs:
@@ -452,35 +486,34 @@ class RedisTaskStore(PersistenceBackend):
             ts.quality_grade = kwargs["quality_grade"]
         if "missing_dimensions" in kwargs:
             ts.missing_dimensions = kwargs["missing_dimensions"] or []
-        client = await self._get_client()
-        await client.hset(self._state_key(task_id), "data", json.dumps(ts.to_dict()))
-        return ts
+
+    async def update(self, task_id: str, **kwargs) -> Optional[TaskState]:
+        def _mutate(ts: TaskState) -> None:
+            self._apply_update_fields(ts, kwargs)
+        return await self._cas_write(task_id, _mutate)
 
     async def add_event(self, task_id: str, event: TaskEvent) -> Optional[TaskState]:
-        ts = await self.get(task_id)
-        if not ts:
+        def _mutate(ts: TaskState) -> None:
+            ts.events.append(event)
+            ts.updated_at = datetime.now().isoformat(timespec="seconds")
+
+        ts = await self._cas_write(task_id, _mutate)
+        if ts is None:
             return None
-        ts.events.append(event)
-        ts.updated_at = datetime.now().isoformat(timespec="seconds")
         client = await self._get_client()
-        pipe = client.pipeline()
-        pipe.hset(self._state_key(task_id), "data", json.dumps(ts.to_dict()))
-        pipe.rpush(self._events_key(task_id), json.dumps(event.to_dict()))
-        await pipe.execute()
+        # events list 本身 rpush 原子追加；状态 JSON 里的 events 由 CAS 保证一致
+        await client.rpush(self._events_key(task_id), json.dumps(event.to_dict()))
         # 只在 publish 的载荷上标记来源，不写入存储：存储侧的结构保持向后兼容
         published = json.dumps({**event.to_dict(), "_origin": self._instance_id})
         await client.publish(self._channel(task_id), published)
         return ts
 
     async def set_artifact(self, task_id: str, key: str, artifact: TaskArtifact) -> Optional[TaskState]:
-        ts = await self.get(task_id)
-        if not ts:
-            return None
-        ts.artifacts[key] = artifact
-        ts.updated_at = datetime.now().isoformat(timespec="seconds")
-        client = await self._get_client()
-        await client.hset(self._state_key(task_id), "data", json.dumps(ts.to_dict()))
-        return ts
+        def _mutate(ts: TaskState) -> None:
+            ts.artifacts[key] = artifact
+            ts.updated_at = datetime.now().isoformat(timespec="seconds")
+
+        return await self._cas_write(task_id, _mutate)
 
     async def list_tasks(self) -> List[TaskState]:
         client = await self._get_client()
