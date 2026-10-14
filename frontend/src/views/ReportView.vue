@@ -79,11 +79,18 @@
               </div>
               <div>
                 <dt>费用估算（USD）</dt>
-                <dd>≈ ${{ costReport.estimated_usd ?? costReport.estimated ?? '—' }}（估算）</dd>
+                <dd>{{ formatCostUsd(costReport) }}</dd>
               </div>
               <div>
                 <dt>模型调用次数</dt>
                 <dd>{{ formatCostNumber(costReport.calls) }}</dd>
+              </div>
+              <div>
+                <dt>计量口径</dt>
+                <dd>
+                  <el-tag v-if="costReport.estimated" type="warning" size="small">估算值</el-tag>
+                  <el-tag v-else type="success" size="small">API 真值</el-tag>
+                </dd>
               </div>
             </dl>
           </section>
@@ -146,13 +153,31 @@
 
         <section class="report-content">
           <el-alert
+            v-if="reportIncomplete"
+            class="injection-alert"
+            type="warning"
+            show-icon
+            :closable="false"
+            title="本次结果不完整"
+            description="任务触发了预算上限并提前收束，以下内容可能未覆盖全部竞品或维度。如需完整报告，请提高预算后重跑。"
+          />
+
+          <el-alert
             v-if="injectionFindingsCount > 0"
             class="injection-alert"
             type="warning"
             show-icon
             :closable="false"
             :title="`已检测并净化 ${injectionFindingsCount} 处来源注入痕迹`"
-          />
+          >
+            <template v-if="injectionSources.length" #default>
+              <ul class="injection-sources">
+                <li v-for="item in injectionSources" :key="item.url + item.finding_count">
+                  来源 {{ item.url || '（报告正文回声）' }}：{{ item.finding_count }} 处<template v-if="item.high_count">（高危 {{ item.high_count }}）</template>
+                </li>
+              </ul>
+            </template>
+          </el-alert>
 
           <div class="title-panel">
             <div>
@@ -347,6 +372,12 @@ const hasPRD = computed(() => Boolean(report.value?.prd))
 const competitorCount = computed(() => getReportCompetitorCount(report.value || {}))
 const sourceRows = computed(() => buildSourceRows(report.value || {}))
 const injectionFindingsCount = computed(() => Number(report.value?.injection_findings_count) || 0)
+// SSE 实时收集的注入发现带来源 URL，终态计数只有一个总数。这里展示来源维度。
+const injectionSources = computed(() => {
+  const list = report.value?.injection_findings
+  return Array.isArray(list) ? list : []
+})
+const reportIncomplete = computed(() => Boolean(report.value?.incomplete))
 const traceUrl = computed(() => report.value?.trace_url || '')
 const costReport = computed(() => report.value?.cost_report || null)
 const activeArtifactContent = computed(() => {
@@ -384,6 +415,14 @@ async function loadReport() {
 function formatCostNumber(value) {
   const num = Number(value)
   return Number.isFinite(num) ? num.toLocaleString() : '—'
+}
+
+// 费用只渲染 estimated_usd。此前写成 `estimated_usd ?? estimated ?? '—'`，
+// estimated 是个布尔标记（true = 本轮只有估算值），一旦金额缺失就会把
+// `true` 直接当美元渲染出来，显示成 "$true"。口径标签单独一行说明。
+function formatCostUsd(report) {
+  const usd = Number(report?.estimated_usd)
+  return Number.isFinite(usd) ? `≈ $${usd}` : '—'
 }
 
 function openTrace() {
@@ -739,6 +778,14 @@ onUnmounted(() => {
 
 .injection-alert {
   border-radius: 8px;
+}
+
+.injection-sources {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.7;
+  word-break: break-all;
 }
 
 .feedback-buttons {

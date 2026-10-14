@@ -129,6 +129,9 @@ const STAGE_MAP = {
   report_generate: 'report',
   prd_generate: 'prd',
   completed: 'finish',
+  // 阶段取事件自带的 stage（crawl 或 report_generate），见 handleMessage 里的特判
+  injection_detected: null,
+  partial: 'finish',
   artifact_ready: null,  // handled via report_generate / prd_generate
   error: 'finish'
 }
@@ -139,7 +142,8 @@ function mapBackendStage(backendStage) {
 
 function getEventType(backendEvent, status) {
   if (status === 'failed' || status === 'error') return 'error'
-  if (status === 'completed' || backendEvent === 'completed') return 'success'
+  // partial 走 success：报告确实产出了，只是被预算截断。不完整的细节由 run.status 承载。
+  if (status === 'completed' || backendEvent === 'completed' || backendEvent === 'partial') return 'success'
   if (status === 'running') return 'running'
   return 'running'
 }
@@ -149,6 +153,10 @@ function connectTaskSSE(runId, taskId, callbacks = {}, handlers = {}) {
   let reportId = null
   let prdContent = null
   let agentSteps = []
+  // L5 注入净化提示：后端边爬边发 injection_detected，此前前端压根没订阅这个事件，
+  // 计数只能等任务跑完从终态里一次性读。用户全程看不到"来源 X 检测到 N 处注入痕迹"。
+  let injectionFindings = []
+  let injectionTotal = 0
 
   function handleMessage(event) {
     try {
@@ -165,6 +173,21 @@ function connectTaskSSE(runId, taskId, callbacks = {}, handlers = {}) {
         }
       }
 
+      // 同理：注入发现必须在阶段映射之前收集，否则 mapBackendStage 返回 null 时
+      // 会连着 return 掉，这些数据就永远丢了。终态字段只是兜底，不是实时来源。
+      if (backendEvent === 'injection_detected' && payload) {
+        const count = Number(payload.finding_count)
+        if (Number.isFinite(count) && count > 0) {
+          injectionFindings.push({
+            url: payload.url || '',
+            finding_count: count,
+            high_count: Number(payload.high_count) || 0,
+            rule_ids: Array.isArray(payload.rule_ids) ? payload.rule_ids : []
+          })
+          injectionTotal += count
+        }
+      }
+
       // Capture agent reasoning steps (keep the latest 50 to bound memory)
       let agentPatch = null
       let runMessage = message
@@ -175,12 +198,16 @@ function connectTaskSSE(runId, taskId, callbacks = {}, handlers = {}) {
       }
 
       const frontendStage = mapBackendStage(backendEvent)
+        // injection_detected 在爬取和成文两个阶段都会发，阶段得看事件自己带的 stage
+        || (backendEvent === 'injection_detected' ? mapBackendStage(stage) : null)
       if (!frontendStage) return
 
       const eventType = getEventType(backendEvent, status)
       emitRunEvent(runId, frontendStage, eventType, runMessage, callbacks, agentPatch)
 
-      if (backendEvent === 'completed' || status === 'failed') {
+      // partial = 预算超额收束：报告已产出但不完整。它必须和 completed 一样终止
+      // 订阅并走完取报告的流程，否则前端会一直转圈等一个永远不会来的 completed。
+      if (backendEvent === 'completed' || backendEvent === 'partial' || status === 'failed') {
         cleanup()
         handlers.onComplete?.({
           runId,
@@ -188,7 +215,9 @@ function connectTaskSSE(runId, taskId, callbacks = {}, handlers = {}) {
           reportId,
           prdContent,
           agentSteps,
-          status: status === 'failed' ? 'failed' : 'completed',
+          injectionFindings,
+          injectionTotal,
+          status: status === 'failed' ? 'failed' : backendEvent,
           callbacks
         })
       }
@@ -201,7 +230,7 @@ function connectTaskSSE(runId, taskId, callbacks = {}, handlers = {}) {
     'task_created', 'decompose', 'search', 'crawl_start',
     'crawl_progress', 'agent_step', 'crawl_complete', 'extract', 'verify',
     'report_generate', 'prd_generate', 'artifact_ready',
-    'completed', 'error'
+    'injection_detected', 'partial', 'completed', 'error'
   ]
 
   function cleanup() {
@@ -264,9 +293,11 @@ export const useResearchStore = defineStore('research', () => {
     return cacheRun(next)
   }
 
-  async function finalizeAsyncRun({ runId, taskId, reportId, prdContent, agentSteps = [], status, callbacks }) {
+  async function finalizeAsyncRun({ runId, taskId, reportId, prdContent, agentSteps = [], injectionFindings = [], injectionTotal = 0, status, callbacks }) {
     const run = getResearchRun(runId)
-    const finalStatus = status === 'failed' ? 'failed' : 'completed'
+    // partial 不等于 failed：报告已产出，只是被预算截断。把它归到 completed 会
+    // 让用户以为这是完整结果；归到 failed 又会白白丢掉已经写好的报告。
+    const finalStatus = status === 'failed' ? 'failed' : (status === 'partial' ? 'partial' : 'completed')
 
     if (finalStatus === 'failed') {
       const failedRun = updateResearchRun(runId, {
@@ -336,14 +367,21 @@ export const useResearchStore = defineStore('research', () => {
       }
 
       applyTraceExtras(report, task)
+      // SSE 实时收集到的注入发现优先于终态计数：终态那个数是任务跑完才落库的，
+      // 只有它的话用户全程看不到提示。两者取实时值，终态值仅在实时为空时兜底。
+      if (injectionFindings.length) {
+        report.injection_findings = injectionFindings
+        report.injection_findings_count = injectionTotal
+      }
+      report.incomplete = finalStatus === 'partial'
       cacheReport(report)
       const finalRun = updateResearchRun(runId, {
-        status: 'completed',
+        status: finalStatus,
         report_id: report.id,
         agent_steps: agentSteps,
         completed_at: new Date().toISOString()
       })
-      currentTask.value = { id: report.id, status: 'completed', result: report }
+      currentTask.value = { id: report.id, status: finalStatus, result: report }
       callbacks.onComplete?.(report, finalRun)
       return finalRun
     } catch (error) {
