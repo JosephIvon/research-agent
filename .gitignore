@@ -142,3 +142,5 @@ searxng-data/
 
 # pytest tmpdirs (per-user, e.g. pytest-of-<user>/)
 pytest-of-*/
+
+evals/results/

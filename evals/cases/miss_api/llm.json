@@ -1,0 +1,14 @@
+{
+  "extract_sequence": [
+    [
+      {"key": "pricing", "value": "专业版 99 元/月。", "confidence": 0.9},
+      {"key": "features", "value": ["看板", "自动化规则"], "confidence": 0.9},
+      {"key": "models", "value": ["web", "mobile"], "confidence": 0.9},
+      {"key": "target_users", "value": "中小团队", "confidence": 0.9},
+      {"key": "integrations", "value": "支持主流日历集成", "confidence": 0.9},
+      {"key": "limitations", "value": "API 调用定价未公开", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价自动化好用", "confidence": 0.9}
+    ]
+  ],
+  "report": "## 定价\n\nFlowBoard 专业版 99 元/月 {{cite:saas:0}}。\n\n## 功能\n\n提供看板与自动化规则。\n\n## 目标用户\n\n面向中小团队。\n\n## 限制\n\nAPI 调用定价未公开披露，页面上没有给出任何 API 计费信息，需联系销售确认。\n"
+}

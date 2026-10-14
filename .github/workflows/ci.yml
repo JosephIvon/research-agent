@@ -68,10 +68,15 @@ jobs:
           {
             echo "SEARXNG_SECRET=${searxng_secret}"
             echo "JWT_SECRET_KEY=${jwt_secret_key}"
+            # 容器内 APP_ENV=production，settings 会对缺失/占位 LLM 密钥 fail-closed。
+            # CI 拿不到真实配额，改用 fake provider 零密钥启动——
+            # 这样 /health/ready 能真正校验配置链路，而不是靠放宽生产判据来迁就 CI。
+            echo "LLM_PROVIDER=fake"
           } > .env
           echo "SEARXNG_SECRET=${searxng_secret}" >> "$GITHUB_ENV"
           echo "JWT_SECRET_KEY=${jwt_secret_key}" >> "$GITHUB_ENV"
-          echo "Generated ephemeral SEARXNG_SECRET / JWT_SECRET_KEY (.env stays untracked)"
+          echo "LLM_PROVIDER=fake" >> "$GITHUB_ENV"
+          echo "Generated ephemeral SEARXNG_SECRET / JWT_SECRET_KEY; LLM_PROVIDER=fake (.env stays untracked)"
 
       - name: Start SearXNG and Redis (docker compose v2, waits for healthchecks)
         shell: bash
@@ -87,24 +92,28 @@ jobs:
           docker compose up -d research-agent
           ready=0
           for i in $(seq 1 60); do
-            if curl -fsS --max-time 5 http://localhost:8080/health >/tmp/backend-health.json 2>/dev/null; then
+            if curl -fsS --max-time 5 http://localhost:8080/health/ready >/tmp/backend-health.json 2>/dev/null; then
               ready=1
               break
             fi
-            echo "waiting for backend health ... attempt ${i}/60"
+            echo "waiting for backend readiness ... attempt ${i}/60"
             sleep 2
           done
-          echo "--- /health payload ---"
+          echo "--- /health/ready payload ---"
           cat /tmp/backend-health.json 2>/dev/null || echo "(no payload)"
           if [ "${ready}" -ne 1 ]; then
-            echo "::error::Backend never became healthy; the E2E contract suite would only skip."
+            # 就绪探针失败时把 /health 一并打出来：前者说明"不能干活"，后者说明"活着但依赖有问题"，
+            # 两者指向完全不同的排查方向。
+            echo "::error::Backend never became ready; the E2E contract suite would only skip."
+            echo "--- /health payload (liveness) ---"
+            curl -fsS --max-time 5 http://localhost:8080/health 2>/dev/null || echo "(no payload)"
             docker compose ps || true
             docker compose logs --tail 200 research-agent || true
             exit 1
           fi
-          # Post-loop assertion: under `set -e` this fails the job if /health is not green.
-          curl -fsS --max-time 5 http://localhost:8080/health >/dev/null
-          echo "backend is healthy"
+          # Post-loop assertion: under `set -e` this fails the job if readiness is not green.
+          curl -fsS --max-time 5 http://localhost:8080/health/ready >/dev/null
+          echo "backend is ready"
 
       - name: Run E2E contract tests
         shell: bash
@@ -226,6 +235,26 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker compose down -v
+
+  evals:
+    name: Offline evals (deterministic, gate)
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+      - name: Install dependencies
+        run: uv sync --extra dev
+      # 阶段一门禁：注入通过率=1.00 与全量 case 完成是硬门槛；
+      # 质量指标（引用三率/维度覆盖）与 baselines/v1.json 比对，回退只告警。
+      # 夹具（含 llm.json）带 sha256 清单，被篡改即失败。
+      - name: Run evals with gate
+        run: uv run --extra dev python -m evals.runner --gate
 
   docker-build:
     name: Docker build

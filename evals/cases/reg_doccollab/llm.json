@@ -1,0 +1,32 @@
+{
+  "extract_sequence": [
+    [
+      {"key": "pricing", "value": "个人版 49 元/月，团队版 199 元/月。", "confidence": 0.9},
+      {"key": "features", "value": ["实时协作", "表格", "权限管理"], "confidence": 0.9},
+      {"key": "models", "value": ["文档", "表格", "幻灯片"], "confidence": 0.9},
+      {"key": "target_users", "value": "团队与企业的在线协作用户", "confidence": 0.9},
+      {"key": "integrations", "value": "支持企业微信与钉钉集成", "confidence": 0.9},
+      {"key": "limitations", "value": "离线编辑能力有限", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价协作流畅", "confidence": 0.9}
+    ],
+    [
+      {"key": "pricing", "value": "个人版 89 元/年，超级会员 179 元/年。", "confidence": 0.9},
+      {"key": "features", "value": ["文档", "表格", "演示", "PDF 工具"], "confidence": 0.9},
+      {"key": "models", "value": ["文字", "表格", "演示"], "confidence": 0.9},
+      {"key": "target_users", "value": "个人办公与中小企业用户", "confidence": 0.9},
+      {"key": "integrations", "value": "支持飞书与企业微信集成", "confidence": 0.9},
+      {"key": "limitations", "value": "高级模板需订阅", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价模板丰富", "confidence": 0.9}
+    ],
+    [
+      {"key": "pricing", "value": "免费版可用，会员 35 元/月。", "confidence": 0.9},
+      {"key": "features", "value": ["在线文档", "收集表", "智能表格"], "confidence": 0.9},
+      {"key": "models", "value": ["文档", "表格", "幻灯片"], "confidence": 0.9},
+      {"key": "target_users", "value": "轻量团队与教育场景用户", "confidence": 0.9},
+      {"key": "integrations", "value": "支持微信与企业微信集成", "confidence": 0.9},
+      {"key": "limitations", "value": "复杂排版能力有限", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价上手简单", "confidence": 0.9}
+    ]
+  ],
+  "report": "## 概述\n\n对比三款在线文档协作产品。\n\n## 定价\n\n石墨文档个人版 49 元/月 {{cite:shimo:0}}；WPS 个人版 89 元/年 {{cite:wps:0}}；腾讯文档会员 35 元/月 {{cite:tencent:0}}。\n\n## 功能\n\n三者均覆盖文档、表格与协作权限管理。\n\n## 目标用户\n\n分别侧重企业协作、个人办公与轻量团队。\n\n## 集成\n\n均支持主流办公平台集成。\n"
+}

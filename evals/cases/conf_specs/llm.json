@@ -1,0 +1,23 @@
+{
+  "extract_sequence": [
+    [
+      {"key": "pricing", "value": "按 token 计费，输入 0.5 元/百万。", "confidence": 0.9},
+      {"key": "features", "value": ["函数调用", "流式输出"], "confidence": 0.9},
+      {"key": "models", "value": "上下文窗口 32k tokens。", "confidence": 0.9},
+      {"key": "target_users", "value": "应用开发者", "confidence": 0.9},
+      {"key": "integrations", "value": "提供 OpenAI 兼容 API", "confidence": 0.9},
+      {"key": "limitations", "value": "长文档需自行切分", "confidence": 0.9},
+      {"key": "reviews", "value": "开发者评价延迟稳定", "confidence": 0.9}
+    ],
+    [
+      {"key": "pricing", "value": "按 token 计费，输入 0.5 元/百万。", "confidence": 0.9},
+      {"key": "features", "value": ["函数调用", "流式输出"], "confidence": 0.9},
+      {"key": "models", "value": "长上下文版本 128k tokens。", "confidence": 0.9},
+      {"key": "target_users", "value": "社区讨论参与者", "confidence": 0.9},
+      {"key": "integrations", "value": "提供 OpenAI 兼容 API", "confidence": 0.9},
+      {"key": "limitations", "value": "口径可能与官方文档滞后", "confidence": 0.9},
+      {"key": "reviews", "value": "社区反馈讨论热烈", "confidence": 0.9}
+    ]
+  ],
+  "report": "## 模型\n\n官方文档口径上下文为 32k tokens {{cite:docsA:2}}；社区讨论口径为 128k tokens {{cite:forumB:2}}。两个口径并存，需以官方文档为准。\n\n## 定价\n\n两页的计价描述一致，按 token 计费。\n"
+}

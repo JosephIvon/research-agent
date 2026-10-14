@@ -1,0 +1,14 @@
+{
+  "extract_sequence": [
+    [
+      {"key": "pricing", "value": "团队版 59 元/月。", "confidence": 0.9},
+      {"key": "features", "value": ["任务看板", "甘特图"], "confidence": 0.9},
+      {"key": "models", "value": ["web"], "confidence": 0.9},
+      {"key": "target_users", "value": "项目团队", "confidence": 0.9},
+      {"key": "integrations", "value": "支持企业微信集成", "confidence": 0.9},
+      {"key": "limitations", "value": "企业版价格未公开", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价甘特图实用", "confidence": 0.9}
+    ]
+  ],
+  "report": "## 定价\n\nTaskHive 团队版 59 元/月 {{cite:tool1:0}}。\n\n## 功能\n\n提供任务看板与甘特图。\n\n## 目标用户\n\n面向项目团队。\n\n## 补充\n\n企业版价格未公开，官网仅留联系方式，需另行咨询。\n"
+}

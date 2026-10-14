@@ -1,0 +1,42 @@
+{
+  "extract_sequence": [
+    [
+      {"key": "pricing", "value": "1 核 2G 入门款 19 元/月。", "confidence": 0.9},
+      {"key": "features", "value": ["快照", "镜像"], "confidence": 0.9},
+      {"key": "models", "value": ["shared-v2"], "confidence": 0.9},
+      {"key": "target_users", "value": "个人开发者", "confidence": 0.9},
+      {"key": "integrations", "value": "提供完整 API", "confidence": 0.9},
+      {"key": "limitations", "value": "入门款带宽受限", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价性价比高", "confidence": 0.9}
+    ],
+    [
+      {"key": "pricing", "value": "1 核 2G 入门款 21 元/月。", "confidence": 0.9},
+      {"key": "features", "value": ["快照", "备份"], "confidence": 0.9},
+      {"key": "models", "value": ["basic"], "confidence": 0.9},
+      {"key": "target_users", "value": "学生开发者", "confidence": 0.9},
+      {"key": "integrations", "value": "提供 CLI 工具", "confidence": 0.9},
+      {"key": "limitations", "value": "不支持按秒计费", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价控制台清晰", "confidence": 0.9}
+    ],
+    [
+      {"key": "pricing", "value": "1 核 2G 入门款 25 元/月。", "confidence": 0.9},
+      {"key": "features", "value": ["监控面板"], "confidence": 0.9},
+      {"key": "models", "value": ["standard"], "confidence": 0.9},
+      {"key": "target_users", "value": "小团队", "confidence": 0.9},
+      {"key": "integrations", "value": "提供 SDK", "confidence": 0.9},
+      {"key": "limitations", "value": "镜像较少", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价稳定", "confidence": 0.9}
+    ]
+  ],
+  "report": "## 定价\n\nRavel 19 元/月 {{cite:ra:0}}，Rbit 21 元/月 {{cite:rb:0}}，Rcircle 25 元/月 {{cite:rc:0}}。\n\n## 功能\n\n均提供快照能力，细节各有差异。\n\n## 目标用户\n\n均面向开发者与小团队。\n",
+  "react": [
+    {"type": "tool_call", "name": "web_search", "arguments": "{\"query\": \"云主机 入门 价格 对比\", \"num_results\": 5}"},
+    {"type": "tool_calls", "calls": [
+      {"type": "tool_call", "name": "fetch_site", "arguments": "{\"url\": \"{{url:ra}}\", \"max_pages\": 1}"},
+      {"type": "tool_call", "name": "fetch_site", "arguments": "{\"url\": \"{{url:rb}}\", \"max_pages\": 1}"}
+    ]},
+    {"type": "tool_call", "name": "extract_facts", "arguments": "{\"url\": \"{{url:ra}}\"}"},
+    {"type": "tool_call", "name": "extract_facts", "arguments": "{\"url\": \"{{url:rb}}\"}"},
+    "对比结论：Ravel 1 核 2G 为 19 元/月 {{cite:ra:0}}，Rbit 为 21 元/月 {{cite:rb:0}}；两家均面向开发者，仅对比了摘要最相关的两家。"
+  ]
+}

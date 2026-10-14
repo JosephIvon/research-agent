@@ -1,0 +1,23 @@
+{
+  "extract_sequence": [
+    [
+      {"key": "pricing", "value": "1 核 2G 入门款 19 元/月。", "confidence": 0.9},
+      {"key": "features", "value": ["快照", "镜像", "弹性伸缩"], "confidence": 0.9},
+      {"key": "models", "value": ["shared-v2", "dedicated-v4"], "confidence": 0.9},
+      {"key": "target_users", "value": "个人开发者与初创团队", "confidence": 0.9},
+      {"key": "integrations", "value": "提供完整 API", "confidence": 0.9},
+      {"key": "limitations", "value": "入门款带宽受限", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价性价比高", "confidence": 0.9}
+    ],
+    [
+      {"key": "pricing", "value": "1 核 2G 入门款 23 元/月。", "confidence": 0.9},
+      {"key": "features", "value": ["快照", "备份", "监控面板"], "confidence": 0.9},
+      {"key": "models", "value": ["basic", "standard"], "confidence": 0.9},
+      {"key": "target_users", "value": "学生与个人开发者", "confidence": 0.9},
+      {"key": "integrations", "value": "提供 CLI 工具", "confidence": 0.9},
+      {"key": "limitations", "value": "不支持按秒计费", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价控制台清晰", "confidence": 0.9}
+    ]
+  ],
+  "report": "## 定价\n\nCloudX 1 核 2G 为 19 元/月 {{cite:cloudx:0}}，VmHub 同规格为 23 元/月 {{cite:vmhub:0}}。\n\n## 模型规格\n\n两家入门款均为共享型，高配有独享型。\n\n## 目标用户\n\n均面向个人开发者与学生群体。\n"
+}

@@ -1,0 +1,14 @@
+{
+  "extract_sequence": [
+    [
+      {"key": "pricing", "value": "专业版 59 元/月，企业版联系销售。", "confidence": 0.9},
+      {"key": "features", "value": ["流水线", "制品库", "环境管理"], "confidence": 0.9},
+      {"key": "models", "value": ["runner-2c", "runner-4c"], "confidence": 0.9},
+      {"key": "target_users", "value": "中小研发团队", "confidence": 0.9},
+      {"key": "integrations", "value": "支持 Git 与主流代码托管平台", "confidence": 0.9},
+      {"key": "limitations", "value": "不支持私有集群部署", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价部署简单", "confidence": 0.9}
+    ]
+  ],
+  "report": "## 定价\n\ndevkit 专业版 59 元/月 {{cite:devkit:0}}。\n\n## 功能\n\n提供流水线、制品库与环境管理。\n\n## 限制\n\n不支持私有集群部署。\n\n## 评价\n\n用户评价部署简单、上手快。\n"
+}

@@ -1,0 +1,23 @@
+{
+  "extract_sequence": [
+    [
+      {"key": "pricing", "value": "专业版 39 元/月。", "confidence": 0.9},
+      {"key": "features", "value": ["双向链接", "白板"], "confidence": 0.9},
+      {"key": "models", "value": ["web", "mobile"], "confidence": 0.9},
+      {"key": "target_users", "value": "知识管理者", "confidence": 0.9},
+      {"key": "integrations", "value": "支持 Webhook", "confidence": 0.9},
+      {"key": "limitations", "value": "协作人数有限", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价链接体验好", "confidence": 0.9}
+    ],
+    [
+      {"key": "pricing", "value": "专业版 45 元/月。", "confidence": 0.9},
+      {"key": "features", "value": ["多级目录", "标签"], "confidence": 0.9},
+      {"key": "models", "value": ["web"], "confidence": 0.9},
+      {"key": "target_users", "value": "团队知识库用户", "confidence": 0.9},
+      {"key": "integrations", "value": "支持日历集成", "confidence": 0.9},
+      {"key": "limitations", "value": "导入格式支持有限", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价目录清晰", "confidence": 0.9}
+    ]
+  ],
+  "report": "## 定价\n\nNoteA 专业版 39 元/月 {{cite:good:0}}，NoteB 专业版 45 元/月 {{cite:poison:0}}。\n\n## 功能\n\n前者主打双向链接与白板，后者主打多级目录与标签。\n"
+}

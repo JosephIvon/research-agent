@@ -1,0 +1,23 @@
+{
+  "extract_sequence": [
+    [
+      {"key": "pricing", "value": "Pro 20 美元/月，Business 40 美元/月。", "confidence": 0.9},
+      {"key": "features", "value": ["代码补全", "仓库级上下文", "终端命令生成"], "confidence": 0.9},
+      {"key": "models", "value": ["sonnet-4", "gpt-5"], "confidence": 0.9},
+      {"key": "target_users", "value": "专业开发者与团队", "confidence": 0.9},
+      {"key": "integrations", "value": "支持主流 IDE 插件", "confidence": 0.9},
+      {"key": "limitations", "value": "高级模型用量有配额", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价补全准确", "confidence": 0.9}
+    ],
+    [
+      {"key": "pricing", "value": "Pro 15 美元/月。", "confidence": 0.9},
+      {"key": "features", "value": ["多文件编辑", "智能问答"], "confidence": 0.9},
+      {"key": "models", "value": ["doubao-pro", "deepseek-v3"], "confidence": 0.9},
+      {"key": "target_users", "value": "中文开发者", "confidence": 0.9},
+      {"key": "integrations", "value": "支持 VS Code 插件", "confidence": 0.9},
+      {"key": "limitations", "value": "暂不支持本地模型", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价响应快", "confidence": 0.9}
+    ]
+  ],
+  "report": "## 定价\n\nCursorX Pro 20 美元/月 {{cite:cursorx:0}}，Trae Pro 15 美元/月 {{cite:trae:0}}。\n\n## 功能\n\n两者都提供补全与对话能力，CursorX 额外覆盖终端命令生成。\n\n## 模型\n\n分别接入海外与国产模型系列。\n\n## 限制\n\n前者有用量配额，后者暂不支持本地模型。\n"
+}

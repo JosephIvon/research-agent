@@ -1,0 +1,23 @@
+{
+  "extract_sequence": [
+    [
+      {"key": "pricing", "value": "标准版 $10/月。", "confidence": 0.9},
+      {"key": "features", "value": ["任务管理", "日历同步"], "confidence": 0.9},
+      {"key": "models", "value": ["web", "mobile"], "confidence": 0.9},
+      {"key": "target_users", "value": "个人用户与小团队", "confidence": 0.9},
+      {"key": "integrations", "value": "支持日历与邮件集成", "confidence": 0.9},
+      {"key": "limitations", "value": "免费版项目数受限", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价界面清爽", "confidence": 0.9}
+    ],
+    [
+      {"key": "pricing", "value": "年付方案 $99/年。", "confidence": 0.9},
+      {"key": "features", "value": ["任务管理", "日历同步"], "confidence": 0.9},
+      {"key": "models", "value": ["web"], "confidence": 0.9},
+      {"key": "target_users", "value": "测评读者与个人用户", "confidence": 0.9},
+      {"key": "integrations", "value": "支持日历集成", "confidence": 0.9},
+      {"key": "limitations", "value": "价格口径可能与官网不同步", "confidence": 0.9},
+      {"key": "reviews", "value": "作者评价性价比高", "confidence": 0.9}
+    ]
+  ],
+  "report": "## 定价\n\n官网口径为 $10/月 {{cite:official:0}}；第三方测评披露的年付口径为 $99/年 {{cite:blog:0}}。两个口径并存，需以官网实时价格为准。\n\n## 功能\n\n两页对功能描述一致，均为任务管理与日历同步。\n"
+}

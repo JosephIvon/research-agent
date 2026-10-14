@@ -1,0 +1,14 @@
+{
+  "extract_sequence": [
+    [
+      {"key": "pricing", "value": "团队版 29 元/月。", "confidence": 0.9},
+      {"key": "features", "value": ["看板", "泳道"], "confidence": 0.9},
+      {"key": "models", "value": ["web", "mobile"], "confidence": 0.9},
+      {"key": "target_users", "value": "敏捷团队", "confidence": 0.9},
+      {"key": "integrations", "value": "支持 Git 集成", "confidence": 0.9},
+      {"key": "limitations", "value": "报表功能较弱", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价界面直观", "confidence": 0.9}
+    ]
+  ],
+  "report": "## 定价\n\nKbA 团队版 29 元/月 {{cite:good:0}}。\n\n## 功能\n\n提供看板与泳道视图。\n\n## 补充\n\n对比站点 KbB 因包含大量注入指令被安全策略拦截，未纳入对比。\n"
+}
