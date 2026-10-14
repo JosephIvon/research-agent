@@ -25,6 +25,7 @@ BASELINE_VERSION = "v1.1"
 DEFAULT_BASELINE = BASELINE_DIR / f"{BASELINE_VERSION}.json"
 
 from evals.fixture_source import load_manifest, update_fixture_digests  # noqa: E402
+from evals.metrics import DELIVERED_STATUSES  # noqa: E402
 
 
 # --------------------------------------------------------------------------
@@ -324,12 +325,18 @@ def gate_check(summary: Dict[str, Any], case_results: List[Dict[str, Any]],
     failures = []
 
     if summary.get("completion_rate", 0) != 1.0:
-        bad = [c["id"] for c in case_results if c["status"] != "completed"]
-        failures.append(f"存在未完成的 case（{summary.get('completion_rate')}）: {', '.join(bad)}")
+        bad = [c["id"] for c in case_results if c.get("status") not in DELIVERED_STATUSES]
+        failures.append(f"存在未交付报告的 case（{summary.get('completion_rate')}）: {', '.join(bad)}")
 
     injection_rate = summary.get("injection_pass_rate")
     if injection_rate is not None and injection_rate != 1.0:
         failures.append(f"注入通过率 {injection_rate} < 1.00（硬门槛）")
+
+    # 预算截断**不红门禁**（报告确实交付了），但必须喊出来：只看
+    # completion_rate=1.00 会把"一批半截报告"显示成全绿。
+    if summary.get("truncation_rate"):
+        ids = [c["id"] for c in case_results if c.get("status") == "partial"]
+        print(f"[gate][提示] {len(ids)} 个 case 被预算截断并以 partial 交付: {', '.join(ids)}")
 
     # 软性趋势提示：不红，但必须喊出来
     if baseline:
