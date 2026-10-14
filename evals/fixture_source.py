@@ -73,6 +73,21 @@ class FixtureSearch:
         return self.results[: num_results or len(self.results)]
 
 
+def _fixture_bytes(path: Path) -> bytes:
+    """归一化后的夹具字节：去 UTF-8 BOM + CRLF→LF。
+
+    摘要必须跨平台一致：Windows 工作区常带 BOM/CRLF（PowerShell 写文件、
+    git autocrlf），Linux CI checkout 是 LF——直接哈希原始字节会让防篡改
+    校验在不同平台互相误伤（首轮 CI 实测踩坑：本地全绿、CI 全红）。
+    """
+    raw = path.read_bytes()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw  # 二进制夹具原样参与哈希
+    return text.replace("\r\n", "\n").encode("utf-8")
+
+
 def load_manifest(verify_digests: bool = True) -> Dict[str, Any]:
     manifest_path = CASES_DIR / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -94,7 +109,7 @@ def verify_fixture_digests(manifest: Dict[str, Any]) -> List[str]:
         if not path.exists():
             problems.append(f"{rel_path}: 文件缺失")
             continue
-        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        actual = hashlib.sha256(_fixture_bytes(path)).hexdigest()
         if actual != expected:
             problems.append(f"{rel_path}: 摘要不匹配")
     return problems
@@ -110,7 +125,7 @@ def update_fixture_digests() -> Dict[str, str]:
         # 它和 HTML 夹具同属"评测输入"，摘要必须覆盖
         if path.is_file() and path.name != "manifest.json":
             digests[str(path.relative_to(CASES_DIR)).replace("\\", "/")] = \
-                hashlib.sha256(path.read_bytes()).hexdigest()
+                hashlib.sha256(_fixture_bytes(path)).hexdigest()
     manifest["fixture_digests"] = digests
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
