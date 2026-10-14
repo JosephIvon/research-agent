@@ -14,7 +14,7 @@ from src.agent.tool_specs import build_default_tools, generate_research_report_t
 from src.agent.tools import Tool, ToolRegistry
 from src.mcpserver import server as mcp_server
 
-# 方案文档 M5 要求的对外暴露面（docs/implementation-draft-2026-10.md 的 M5 节）。
+# MCP 对外暴露面（需求约定：web_search / fetch_site / generate_research_report 三个）。
 MCP_EXPECTED_TOOLS = {"web_search", "fetch_site", "generate_research_report"}
 
 # 刻意不对 MCP 暴露、但必须**显式**登记在这里的两个内部工具：它们读写 Runner 的

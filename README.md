@@ -62,7 +62,8 @@ evals/（离线评测 + CI 门禁）── 12 case 驱动真实工作流全链�
 | 跨 10 来源综合 | 10/10 来源被有效引用 |
 
 > 引用四指标只证明"未发现格式性造假"，不证明事实正确；"数据完整度"独立呈现并声明
-> 不衡量结论正确性。评测说明见 `evals/`，面试问答见 `docs/interview-faq.md`。
+> 不衡量结论正确性。评测口径与阈值见 `evals/`，逐项跑法见
+> [`docs/experiments/m7-gate-decision.md`](docs/experiments/m7-gate-decision.md)。
 
 ### 业务流程
 

@@ -57,7 +57,7 @@ All numbers are reproducible (commands below); sources: `evals/baselines/v1.1.js
 | ReAct comparison | 66.7% fewer pages fetched (6→2), citation metrics not degraded |
 | 10-source synthesis | 10/10 sources cited with valid evidence |
 
-> The four citation metrics prove "no format-level fabrication", not factual correctness; "data completeness" is presented separately and explicitly declared as not measuring correctness. See `evals/` for the harness and `docs/interview-faq.md` (Chinese) for details.
+> The four citation metrics prove "no format-level fabrication", not factual correctness; "data completeness" is presented separately and explicitly declared as not measuring correctness. See `evals/` for the harness and thresholds, and [`docs/experiments/m7-gate-decision.md`](docs/experiments/m7-gate-decision.md) for a worked decision on how each threshold was applied.
 
 ## Workflow
 
