@@ -3,12 +3,21 @@ E2E tests for the research agent - tests the full stack from API to workflow com
 
 These tests require the backend server to be running. Set E2E_API_URL and E2E_FRONTEND_URL
 environment variables if using non-default addresses.
+
+Two test intents, kept apart on purpose (see tests/e2e/conftest.py):
+
+* ``contract`` - health / task creation / SSE contract. Needs only a running
+  backend, no credentials. CI runs these on every push and pull request.
+* ``real_services`` - the full search + LLM pipeline. Needs provider secrets, so
+  CI runs it in a separate, credential-gated job.
+
+An unreachable backend or missing credentials produces a *tagged* skip
+(``E2E-NO-BACKEND`` / ``E2E-NO-CREDENTIALS``), never a quiet pass.
 """
 import pytest
 import time
 import requests
 import uuid
-import os
 
 
 def _auth_headers(api_base_url):
@@ -23,42 +32,45 @@ def _auth_headers(api_base_url):
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
-def test_health_check(api_base_url):
+@pytest.mark.contract
+def test_health_check(live_backend):
     """Verify the /health endpoint returns 200."""
-    response = requests.get(f"{api_base_url}/health", timeout=10)
+    response = requests.get(f"{live_backend}/health", timeout=10)
     assert response.status_code == 200
 
 
-def test_create_research_task(api_base_url):
+@pytest.mark.contract
+def test_create_research_task(live_backend):
     """POST to /research/tasks with minimal payload, verify task_id is returned."""
-    headers = _auth_headers(api_base_url)
+    headers = _auth_headers(live_backend)
     payload = {
         "query": "test competitor analysis",
         "urls": [],
         "enable_search": False,
     }
-    response = requests.post(f"{api_base_url}/research/tasks", json=payload, headers=headers, timeout=10)
+    response = requests.post(f"{live_backend}/research/tasks", json=payload, headers=headers, timeout=10)
     assert response.status_code == 200
     data = response.json()
     assert "task_id" in data
     assert data["task_id"] is not None
 
 
-def test_sse_connection(api_base_url):
+@pytest.mark.contract
+def test_sse_connection(live_backend):
     """Verify SSE endpoint returns an event stream with at least a task_created event."""
-    headers = _auth_headers(api_base_url)
+    headers = _auth_headers(live_backend)
     # First create a task
     payload = {
         "query": "test competitor analysis",
         "urls": [],
         "enable_search": False,
     }
-    create_response = requests.post(f"{api_base_url}/research/tasks", json=payload, headers=headers, timeout=10)
+    create_response = requests.post(f"{live_backend}/research/tasks", json=payload, headers=headers, timeout=10)
     assert create_response.status_code == 200
     task_id = create_response.json()["task_id"]
 
     # Connect to SSE stream
-    sse_url = f"{api_base_url}/research/tasks/{task_id}/events"
+    sse_url = f"{live_backend}/research/tasks/{task_id}/events"
     events_received = {}
 
     sse_headers = {**headers, "Accept": "text/event-stream"}
@@ -88,27 +100,29 @@ def test_sse_connection(api_base_url):
     assert "task_created" in events_received, f"Expected task_created event, got: {events_received}"
 
 
-def test_full_research_flow(api_base_url):
+@pytest.mark.real_services
+@pytest.mark.real_services
+def test_full_research_flow(real_service_credentials, live_backend):
     """
     Create a research task and wait for completion.
     Uses a simple query with auto-search only (no external URL dependencies).
-    """
-    if not os.environ.get("E2E_RUN_FULL_FLOW"):
-        pytest.skip("Full research flow requires external search/LLM credentials; set E2E_RUN_FULL_FLOW=1 to run it.")
 
-    headers = _auth_headers(api_base_url)
+    Credential check comes first so a credential-less run reports the credential
+    reason instead of a misleading backend reason.
+    """
+    headers = _auth_headers(live_backend)
     # Create task
     payload = {
         "query": "test competitor analysis",
         "urls": [],
         "enable_search": True,
     }
-    create_response = requests.post(f"{api_base_url}/research/tasks", json=payload, headers=headers, timeout=30)
+    create_response = requests.post(f"{live_backend}/research/tasks", json=payload, headers=headers, timeout=30)
     assert create_response.status_code == 200
     task_id = create_response.json()["task_id"]
 
     # Poll SSE until completion
-    sse_url = f"{api_base_url}/research/tasks/{task_id}/events"
+    sse_url = f"{live_backend}/research/tasks/{task_id}/events"
     max_wait = 300  # 5 minutes
     start = time.time()
     final_data = None

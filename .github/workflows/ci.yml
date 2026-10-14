@@ -1,7 +1,9 @@
 name: CI
-on: [push, pull_request]
+on: [push, pull_request, workflow_dispatch]
+
 jobs:
   test:
+    name: Backend unit tests (no external services)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -12,70 +14,236 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
       - name: Install dependencies
-        run: uv sync --dev
+        run: uv sync --extra dev
       - name: Backend tests
-        run: uv run pytest tests/ -v --ignore=tests/e2e/
+        run: uv run --extra dev pytest tests/ -v --ignore=tests/e2e/
+
+  frontend:
+    name: Frontend tests (node:test, yarn.lock)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # frontend/yarn.lock is the only committed lockfile (package-lock.json is
+      # gitignored), and frontend/Dockerfile installs with yarn 1.22.x, so the
+      # test job must install the same way before `yarn test`.
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+          yarn install --frozen-lockfile
       - name: Frontend tests
         working-directory: frontend
-        run: npm test
+        run: yarn test
 
-  e2e:
+  e2e-contract:
+    name: E2E contract (docker backend, no LLM/search keys)
     runs-on: ubuntu-latest
     needs: test
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Docker Compose
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y docker.io docker-compose
-
-      - name: Start services with Docker Compose
-        run: |
-          # Start SearXNG and Redis (required for backend)
-          docker-compose up -d searxng redis
-
-          # Wait for services to be healthy
-          sleep 10
-
-          # Start backend (without frontend - E2E tests API directly)
-          docker-compose up -d research-agent
-
-          # Wait for backend to be ready
-          for i in {1..30}; do
-            if curl -f http://localhost:8080/health 2>/dev/null; then
-              echo "Backend is ready"
-              break
-            fi
-            echo "Waiting for backend... attempt $i"
-            sleep 2
-          done
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-
       - name: Install uv
         uses: astral-sh/setup-uv@v4
-
       - name: Install dependencies
-        run: uv sync --dev
+        run: uv sync --extra dev
 
-      - name: Run E2E tests
-        run: uv run pytest tests/e2e/ -v
+      # docker-compose.yml requires SEARXNG_SECRET (${SEARXNG_SECRET:?...}); .env is
+      # gitignored, so CI generates an ephemeral one instead of committing it.
+      - name: Generate ephemeral secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          searxng_secret="$(openssl rand -hex 32)"
+          jwt_secret_key="$(openssl rand -hex 32)"
+          {
+            echo "SEARXNG_SECRET=${searxng_secret}"
+            echo "JWT_SECRET_KEY=${jwt_secret_key}"
+          } > .env
+          echo "SEARXNG_SECRET=${searxng_secret}" >> "$GITHUB_ENV"
+          echo "JWT_SECRET_KEY=${jwt_secret_key}" >> "$GITHUB_ENV"
+          echo "Generated ephemeral SEARXNG_SECRET / JWT_SECRET_KEY (.env stays untracked)"
+
+      - name: Start SearXNG and Redis (docker compose v2, waits for healthchecks)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose version
+          docker compose up -d --wait searxng redis
+
+      - name: Start backend and assert it became healthy
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose up -d research-agent
+          ready=0
+          for i in $(seq 1 60); do
+            if curl -fsS --max-time 5 http://localhost:8080/health >/tmp/backend-health.json 2>/dev/null; then
+              ready=1
+              break
+            fi
+            echo "waiting for backend health ... attempt ${i}/60"
+            sleep 2
+          done
+          echo "--- /health payload ---"
+          cat /tmp/backend-health.json 2>/dev/null || echo "(no payload)"
+          if [ "${ready}" -ne 1 ]; then
+            echo "::error::Backend never became healthy; the E2E contract suite would only skip."
+            docker compose ps || true
+            docker compose logs --tail 200 research-agent || true
+            exit 1
+          fi
+          # Post-loop assertion: under `set -e` this fails the job if /health is not green.
+          curl -fsS --max-time 5 http://localhost:8080/health >/dev/null
+          echo "backend is healthy"
+
+      - name: Run E2E contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --extra dev pytest tests/e2e/ \
+            -m "not real_services" \
+            -v -rsx --strict-markers -p no:cacheprovider
         env:
           E2E_API_URL: http://localhost:8080
           E2E_FRONTEND_URL: http://localhost:3000
+          # Skips are failures here: an unreachable backend can never be reported as green.
+          E2E_REQUIRE_BACKEND: '1'
+
+      - name: Report what ran and what did not
+        if: always()
+        run: |
+          {
+            echo "### E2E contract suite"
+            echo "- RAN: \`pytest tests/e2e -m 'not real_services'\` (HTTP contract, no credentials)"
+            echo "- NOT RUN: \`pytest tests/e2e -m real_services\` - needs real LLM/search keys"
+            echo "  - run it from the \`e2e-real-services\` job (workflow_dispatch + MINIMAX_API_KEY secret)"
+            echo "- Skips are failures in this job (\`E2E_REQUIRE_BACKEND=1\`); a zero-test run fails too."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Cleanup
         if: always()
-        run: docker-compose down -v
+        run: docker compose down -v
+
+  e2e-real-services:
+    name: E2E real services (manual, needs LLM/search keys)
+    # `secrets` is not available in a job-level `if`, so the run is dispatched
+    # manually and the credential check happens as a failing step instead of a
+    # silent skip.
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require LLM/search credentials
+        shell: bash
+        env:
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### E2E real-services suite"
+            echo "- RAN: \`pytest tests/e2e -m real_services\` (real search + LLM pipeline)"
+            echo "- NOT RUN: the HTTP-contract suite is covered by the \`e2e-contract\` job"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "${MINIMAX_API_KEY:-}" ]; then
+            echo "::error::MINIMAX_API_KEY is not configured. This suite is NOT reported as passed."
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Generate ephemeral secrets
+        shell: bash
+        env:
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          MINIMAX_BASE_URL: ${{ secrets.MINIMAX_BASE_URL }}
+          MINIMAX_MODEL: ${{ secrets.MINIMAX_MODEL }}
+        run: |
+          set -euo pipefail
+          umask 077
+          {
+            echo "SEARXNG_SECRET=$(openssl rand -hex 32)"
+            echo "JWT_SECRET_KEY=$(openssl rand -hex 32)"
+            echo "MINIMAX_API_KEY=${MINIMAX_API_KEY}"
+            echo "MINIMAX_BASE_URL=${MINIMAX_BASE_URL}"
+            echo "MINIMAX_MODEL=${MINIMAX_MODEL}"
+          } > .env
+          echo "Generated ephemeral .env with provider credentials"
+
+      - name: Start services and assert the backend became healthy
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose up -d --wait searxng redis
+          docker compose up -d research-agent
+          ready=0
+          for i in $(seq 1 60); do
+            if curl -fsS --max-time 5 http://localhost:8080/health >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            echo "waiting for backend health ... attempt ${i}/60"
+            sleep 2
+          done
+          if [ "${ready}" -ne 1 ]; then
+            echo "::error::Backend never became healthy; the credentialed suite cannot run."
+            docker compose ps || true
+            docker compose logs --tail 200 research-agent || true
+            exit 1
+          fi
+          curl -fsS --max-time 5 http://localhost:8080/health >/dev/null
+
+      - name: Run E2E real-services tests (skips are failures here)
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --extra dev pytest tests/e2e/ \
+            -m "real_services" \
+            -v -rs --strict-markers -p no:cacheprovider
+        env:
+          E2E_API_URL: http://localhost:8080
+          E2E_REQUIRE_BACKEND: '1'
+          E2E_REQUIRE_REAL_SERVICES: '1'
+          E2E_RUN_FULL_FLOW: '1'
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v
 
   docker-build:
+    name: Docker build
     needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build Docker
-        run: docker-compose build
+      # Compose interpolates the whole file at load time, so even `compose build`
+      # needs SEARXNG_SECRET present.
+      - name: Generate placeholder secrets for compose interpolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          printf 'SEARXNG_SECRET=%s\n' "$(openssl rand -hex 32)" > .env
+      - name: Build images
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose version
+          docker compose build
