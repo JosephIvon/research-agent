@@ -33,6 +33,13 @@ class TaskStatus(str, Enum):
 
 
 class TaskEventType(str, Enum):
+    """SSE 事件名的**唯一登记处**。
+
+    这个枚举此前是装饰性的：工作流全程用裸字符串发事件，从不查它，于是
+    `citation_check` / `injection_detected` / `partial` 三个真实事件压根不在册，
+    打错一个名字也没人会发现——前端只会安静地少收一个事件。
+    现在 `_emit` 会拿事件名来这里对表（MVPWorkflow._emit），未登记即抛错。
+    """
     TASK_CREATED = "task_created"
     DECOMPOSE = "decompose"
     SEARCH = "search"
@@ -48,6 +55,16 @@ class TaskEventType(str, Enum):
     ERROR = "error"
     # ReAct 模式（AGENT_MODE=react）每轮工具调用的进度事件
     AGENT_STEP = "agent_step"
+    # 引用校验闭环（M2）：开始 / 未通过待重生成 / 通过 / 终判未过
+    CITATION_CHECK = "citation_check"
+    # 提示注入检测（M5 L5）：边爬边发，供前端实时提示"来源 X 检测到 N 处"
+    INJECTION_DETECTED = "injection_detected"
+    # 预算耗尽收束（M6）：报告已交付但被截断，与 completed 互斥
+    PARTIAL = "partial"
+
+
+#: 事件名白名单。`_emit` 对表用，避免每个调用点各自遍历枚举。
+KNOWN_EVENT_NAMES = frozenset(item.value for item in TaskEventType)
 
 
 @dataclass

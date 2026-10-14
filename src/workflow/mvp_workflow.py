@@ -41,7 +41,7 @@ from src.security.injection import (
     should_drop_page,
     wrap_untrusted,
 )
-from src.workflow.task_store import _sanitize_payload
+from src.workflow.task_store import _sanitize_payload, TaskEventType
 import asyncio
 import contextlib
 import json
@@ -671,9 +671,18 @@ class MVPWorkflow:
         )
 
     def _emit(self, event_type: str, stage: str, status: str, message: str, payload: Optional[Dict[str, Any]] = None):
+        # 事件名对表：TaskEventType 是 SSE 事件名的唯一登记处。裸字符串打错一个
+        # 字母，前端只会安静地少收一个事件——没有任何报错能告诉你。
+        # 对表放在最前面（在"没有 emitter 就早退"之前），免得没订阅者时
+        # 打错的名字在测试里被完全掩盖过去。
+        from src.workflow.task_store import KNOWN_EVENT_NAMES, TaskEvent
+        if event_type not in KNOWN_EVENT_NAMES:
+            raise ValueError(
+                f"未登记的事件名 {event_type!r}：请先在 TaskEventType 里加成员，"
+                "并确认前端 BACKEND_EVENTS 订阅了它"
+            )
         if self._event_emitter is None:
             return
-        from src.workflow.task_store import TaskEvent
         event = TaskEvent(
             id=0,
             event=event_type,
@@ -1039,7 +1048,7 @@ class MVPWorkflow:
                 if result.stop_reason == "budget_exceeded":
                     state["status"] = "partial"
                     self._emit(
-                        "partial", "completed", "partial",
+                        TaskEventType.PARTIAL.value, "completed", "partial",
                         f"预算耗尽，按已获得的证据收敛交付（stop_reason={result.stop_reason}）",
                         payload={
                             "status": state["status"],

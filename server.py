@@ -137,6 +137,7 @@ limiter = Limiter(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+
 # JWT Authentication middleware - supports both legacy API_AUTH_TOKEN and new JWT
 @app.middleware("http")
 async def enforce_auth(request: Request, call_next):
@@ -780,9 +781,13 @@ class TaskRequest(BaseModel):
 
 _task_queue: List[asyncio.Task] = []
 
-# 事件状态 → 任务终态。抽成显式映射而不是行内三元：预算超额（partial）与
+# 工作流**状态** → 任务终态。抽成显式映射而不是行内三元：预算超额（partial）与
 # 正常完成（completed）必须能被一眼看出是两回事，行内表达式会把它们糊在一起。
-_TASK_STATUS_BY_EVENT = {
+#
+# 注意这里的键是 TaskEvent.status，**不是** TaskEventType 的事件名——那是另一套词表：
+# 工作流失败时发的事件名叫 `error`，状态却是 `failed`。两套词表混用过一次，
+# 会把 `failed` 键悄悄换成 `error`，让所有失败任务查表落空。
+_TASK_STATUS_BY_EVENT_STATUS = {
     "completed": TaskStatus.COMPLETED,
     "failed": TaskStatus.FAILED,
     "partial": TaskStatus.PARTIAL,
@@ -817,7 +822,7 @@ async def _run_research_task(task_id: str, req: TaskRequest, user_id: Optional[s
                 task_id,
                 current_stage=event.stage,
                 current_message=event.message,
-                status=_TASK_STATUS_BY_EVENT[event.status],
+                status=_TASK_STATUS_BY_EVENT_STATUS[event.status],
             )
 
     emitter._on_event = on_event
@@ -855,7 +860,7 @@ async def _run_research_task(task_id: str, req: TaskRequest, user_id: Optional[s
         # 预算超额收束出来的报告是不完整的，标成 completed 就是在骗用户。
         await store.update(
             task_id,
-            status=_TASK_STATUS_BY_EVENT[result["status"]],
+            status=_TASK_STATUS_BY_EVENT_STATUS[result["status"]],
             report_id=result.get("report_id"),
             **research_metadata,
         )
@@ -1537,6 +1542,8 @@ def index():
 def main():
     """Console script entrypoint."""
     uvicorn.run(app, host=APP_HOST, port=APP_PORT)
+
+
 
 
 # ---------- MCP 子应用挂载（M5 接线）----------

@@ -207,10 +207,10 @@ class TestPartialStatusWiring:
         """
         from src.workflow.task_store import TaskStatus
 
-        assert set(server._TASK_STATUS_BY_EVENT) == {"completed", "failed", "partial"}
-        assert server._TASK_STATUS_BY_EVENT["partial"] is TaskStatus.PARTIAL
-        assert server._TASK_STATUS_BY_EVENT["completed"] is TaskStatus.COMPLETED
-        assert server._TASK_STATUS_BY_EVENT["failed"] is TaskStatus.FAILED
+        assert set(server._TASK_STATUS_BY_EVENT_STATUS) == {"completed", "failed", "partial"}
+        assert server._TASK_STATUS_BY_EVENT_STATUS["partial"] is TaskStatus.PARTIAL
+        assert server._TASK_STATUS_BY_EVENT_STATUS["completed"] is TaskStatus.COMPLETED
+        assert server._TASK_STATUS_BY_EVENT_STATUS["failed"] is TaskStatus.FAILED
 
     def test_task_status_partial_is_persisted(self, client, auth_headers):
         """partial 必须能真的存进任务存储并读回来——不是只在映射表里存在。"""
