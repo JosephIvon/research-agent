@@ -168,13 +168,20 @@ class QualityScorer:
             return "F"
 
     def generate_quality_section(self, report: Optional[QualityReport] = None) -> str:
-        """生成质量评估章节"""
+        """生成数据完整度评估章节。
+
+        刻意不叫「质量评分」或「可信度」：本评估只回答"抓到了多少个维度、每维有多少条数据"，
+        回答不了"这些结论对不对"。可信度由引用校验（`agent.citations`）负责，
+        两件事混为一谈就是用数据多少冒充事实正确。
+        """
         if report is None:
             report = self.evaluate()
 
-        section = f"""## 附录：数据质量评估
+        section = f"""## 附录：数据完整度评估
 
-### 质量评分：{report.overall_score:.1f}/10 （等级：{report.grade}）
+> 本节只衡量**抓取到的数据量与维度覆盖**，不衡量结论正确性。结论的可追溯性见各事实句的 `[e:xxxx]` 证据标记。
+
+### 数据完整度：{report.overall_score:.1f}/10 （覆盖等级：{report.grade}）
 
 #### 维度覆盖情况
 

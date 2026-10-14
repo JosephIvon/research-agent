@@ -414,7 +414,13 @@ class MVPWorkflow:
 
         不静默交付是硬要求：一份没通过引用校验的报告如果照常呈现，
         用户会把它当成可信结论——这比直接报错更危险。
+
+        校验通过时原样返回。守卫放在函数内部而不是只靠调用方判断——
+        否则一旦有人把 run() 里的 else 分支去掉，通过的报告也会被挂上低可信标记。
         """
+        if citation_result.get("passed"):
+            return report
+
         violations = citation_result.get("violations") or []
         lines = [
             "> ⚠️ **低可信标记：本文未通过引用完整性校验**",
@@ -431,7 +437,7 @@ class MVPWorkflow:
         lines.append("")
         lines.append("---")
         lines.append("")
-        return "\n".join(lines) + report
+        return "\n".join(lines)
 
     def _enforce_report_output(self, state: Dict[str, Any]) -> None:
         """报告出口的回声校验。
