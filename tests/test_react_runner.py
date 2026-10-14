@@ -370,3 +370,108 @@ def test_scripted_legacy_single_call_takes_first_from_multi():
     ]}]})
     result = llm.chat_completion([{"role": "system", "content": "<!--intent:react-->"}])
     assert result["name"] == "first"
+
+
+# --------------------------------------------------------------------------
+# 预算收敛调用：让 PARTIAL 真正可达（M6）
+#
+# 背景：预算守卫在每轮**开始前**触发即 break，而 answer 只在终答分支赋值后
+# 立刻 break 成 halt——所以「budget_exceeded 且有终答」原本在真实 runner 下
+# 永远不成立，partial 分支是防御性的死代码，已跑完的工具调用全部丢弃。
+# 下面这组测试钉住"预算耗尽仍要交付一份基于已采集事实的报告"这条行为。
+# --------------------------------------------------------------------------
+
+class _RecordingLLM(ScriptedLLMClient):
+    """记录每次 chat_completion_raw 的 kwargs，用来钉住收敛调用的参数。"""
+
+    def __init__(self, *entries, fail_converge=False):
+        super().__init__(script={"react": list(entries)})
+        self.raw_calls = []
+        self.fail_converge = fail_converge
+
+    def chat_completion_raw(self, messages, **kwargs):
+        self.raw_calls.append({"messages": list(messages), **kwargs})
+        if self.fail_converge and not kwargs.get("tools"):
+            raise RuntimeError("收敛调用被故意打断")
+        return super().chat_completion_raw(messages, **kwargs)
+
+
+def test_budget_exceeded_still_delivers_an_answer(offline):
+    """预算耗尽必须收敛出终答——否则 workflow 只能整单判 failed，已采集事实全丢。"""
+    llm = _RecordingLLM(_call("web_search", query="q"), "基于已采集信息的部分报告")
+    result = asyncio.run(ReActRunner(llm, max_steps=5, token_budget=10).run("t"))
+
+    assert result.stop_reason == "budget_exceeded"
+    assert result.answer is not None, "预算耗尽后必须有终答，否则前面跑的工具全白费"
+    assert "部分报告" in result.answer
+    # 收敛轮同样写进 steps，trace 里能看到"发生了什么"
+    assert result.steps[-1].stop_reason_if_any == "budget_exceeded"
+
+
+def test_budget_convergence_gets_no_tools_and_a_token_cap(offline):
+    """收敛调用只准写报告：不给工具、且 max_tokens 必须写死。
+
+    给了工具就等于用超额的预算继续跑，收束失去意义；不给上限就是开了个
+    没有预算约束的口子——那是拿"收束"的名义绕过预算守卫。
+    """
+    from src.agent import config
+
+    llm = _RecordingLLM(_call("web_search", query="q"), "部分报告")
+    asyncio.run(ReActRunner(llm, max_steps=5, token_budget=10).run("t"))
+
+    converge_calls = [c for c in llm.raw_calls if not c.get("tools")]
+    assert len(converge_calls) == 1, f"应当恰好收敛一次，实际 {len(converge_calls)} 次"
+    assert converge_calls[0]["max_tokens"] == config.AGENT_BUDGET_CONVERGE_MAX_TOKENS
+    assert converge_calls[0]["max_tokens"] > 0
+    # 收敛提示必须要求"别编造"——否则这次调用会成为编造数字的入口
+    prompt = converge_calls[0]["messages"][-1]["content"]
+    assert "不要编造" in prompt
+
+
+def test_budget_convergence_can_be_turned_off(offline, monkeypatch):
+    """上限配 0 即关闭该行为，退回"无终答即失败"的旧语义。"""
+    from src.agent import config
+
+    monkeypatch.setattr(config, "AGENT_BUDGET_CONVERGE_MAX_TOKENS", 0)
+    llm = _RecordingLLM(_call("web_search", query="q"), "不该被取用")
+    result = asyncio.run(ReActRunner(llm, max_steps=5, token_budget=10).run("t"))
+
+    assert result.answer is None
+    assert result.stop_reason == "budget_exceeded"
+
+
+def test_budget_convergence_failure_does_not_break_the_task(offline):
+    """收敛调用失败只影响终态，不能把整个任务带崩，也不能伪造出报告。"""
+    llm = _RecordingLLM(_call("web_search", query="q"), "不该被取用", fail_converge=True)
+    result = asyncio.run(ReActRunner(llm, max_steps=5, token_budget=10).run("t"))
+
+    assert result.answer is None, "收敛失败不得回退到任何编造内容"
+    assert result.stop_reason == "budget_exceeded"
+    assert result.steps[-1].stop_reason_if_any == "error"
+
+
+def test_no_convergence_call_when_nothing_was_collected(offline):
+    """一步都没跑就超预算时不做收敛：没有事实可依据，硬凑的报告只会是编造。"""
+    from src.agent import config
+
+    llm = _RecordingLLM("永远用不到")
+    result = asyncio.run(ReActRunner(llm, max_steps=3, wall_clock_budget=0.0).run("t"))
+
+    assert result.stop_reason == "budget_exceeded"
+    assert result.steps == []
+    assert result.answer is None
+    assert [c for c in llm.raw_calls if not c.get("tools")] == []
+
+
+def test_budget_convergence_cost_is_recorded(offline):
+    """收敛这一次是明知超预算仍然要花的钱，必须出现在 cost_report 里。"""
+    from src.llm.token_budget import TaskBudget
+
+    budget = TaskBudget("eval-converge", max_tokens=10**9, max_usd=0.0)
+    llm = _RecordingLLM(_call("web_search", query="q"), "部分报告正文")
+    result = asyncio.run(ReActRunner(llm, max_steps=5, budget=budget).run("t"))
+
+    report = result.cost_report
+    assert report["calls"] >= 2, f"收敛那次也要记账，实际 calls={report['calls']}"
+    assert report["total_tokens"] > 0
+    assert result.answer is not None

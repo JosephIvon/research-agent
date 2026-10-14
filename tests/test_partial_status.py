@@ -354,3 +354,67 @@ def test_usage_estimated_true_when_any_round_lacks_usage():
 
     assert result.stop_reason == "halt"
     assert result.usage_estimated is True, "有一轮走估算就不能整体报真值"
+
+
+# --------------------------------------------------------------------------
+# 端到端验收：真实 ReActRunner（不桩）
+#
+# 上面所有 partial 用例都靠 _BudgetExhaustedRunner 桩件驱动。这条不用桩：
+# 它是「M6 PARTIAL 到底能不能真的发生」的最终答案。此前真实 runner 下
+# 「预算超限且有终答」永远不成立——预算守卫在每轮开始前就 break 了，
+# 而 answer 只在终答分支赋值后立刻 break 成 halt。预算收敛调用补的就是这一段。
+# --------------------------------------------------------------------------
+
+def test_real_runner_delivers_partial_when_budget_runs_out(tmp_path, monkeypatch):
+    from src.agent import config
+    from src.workflow import mvp_workflow
+
+    monkeypatch.setenv("AGENT_MODE", "react")
+    # 第 1 轮调工具把事实采回来；第 2 轮守卫立刻判定超额，然后走收敛调用
+    llm = _react_llm(
+        _call("web_search", query="q"),
+        "## 部分结论\n\n基于预算耗尽前已采集的信息。未覆盖：性能对比。",
+    )
+    _wire_offline(monkeypatch, tmp_path, llm)
+    _wire_react_tools(monkeypatch)
+    # 把 runner 的 token 预算压到必然超额
+    monkeypatch.setattr(config, "AGENT_TOKEN_BUDGET", 10)
+    monkeypatch.setattr(mvp_workflow, "verify_report", lambda report, store: {
+        "passed": True, "coverage": 1.0, "valid_ratio": 1.0, "grounding": 1.0,
+        "violations": [],
+    })
+
+    workflow = mvp_workflow.MVPWorkflow()
+    state = asyncio.run(_drive(workflow))
+
+    assert state["termination_reason"] == "react:budget_exceeded"
+    assert state["status"] == "partial", (
+        f"真实 runner 下预算耗尽必须落 partial，实际 {state['status']!r}"
+    )
+    assert state["report_final"], "partial 也必须交付报告，不能是空壳"
+    assert state["report_id"], "partial 报告同样要落盘并有 report_id"
+
+
+def test_real_runner_emits_partial_event_not_completed(tmp_path, monkeypatch):
+    from src.agent import config
+    from src.workflow import mvp_workflow
+
+    monkeypatch.setenv("AGENT_MODE", "react")
+    llm = _react_llm(_call("web_search", query="q"), "## 部分结论\n\n预算耗尽前采集。")
+    _wire_offline(monkeypatch, tmp_path, llm)
+    _wire_react_tools(monkeypatch)
+    monkeypatch.setattr(config, "AGENT_TOKEN_BUDGET", 10)
+    monkeypatch.setattr(mvp_workflow, "verify_report", lambda report, store: {
+        "passed": True, "coverage": 1.0, "valid_ratio": 1.0, "grounding": 1.0,
+        "violations": [],
+    })
+
+    collector = _EventCollector()
+    workflow = mvp_workflow.MVPWorkflow(event_emitter=collector)
+    asyncio.run(_drive(workflow))
+
+    assert len(collector.of("partial")) == 1, "预算耗尽应收束出 partial 事件"
+    assert collector.of("completed") == [], "partial 场景不得再发 completed——那是在撒谎"
+    payload = collector.of("partial")[0].payload
+    assert payload["status"] == "partial"
+    assert payload["stop_reason"] == "budget_exceeded"

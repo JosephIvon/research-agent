@@ -61,9 +61,8 @@ class ReActRunner:
         usage = {"prompt_tokens": 0, "completion_tokens": 0}
         # usage_estimated 口径对齐 TaskBudget.snapshot()["estimated"]：只要有一轮
         # 拿不到 provider 真值 usage 就整体算估算；一轮都没跑（开跑即超额）同样算估算，
-        # 免得把 0 记账当成真值报出去
-        real_usage_rounds = 0
-        estimated_rounds = 0
+        # 免得把 0 记账当成真值报出去。预算收敛那一次也计入这里的两个计数器。
+        rounds = {"real": 0, "estimated": 0}
         duplicate_counts: Dict[str, int] = {}
         nudged_duplicate = False
         empty_rounds = 0
@@ -104,10 +103,7 @@ class ReActRunner:
                 break
 
             _account_usage(usage, raw, messages)
-            if _round_usage_is_estimated(raw):
-                estimated_rounds += 1
-            else:
-                real_usage_rounds += 1
+            rounds["estimated" if _round_usage_is_estimated(raw) else "real"] += 1
             self._record_budget(raw, messages)
             content = raw.get("content")
             tool_calls = list(raw.get("tool_calls") or [])
@@ -222,6 +218,12 @@ class ReActRunner:
         if stop_reason is None:
             stop_reason = "max_steps"
 
+        # ---- 预算收束：强制一次有上限的收敛调用 ----
+        # 没有这一步，预算触发即 break，answer 恒为 None，workflow 整单判 failed，
+        # 已跑完的工具调用与事实全部丢弃——"超额 PARTIAL" 只是对外宣称。
+        if answer is None and stop_reason == "budget_exceeded" and steps:
+            answer = await self._converge_on_budget(messages, usage, steps, rounds)
+
         # 预算/步数等在轮次开始前就触发时不会新建 step，终止原因回写到最后一轮，
         # 保证 trace 里必定有一处读得到 stop_reason（workflow 的 agent_step payload 依赖它）
         if steps and steps[-1].stop_reason_if_any is None:
@@ -232,11 +234,82 @@ class ReActRunner:
             stop_reason=stop_reason,
             steps=steps,
             usage={**usage, "total": usage["prompt_tokens"] + usage["completion_tokens"]},
-            usage_estimated=estimated_rounds > 0 or real_usage_rounds == 0,
+            usage_estimated=rounds["estimated"] > 0 or rounds["real"] == 0,
             cost_report=self.budget.snapshot() if self.budget is not None else {},
             elapsed_s=round(time.monotonic() - started, 4),
             workspace=self.workspace,
         )
+
+    async def _converge_on_budget(
+        self,
+        messages: List[Dict[str, Any]],
+        usage: Dict[str, int],
+        steps: List[AgentStep],
+        rounds: Dict[str, int],
+    ) -> Optional[str]:
+        """预算耗尽后的最后一次收敛：只准写报告，不准再调工具。
+
+        三条硬约束：
+
+        1. **只调一次，且不带 tools**。再给工具就等于用超额的预算继续跑，收束失去意义。
+        2. **max_tokens 有上限，开销照记**。这次调用是明知超预算仍然要花的，它必须出现在
+           cost_report 里；不记就是账做不平。
+        3. **失败不外溢**。收敛失败只是拿不到终答，退回原有的 failed 语义，
+           不能让一次收尾尝试把整个任务带崩。
+
+        返回收敛出的正文；拿不到就返回 None（调用方按无终答处理）。
+        `rounds` 是本轮真实/估算轮数计数器，收敛这一次也要计入——
+        否则 AgentResult.usage_estimated 会漏掉它，报告出的口径就是错的。
+        """
+        cap = config.AGENT_BUDGET_CONVERGE_MAX_TOKENS
+        if cap <= 0:
+            logger.info("[react] 预算收敛已关闭（AGENT_BUDGET_CONVERGE_MAX_TOKENS=0）")
+            return None
+
+        converge_messages = list(messages) + [{
+            "role": "user",
+            "content": (
+                "预算已用尽，现在必须停止调研并交付结论。\n"
+                "请只依据上面已经拿到的信息写出一份 Markdown 报告，写清三件事："
+                "已确认的结论、尚未覆盖的维度、以及数据不足的原因。\n"
+                "不要再调用任何工具。无法核实的地方直接写「未获取到公开数据」，"
+                "**不要编造任何数字或来源**。"
+            ),
+        }]
+
+        step = AgentStep(index=len(steps) + 1)
+        step_start = time.monotonic()
+        try:
+            raw = await self.llm.achat_completion_raw(
+                converge_messages,
+                tools=None,
+                temperature=0.2,
+                max_tokens=cap,
+            )
+        except Exception as exc:
+            logger.warning("[react] 预算收敛调用失败，退回无终答语义: %s", exc)
+            step.thought = f"[预算收敛失败] {type(exc).__name__}: {exc}"
+            step.elapsed = round(time.monotonic() - step_start, 4)
+            step.stop_reason_if_any = "error"
+            steps.append(step)
+            _emit_step(self.on_step, step)
+            return None
+
+        _account_usage(usage, raw, converge_messages)
+        if _round_usage_is_estimated(raw):
+            rounds["estimated"] += 1
+        else:
+            rounds["real"] += 1
+        self._record_budget(raw, converge_messages)
+
+        content = (raw.get("content") or "").strip()
+        step.thought = content or "[预算收敛] 未产出正文"
+        step.elapsed = round(time.monotonic() - step_start, 4)
+        step.stop_reason_if_any = "budget_exceeded"
+        steps.append(step)
+        _emit_step(self.on_step, step)
+
+        return content or None
 
     def _record_budget(self, raw: Dict[str, Any], messages: List[Dict[str, Any]]) -> None:
         """把每轮 LLM 调用记入 TaskBudget：真实 usage 优先，缺失则估算。"""

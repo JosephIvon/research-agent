@@ -18,6 +18,14 @@ AGENT_WALL_CLOCK_BUDGET = float(os.getenv("AGENT_WALL_CLOCK_BUDGET", "180"))
 # USD 预算：估价口径（见 src/llm/token_budget.py），超额以 budget_exceeded 收束为 PARTIAL
 AGENT_USD_BUDGET = float(os.getenv("AGENT_USD_BUDGET", "0.5"))
 
+# 预算耗尽后的**强制收敛调用**（M6 PARTIAL 的真正入口）。
+#
+# 没有它，预算一触发 runner 就 break，answer 恒为 None，workflow 只能整单判 failed，
+# 已经跑完的工具调用与事实全部丢弃——"超额 PARTIAL" 就只是一句对外宣称。
+# 这是一次明知超预算仍然要花的钱，所以 token 上限必须写死，且开销照记进 cost_report。
+# 置 0 即关闭该行为（退回纯失败语义）。
+AGENT_BUDGET_CONVERGE_MAX_TOKENS = int(os.getenv("AGENT_BUDGET_CONVERGE_MAX_TOKENS", "2048"))
+
 # 收束兜底阈值
 TOOL_DUPLICATE_LIMIT = int(os.getenv("AGENT_DUPLICATE_LIMIT", "3"))  # 同工具同参数
 EMPTY_OBSERVATION_LIMIT = int(os.getenv("AGENT_EMPTY_ROUNDS", "2"))  # 连续空结果轮数
