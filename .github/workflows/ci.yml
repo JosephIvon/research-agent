@@ -16,7 +16,23 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
       - name: Backend tests
-        run: uv run --extra dev pytest tests/ -v --ignore=tests/e2e/
+        run: |
+          set -o pipefail
+          uv run --extra dev pytest tests/ -v --ignore=tests/e2e/ \
+            --junitxml=pytest-report.xml || TESTS_FAILED=1
+          if [ "${TESTS_FAILED:-0}" = "1" ]; then
+            # 失败清单写入 annotation：匿名也能从 API 读到（日志下载需要登录）
+            uv run python - <<'EOF'
+            import xml.etree.ElementTree as ET
+            root = ET.parse("pytest-report.xml").getroot()
+            for case in root.iter("testcase"):
+                for failure in list(case.iter("failure")) + list(case.iter("error")):
+                    name = f"{case.get('classname', '')}::{case.get('name', '?')}"
+                    msg = (failure.get("message") or failure.text or "")[:300].replace("%", "%25")
+                    print(f"::error title=pytest::{name}::{msg}")
+            EOF
+            exit 1
+          fi
 
   frontend:
     name: Frontend tests (node:test, yarn.lock)
