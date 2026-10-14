@@ -17,6 +17,7 @@ from src.agent.context import estimate_tokens, render_observation
 from src.agent.tools import ToolRegistry, dedup_key, result_is_empty
 from src.agent.tool_specs import build_default_tools, system_prompt
 from src.agent.trace import AgentResult, AgentStep
+from src.llm.token_budget import TaskBudget
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ class ReActRunner:
         max_steps: Optional[int] = None,
         token_budget: Optional[int] = None,
         wall_clock_budget: Optional[float] = None,
+        budget: Optional["TaskBudget"] = None,
         on_step: Optional[Callable[[AgentStep], Any]] = None,
     ):
         self.llm = llm_client
@@ -42,6 +44,9 @@ class ReActRunner:
         self.wall_clock_budget = (
             wall_clock_budget if wall_clock_budget is not None else config.AGENT_WALL_CLOCK_BUDGET
         )
+        # TaskBudget（M6）：token+USD 双口径记账，真实 usage 优先；提供时
+        # 与 token_budget 参数并存（TaskBudget 更严的一方先生效）
+        self.budget = budget
         self.on_step = on_step
 
     async def run(self, user_query: str, target_urls: Optional[List[str]] = None) -> AgentResult:
@@ -71,6 +76,12 @@ class ReActRunner:
             if elapsed > self.wall_clock_budget:
                 stop_reason = "budget_exceeded"  # 墙钟与 token 同归"预算耗尽"，trace 里有耗时
                 break
+            if self.budget is not None:
+                budget_reason = self.budget.exceeded_reason()
+                if budget_reason is not None:
+                    logger.info("[react] %s，收束为部分结果", budget_reason)
+                    stop_reason = "budget_exceeded"
+                    break
 
             step = AgentStep(index=index)
             step_start = time.monotonic()
@@ -88,6 +99,7 @@ class ReActRunner:
                 break
 
             _account_usage(usage, raw, messages, usage_estimated)
+            self._record_budget(raw, messages)
             content = raw.get("content")
             tool_calls = list(raw.get("tool_calls") or [])
             step.thought = (content or None) if not tool_calls else (content or None)
@@ -201,9 +213,28 @@ class ReActRunner:
             steps=steps,
             usage={**usage, "total": usage["prompt_tokens"] + usage["completion_tokens"]},
             usage_estimated=usage_estimated,
+            cost_report=self.budget.snapshot() if self.budget is not None else {},
             elapsed_s=round(time.monotonic() - started, 4),
             workspace=self.workspace,
         )
+
+    def _record_budget(self, raw: Dict[str, Any], messages: List[Dict[str, Any]]) -> None:
+        """把每轮 LLM 调用记入 TaskBudget：真实 usage 优先，缺失则估算。"""
+        if self.budget is None:
+            return
+        provider = getattr(self.llm, "provider_name", "unknown")
+        model = getattr(self.llm, "default_model", None)
+        raw_usage = raw.get("usage") or {}
+        prompt_tokens = raw_usage.get("prompt_tokens")
+        completion_tokens = raw_usage.get("completion_tokens")
+        if prompt_tokens is None or completion_tokens is None:
+            self.budget.record_estimated(
+                provider, model,
+                prompt_text=json.dumps(messages, ensure_ascii=False, default=str),
+                completion_text=str(raw.get("content") or ""),
+            )
+        else:
+            self.budget.record(provider, model, int(prompt_tokens), int(completion_tokens))
 
     @staticmethod
     def _format_task(user_query: str, target_urls: Optional[List[str]]) -> str:

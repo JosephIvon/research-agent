@@ -142,6 +142,40 @@ def test_token_budget_exceeded(offline):
     assert result.usage["total"] > 10
 
 
+def test_task_budget_usd_exceeded_stops_and_reports_cost(offline):
+    """M6：TaskBudget 的 USD 口径超额 → budget_exceeded，且 cost_report 带账。"""
+    from src.llm.token_budget import TaskBudget
+
+    llm = _react_llm(_call("web_search", query="q"), "答案")
+    budget = TaskBudget("eval-usd", max_tokens=10**9, max_usd=0.0)
+    result = asyncio.run(ReActRunner(llm, max_steps=5, budget=budget).run("t"))
+
+    assert result.stop_reason == "budget_exceeded"
+    report = result.cost_report
+    assert report["calls"] >= 1 and report["total_tokens"] > 0
+    assert report["estimated"] is True, "fake provider 无 usage，必须走估算并打标"
+    assert report["limits"]["max_usd"] == 0.0
+
+
+def test_task_budget_records_real_usage_when_present(offline):
+    """provider 返回真实 usage 时不得走估算（estimated=False）。"""
+
+    class _UsageLLM(ScriptedLLMClient):
+        def chat_completion_raw(self, *a, **k):
+            raw = super().chat_completion_raw(*a, **k)
+            raw["usage"] = {"prompt_tokens": 120, "completion_tokens": 30}
+            return raw
+
+    from src.llm.token_budget import TaskBudget
+
+    llm = _UsageLLM(script={"react": ["最终答案。"]})
+    budget = TaskBudget("eval-real", max_tokens=10**6, max_usd=10.0)
+    result = asyncio.run(ReActRunner(llm, max_steps=3, budget=budget).run("t"))
+    assert result.stop_reason == "halt"
+    assert result.cost_report["estimated"] is False
+    assert result.cost_report["prompt_tokens"] == 120
+
+
 def test_wall_clock_budget_exceeded(offline):
     llm = _react_llm("答案")
     result = asyncio.run(ReActRunner(llm, max_steps=3, wall_clock_budget=0.0).run("t"))

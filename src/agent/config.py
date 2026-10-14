@@ -15,6 +15,8 @@ AGENT_MODE = os.getenv("AGENT_MODE", "legacy").lower()  # legacy | react
 AGENT_MAX_STEPS = int(os.getenv("AGENT_MAX_STEPS", "8"))
 AGENT_TOKEN_BUDGET = int(os.getenv("AGENT_TOKEN_BUDGET", "120000"))
 AGENT_WALL_CLOCK_BUDGET = float(os.getenv("AGENT_WALL_CLOCK_BUDGET", "180"))
+# USD 预算：估价口径（见 src/llm/token_budget.py），超额以 budget_exceeded 收束为 PARTIAL
+AGENT_USD_BUDGET = float(os.getenv("AGENT_USD_BUDGET", "0.5"))
 
 # 收束兜底阈值
 TOOL_DUPLICATE_LIMIT = int(os.getenv("AGENT_DUPLICATE_LIMIT", "3"))  # 同工具同参数

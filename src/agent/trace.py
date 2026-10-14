@@ -37,5 +37,6 @@ class AgentResult:
     steps: List[AgentStep] = field(default_factory=list)
     usage: Dict[str, int] = field(default_factory=dict)  # prompt/completion/total tokens
     usage_estimated: bool = True
+    cost_report: Dict[str, Any] = field(default_factory=dict)  # TaskBudget.snapshot() 口径
     elapsed_s: float = 0.0
     workspace: Dict[str, Any] = field(default_factory=dict)
