@@ -959,6 +959,116 @@ class MVPWorkflow:
         state["injection_findings_count"] = len(state.get("injection_findings") or [])
         return state
 
+    async def _run_react_mode(
+        self,
+        state: Dict[str, Any],
+        user_query: str,
+        target_urls: List[str],
+    ) -> Dict[str, Any]:
+        """AGENT_MODE=react：ReAct 工具循环替代 legacy 固定管线。
+
+        Runner 自主决定调用哪些工具（web_search / fetch_site / extract_facts /
+        compare_competitors），结束后把 workspace 里的结构化事实接入与 legacy
+        相同的交付链：引用校验 → 报告落盘 → SQLite 持久化 → completed。
+        """
+        state["status"] = "reacting"
+        self._emit("agent_step", "agent", "running", "ReAct 模式启动，模型自主规划工具调用")
+
+        try:
+            budget = TaskBudget(
+                state["task_id"],
+                max_tokens=AGENT_TOKEN_BUDGET,
+                max_usd=AGENT_USD_BUDGET,
+            )
+            workspace: Dict[str, Any] = {}
+
+            def _on_step(step) -> None:
+                # 每轮工具调用实时外发进度，SSE 订阅者据此看到模型正在做什么
+                tool_names = "、".join(tc.get("name") or "?" for tc in step.tool_calls) or "（无工具调用）"
+                self._emit(
+                    "agent_step", "agent", "running",
+                    f"第 {step.index} 轮：{tool_names}",
+                    payload={
+                        "step": step.index,
+                        "thought": step.thought,
+                        "tool_calls": step.tool_calls,
+                        "stop_reason": getattr(step, "stop_reason_if_any", None),
+                    },
+                )
+
+            runner = ReActRunner(
+                self.llm_client,
+                tools=build_default_tools(self.llm_client, workspace),
+                workspace=workspace,
+                budget=budget,
+                on_step=_on_step,
+            )
+            result = await runner.run(user_query, target_urls=target_urls)
+
+            state["cost_report"] = result.cost_report
+
+            # workspace 的 facts 是 {url: [条目,...]}，拼平成 EvidenceStore 需要的列表
+            facts = [
+                item
+                for items in (result.workspace.get("facts") or {}).values()
+                for item in (items or [])
+            ]
+
+            answer = result.answer
+            if answer:
+                state["report_final"] = answer
+                if facts:
+                    store = EvidenceStore.from_extracted_data(facts)
+                    citation_result = await asyncio.to_thread(verify_report, answer, store)
+                    state["citation_report"] = {
+                        k: v for k, v in citation_result.items() if k != "violations"
+                    }
+                    state["citation_violations"] = citation_result["violations"]
+                    state["citation_trusted"] = citation_result["passed"]
+                    if not citation_result["passed"]:
+                        # 与 legacy 同一原则：未过校验的报告不静默交付，顶部挂低可信标记
+                        state["report_final"] = self._mark_low_trust(state["report_final"], citation_result)
+
+                self._enforce_report_output(state)
+                state["sync_results"]["local_file"] = self._save_report(state["report_final"], state.get("task_id"))
+                state["report_id"] = Path(state["sync_results"]["local_file"]).stem
+                self._persist_to_sqlite(state)
+                self._emit("completed", "completed", "completed", "全部完成")
+                state["status"] = "completed"
+                state["termination_reason"] = f"react:{result.stop_reason}"
+            else:
+                state["status"] = "failed"
+                state["termination_reason"] = f"react:{result.stop_reason}"
+                state["report_final"] = (
+                    f"❌ ReAct 调研未产出终答（stop_reason={result.stop_reason}，"
+                    f"共执行 {len(result.steps)} 轮），可查看 agent_step 事件了解已完成的工具调用。"
+                )
+                self._emit(
+                    "error", "agent", "failed",
+                    f"ReAct 未产出终答：{result.stop_reason}",
+                    payload={"stop_reason": result.stop_reason, "steps": len(result.steps)},
+                )
+        except Exception as e:
+            logger.error(f"ReAct 工作流执行失败: {e}", exc_info=True)
+            state["status"] = "failed"
+            state["termination_reason"] = f"执行失败: {str(e)}"
+            state["errors"].append({
+                "timestamp": datetime.now(),
+                "stage": "workflow",
+                "error_type": type(e).__name__,
+                "message": str(e),
+                "retry_attempts": 0
+            })
+            self._emit(
+                "error", "workflow", "failed",
+                f"执行失败: {str(e)}",
+                payload={"stage": "workflow", "error_type": type(e).__name__}
+            )
+
+        # react 路径不走入口抓取，injection_findings 天然为空；统一记录计数保持口径一致
+        state["injection_findings_count"] = len(state.get("injection_findings") or [])
+        return state
+
     def _filter_search_urls(self, urls: List[str]) -> List[str]:
         """Keep only safe URLs from search results before the crawler sees them."""
         safe_urls = []
@@ -1072,20 +1182,36 @@ class MVPWorkflow:
 
         adjustment_task = asyncio.create_task(_adjustment_loop())
 
-        async def _limited_fetch(site: Dict[str, Any]) -> Dict[str, Any]:
-            semaphore = controller.get_semaphore()
-            async with semaphore:
-                # Rate limiting per site
-                await asyncio.sleep(CRAWL_REQUEST_INTERVAL)
-                return await self._fetch_single_competitor(
-                    site["url"],
-                    site.get("auth_credentials"),
-                    site.get("login_url"),
-                    custom_selectors,
-                )
+        # 整批共享一个爬虫实例：连接池与会话复用，避免每站各开一套开销。
+        # 刻意**惰性**创建而不是这里立即 new：单测常把 _fetch_single_competitor
+        # 整个替身掉（不触网），那种调用方不应为此启动真实浏览器。首个真正
+        # 抓取的站点经 _acquire_batch_crawler 创建一次，其余站点复用，
+        # 批次结束由 batch_stack 统一关闭。
+        async with contextlib.AsyncExitStack() as batch_stack:
+            self._batch_crawler_stack = batch_stack
+            self._batch_crawler = None
+            self._batch_crawler_lock = asyncio.Lock()
 
-        tasks = [_limited_fetch(site) for site in site_configs]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+            async def _limited_fetch(site: Dict[str, Any]) -> Dict[str, Any]:
+                semaphore = controller.get_semaphore()
+                async with semaphore:
+                    # Rate limiting per site
+                    await asyncio.sleep(CRAWL_REQUEST_INTERVAL)
+                    return await self._fetch_single_competitor(
+                        site["url"],
+                        site.get("auth_credentials"),
+                        site.get("login_url"),
+                        custom_selectors,
+                    )
+
+            try:
+                tasks = [_limited_fetch(site) for site in site_configs]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+            finally:
+                # 解除批次上下文引用（爬虫本体由 batch_stack 退出时关闭），
+                # 避免后续独立调用的单站抓取误用已关闭的实例
+                self._batch_crawler_stack = None
+                self._batch_crawler = None
 
         adjustment_task.cancel()
         try:
@@ -1109,18 +1235,42 @@ class MVPWorkflow:
         logger.info(f"竞品抓取完成：成功 {sum(1 for c in competitors if c['status'] == 'success')}/{len(competitors)}")
         return competitors
 
+    async def _acquire_batch_crawler(self) -> Optional[WebCrawler]:
+        """惰性获取整批共享的爬虫实例（_fetch_all_competitors 建立的批次上下文）。
+
+        不在批次内调用时返回 None，调用方退回就地新开即关。加锁防并发站点
+        同时惰性创建出多个实例——那会退化回"每站一个爬虫"。
+        """
+        stack = getattr(self, "_batch_crawler_stack", None)
+        if stack is None:
+            return None
+        async with self._batch_crawler_lock:
+            if self._batch_crawler is None:
+                self._batch_crawler = await stack.enter_async_context(WebCrawler())
+            return self._batch_crawler
+
     async def _fetch_single_competitor(
         self,
         url: str,
         auth_credentials: Optional[Dict[str, str]] = None,
         login_url: Optional[str] = None,
-        custom_selectors: Optional[Dict[str, List[str]]] = None
+        custom_selectors: Optional[Dict[str, List[str]]] = None,
+        crawler: Optional[WebCrawler] = None,
     ) -> Dict[str, Any]:
-        """抓取单个竞品页面并提取信息"""
+        """抓取单个竞品页面并提取信息。
+
+        爬虫来源优先级：显式传入 crawler > 批次共享实例（_fetch_all_competitors
+        建立，惰性创建整批复用）> 就地新开一个、用完即关（独立调用场景）。
+        """
         self._emit("crawl_progress", "crawl", "running", f"正在抓取 {url}", payload={"url": url, "name": "unknown"})
         try:
-            async with WebCrawler() as crawler:
-                profile = await crawler.fetch_site_profile(
+            async with contextlib.AsyncExitStack() as stack:
+                active_crawler = crawler
+                if active_crawler is None:
+                    active_crawler = await self._acquire_batch_crawler()
+                if active_crawler is None:
+                    active_crawler = await stack.enter_async_context(WebCrawler())
+                profile = await active_crawler.fetch_site_profile(
                     url,
                     auth_credentials=auth_credentials,
                     login_url=login_url,

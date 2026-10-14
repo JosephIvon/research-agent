@@ -44,6 +44,8 @@ class TaskEventType(str, Enum):
     ARTIFACT_READY = "artifact_ready"
     COMPLETED = "completed"
     ERROR = "error"
+    # ReAct 模式（AGENT_MODE=react）每轮工具调用的进度事件
+    AGENT_STEP = "agent_step"
 
 
 @dataclass
@@ -110,6 +112,10 @@ class TaskState:
     # 任务归属用户。默认值保证旧任务（Redis/内存里已存在的状态）反序列化时不报错。
     # 为 None 表示无主，按策略仅 admin 可读。
     user_id: Optional[str] = None
+    # 注入审计发现的条数（冗余计数，供列表页免加载 findings 明细直接展示）
+    injection_findings_count: int = 0
+    # ReAct 模式的成本报告（TaskBudget.snapshot() 的口径）；legacy 路径为 None
+    cost_report: Optional[Dict[str, Any]] = None
 
     def __post_init__(self):
         if isinstance(self.status, str):
@@ -136,6 +142,8 @@ class TaskState:
             "quality_grade": self.quality_grade,
             "missing_dimensions": self.missing_dimensions,
             "user_id": self.user_id,
+            "injection_findings_count": self.injection_findings_count,
+            "cost_report": self.cost_report,
             "artifacts": {k: v.to_dict() for k, v in self.artifacts.items()},
             "events": [e.to_dict() for e in self.events],
         }
@@ -316,6 +324,10 @@ class InMemoryTaskStore(PersistenceBackend):
                 ts.quality_grade = kwargs["quality_grade"]
             if "missing_dimensions" in kwargs:
                 ts.missing_dimensions = kwargs["missing_dimensions"] or []
+            if "injection_findings_count" in kwargs:
+                ts.injection_findings_count = kwargs["injection_findings_count"]
+            if "cost_report" in kwargs:
+                ts.cost_report = kwargs["cost_report"]
             self._tasks[task_id] = ts
             return ts
 
@@ -486,6 +498,10 @@ class RedisTaskStore(PersistenceBackend):
             ts.quality_grade = kwargs["quality_grade"]
         if "missing_dimensions" in kwargs:
             ts.missing_dimensions = kwargs["missing_dimensions"] or []
+        if "injection_findings_count" in kwargs:
+            ts.injection_findings_count = kwargs["injection_findings_count"]
+        if "cost_report" in kwargs:
+            ts.cost_report = kwargs["cost_report"]
 
     async def update(self, task_id: str, **kwargs) -> Optional[TaskState]:
         def _mutate(ts: TaskState) -> None:
