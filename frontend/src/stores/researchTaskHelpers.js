@@ -130,3 +130,43 @@ export function makeResearchRunId() {
   const random = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`
   return `run_${random}`
 }
+
+export const AGENT_STEP_LIMIT = 50
+export const AGENT_THOUGHT_TRUNCATE = 60
+
+export function normalizeAgentStep(payload = {}) {
+  return {
+    step: payload.step,
+    thought: payload.thought ?? null,
+    tool_calls: Array.isArray(payload.tool_calls) ? payload.tool_calls : [],
+    stop_reason: payload.stop_reason ?? null
+  }
+}
+
+export function appendAgentStep(steps = [], payload) {
+  return [...steps, normalizeAgentStep(payload)].slice(-AGENT_STEP_LIMIT)
+}
+
+export function buildAgentStepMessage(payload = {}) {
+  const tools = (Array.isArray(payload.tool_calls) ? payload.tool_calls : [])
+    .map(tool => tool?.name)
+    .filter(Boolean)
+    .join('、')
+  return `第${payload.step}轮：${tools || '思考'}`
+}
+
+function summarizeArguments(toolCall = {}) {
+  try {
+    return JSON.stringify(toolCall.arguments ?? {}) ?? ''
+  } catch (e) {
+    return ''
+  }
+}
+
+export function formatAgentStepSummary(step = {}) {
+  const tools = (Array.isArray(step.tool_calls) ? step.tool_calls : [])
+    .map(tool => `${tool?.name || '未知工具'}（${summarizeArguments(tool).slice(0, 40)}）`)
+    .join('、')
+  const thought = String(step.thought || '').trim().slice(0, AGENT_THOUGHT_TRUNCATE)
+  return [`第${step.step}轮`, tools || '思考', thought].filter(Boolean).join(' · ')
+}

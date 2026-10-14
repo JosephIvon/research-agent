@@ -55,6 +55,14 @@ export const researchApi = {
 
   deleteReport: (id) => api.delete(`/research/history/${encodeURIComponent(id)}`),
 
+  // Report feedback API
+  addReportFeedback: (reportId, rating, comment) => api.post(
+    `/research/reports/${encodeURIComponent(reportId)}/feedback`,
+    comment ? { rating, comment } : { rating }
+  ),
+
+  getReportFeedback: (reportId) => api.get(`/research/reports/${encodeURIComponent(reportId)}/feedback`),
+
   // Async task queue API
   createTask: (params) => api.post('/research/tasks', params),
 

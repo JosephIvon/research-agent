@@ -3,6 +3,8 @@ import { ref } from 'vue'
 import { researchApi } from '../api'
 import { resolveGrade } from '../utils/reportGrade'
 import {
+  appendAgentStep,
+  buildAgentStepMessage,
   buildTaskTimeline,
   getTaskArtifactContent,
   makeResearchRunId,
@@ -32,6 +34,17 @@ function firstHeading(markdown) {
   return line?.replace(/^#+\s*/, '').slice(0, 120) || '竞品分析报告'
 }
 
+function applyTraceExtras(target, payload = {}) {
+  if (payload.trace_url) target.trace_url = payload.trace_url
+  if (Number.isFinite(Number(payload.injection_findings_count))) {
+    target.injection_findings_count = Number(payload.injection_findings_count)
+  }
+  if (payload.cost_report && typeof payload.cost_report === 'object') {
+    target.cost_report = payload.cost_report
+  }
+  return target
+}
+
 function normalizeReport(payload, request = {}) {
   const markdown = payload.markdown || payload.report || payload.competitive_report || ''
   const id = String(payload.task_id || payload.id || Date.now())
@@ -39,7 +52,7 @@ function normalizeReport(payload, request = {}) {
     ? payload.competitors.length
     : (payload.competitors ?? 0)
 
-  return {
+  return applyTraceExtras({
     id,
     title: payload.title || payload.query || request.query || firstHeading(markdown),
     query: payload.query || request.query || payload.title || '',
@@ -51,7 +64,7 @@ function normalizeReport(payload, request = {}) {
     created_at: payload.created_at || new Date().toLocaleString(),
     output_files: payload.output_files || {},
     raw: payload
-  }
+  }, payload)
 }
 
 function cachedReports() {
@@ -109,6 +122,7 @@ const STAGE_MAP = {
   search: 'search',
   crawl_start: 'crawl',
   crawl_progress: 'crawl',
+  agent_step: 'crawl',
   crawl_complete: 'extract',
   extract: 'extract',
   verify: null,          // no frontend step
@@ -134,6 +148,7 @@ function connectTaskSSE(runId, taskId, callbacks = {}, handlers = {}) {
   const eventSource = researchApi.getTaskEvents(taskId)
   let reportId = null
   let prdContent = null
+  let agentSteps = []
 
   function handleMessage(event) {
     try {
@@ -150,11 +165,20 @@ function connectTaskSSE(runId, taskId, callbacks = {}, handlers = {}) {
         }
       }
 
+      // Capture agent reasoning steps (keep the latest 50 to bound memory)
+      let agentPatch = null
+      let runMessage = message
+      if (backendEvent === 'agent_step' && payload) {
+        agentSteps = appendAgentStep(agentSteps, payload)
+        agentPatch = { agent_steps: agentSteps }
+        runMessage = buildAgentStepMessage(payload)
+      }
+
       const frontendStage = mapBackendStage(backendEvent)
       if (!frontendStage) return
 
       const eventType = getEventType(backendEvent, status)
-      emitRunEvent(runId, frontendStage, eventType, message, callbacks)
+      emitRunEvent(runId, frontendStage, eventType, runMessage, callbacks, agentPatch)
 
       if (backendEvent === 'completed' || status === 'failed') {
         cleanup()
@@ -163,6 +187,7 @@ function connectTaskSSE(runId, taskId, callbacks = {}, handlers = {}) {
           taskId,
           reportId,
           prdContent,
+          agentSteps,
           status: status === 'failed' ? 'failed' : 'completed',
           callbacks
         })
@@ -174,7 +199,7 @@ function connectTaskSSE(runId, taskId, callbacks = {}, handlers = {}) {
 
   const BACKEND_EVENTS = [
     'task_created', 'decompose', 'search', 'crawl_start',
-    'crawl_progress', 'crawl_complete', 'extract', 'verify',
+    'crawl_progress', 'agent_step', 'crawl_complete', 'extract', 'verify',
     'report_generate', 'prd_generate', 'artifact_ready',
     'completed', 'error'
   ]
@@ -239,7 +264,7 @@ export const useResearchStore = defineStore('research', () => {
     return cacheRun(next)
   }
 
-  async function finalizeAsyncRun({ runId, taskId, reportId, prdContent, status, callbacks }) {
+  async function finalizeAsyncRun({ runId, taskId, reportId, prdContent, agentSteps = [], status, callbacks }) {
     const run = getResearchRun(runId)
     const finalStatus = status === 'failed' ? 'failed' : 'completed'
 
@@ -247,6 +272,7 @@ export const useResearchStore = defineStore('research', () => {
       const failedRun = updateResearchRun(runId, {
         status: 'failed',
         error: '调研任务执行失败，请检查输入或稍后重试。',
+        agent_steps: agentSteps,
         completed_at: new Date().toISOString()
       })
       callbacks.onError?.(failedRun)
@@ -258,7 +284,8 @@ export const useResearchStore = defineStore('research', () => {
       if (task?.status === 'failed') {
         const failedRun = updateResearchRun(runId, {
           status: 'failed',
-          error: task.current_message || '调研任务执行失败，请检查输入或稍后重试。',
+          error: task.current_message || '调研任务执行失败，请稍后重试。',
+          agent_steps: agentSteps,
           completed_at: new Date().toISOString()
         })
         callbacks.onError?.(failedRun)
@@ -308,10 +335,12 @@ export const useResearchStore = defineStore('research', () => {
         report.prd_created_at = prdArtifact?.created_at || new Date().toISOString()
       }
 
+      applyTraceExtras(report, task)
       cacheReport(report)
       const finalRun = updateResearchRun(runId, {
         status: 'completed',
         report_id: report.id,
+        agent_steps: agentSteps,
         completed_at: new Date().toISOString()
       })
       currentTask.value = { id: report.id, status: 'completed', result: report }
@@ -321,6 +350,7 @@ export const useResearchStore = defineStore('research', () => {
       const failedRun = updateResearchRun(runId, {
         status: 'failed',
         error: error?.message || '报告结果获取失败，请稍后重试。',
+        agent_steps: agentSteps,
         completed_at: new Date().toISOString()
       })
       callbacks.onError?.(failedRun)
@@ -348,12 +378,12 @@ export const useResearchStore = defineStore('research', () => {
     return failedRun
   }
 
-  function appendRunEvent(id, stage, type, message) {
+  function appendRunEvent(id, stage, type, message, extraPatch = null) {
     const existing = getResearchRun(id)
     if (!existing) return null
     const event = createRunEvent(stage, type, message)
     const events = [...(existing.events || []), event].slice(-80)
-    const next = updateResearchRun(id, { current_stage: stage, events })
+    const next = updateResearchRun(id, { current_stage: stage, events, ...(extraPatch || {}) })
     return { event, run: next }
   }
 
@@ -388,8 +418,8 @@ export const useResearchStore = defineStore('research', () => {
     return run
   }
 
-  function emitRunEvent(id, stage, type, message, callbacks = {}) {
-    const payload = appendRunEvent(id, stage, type, message)
+  function emitRunEvent(id, stage, type, message, callbacks = {}, extraPatch = null) {
+    const payload = appendRunEvent(id, stage, type, message, extraPatch)
     if (payload?.event && callbacks.onEvent) {
       callbacks.onEvent(payload.event, payload.run)
     }

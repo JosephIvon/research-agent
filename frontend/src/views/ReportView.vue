@@ -70,10 +70,57 @@
             </dl>
           </section>
 
+          <section class="side-panel" v-if="costReport">
+            <h2>成本估算</h2>
+            <dl class="meta-list">
+              <div>
+                <dt>Token 用量</dt>
+                <dd>{{ formatCostNumber(costReport.total_tokens) }}</dd>
+              </div>
+              <div>
+                <dt>费用估算（USD）</dt>
+                <dd>≈ ${{ costReport.estimated_usd ?? costReport.estimated ?? '—' }}（估算）</dd>
+              </div>
+              <div>
+                <dt>模型调用次数</dt>
+                <dd>{{ formatCostNumber(costReport.calls) }}</dd>
+              </div>
+            </dl>
+          </section>
+
           <section class="side-panel" v-if="missingDimensions.length">
             <h2>缺失维度</h2>
             <div class="missing-tags">
               <el-tag v-for="dim in missingDimensions" :key="dim" type="warning">{{ dim }}</el-tag>
+            </div>
+          </section>
+
+          <section class="side-panel feedback-panel">
+            <h2>报告反馈</h2>
+            <div class="feedback-buttons">
+              <el-button
+                :type="feedbackRating === 'up' ? 'success' : 'default'"
+                :disabled="isSendingFeedback"
+                @click="submitFeedback('up')"
+              >
+                👍 有用（{{ feedbackCounts.up }}）
+              </el-button>
+              <el-button
+                :type="feedbackRating === 'down' ? 'danger' : 'default'"
+                :disabled="isSendingFeedback"
+                @click="submitFeedback('down')"
+              >
+                👎 需改进（{{ feedbackCounts.down }}）
+              </el-button>
+            </div>
+            <div v-if="feedbackRating" class="feedback-comment">
+              <el-input
+                v-model="feedbackComment"
+                maxlength="120"
+                placeholder="补充一句话意见（可选）"
+                @keyup.enter="submitComment"
+              />
+              <el-button type="primary" :loading="isSendingFeedback" @click="submitComment">提交意见</el-button>
             </div>
           </section>
 
@@ -86,6 +133,10 @@
               <el-icon><View /></el-icon>
               多角色审查
             </el-button>
+            <el-button v-if="traceUrl" @click="openTrace">
+              <el-icon><Link /></el-icon>
+              查看 Trace
+            </el-button>
             <el-button @click="$router.push('/sync')">
               <el-icon><Upload /></el-icon>
               同步
@@ -94,6 +145,15 @@
         </aside>
 
         <section class="report-content">
+          <el-alert
+            v-if="injectionFindingsCount > 0"
+            class="injection-alert"
+            type="warning"
+            show-icon
+            :closable="false"
+            :title="`已检测并净化 ${injectionFindingsCount} 处来源注入痕迹`"
+          />
+
           <div class="title-panel">
             <div>
               <div class="section-kicker">调研主题</div>
@@ -204,6 +264,7 @@ import {
   ChatDotRound,
   DocumentCopy,
   Download,
+  Link,
   Moon,
   Sunny,
   Upload,
@@ -231,6 +292,10 @@ const requestedTab = typeof route.query.tab === 'string' ? route.query.tab : ''
 const activeTab = ref(['report', 'prd', 'sources'].includes(requestedTab) ? requestedTab : 'report')
 const isGeneratingPRD = ref(false)
 const chartRef = ref(null)
+const feedbackCounts = ref({ up: 0, down: 0 })
+const feedbackRating = ref('')
+const feedbackComment = ref('')
+const isSendingFeedback = ref(false)
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 let chartInstance = null
 
@@ -281,6 +346,9 @@ const chartData = computed(() => report.value?.radar_data)
 const hasPRD = computed(() => Boolean(report.value?.prd))
 const competitorCount = computed(() => getReportCompetitorCount(report.value || {}))
 const sourceRows = computed(() => buildSourceRows(report.value || {}))
+const injectionFindingsCount = computed(() => Number(report.value?.injection_findings_count) || 0)
+const traceUrl = computed(() => report.value?.trace_url || '')
+const costReport = computed(() => report.value?.cost_report || null)
 const activeArtifactContent = computed(() => {
   if (activeTab.value === 'prd') return report.value?.prd || ''
   if (activeTab.value === 'sources') {
@@ -310,6 +378,63 @@ async function loadReport() {
     }
   } catch (e) {
     ElMessage.error('加载报告失败')
+  }
+}
+
+function formatCostNumber(value) {
+  const num = Number(value)
+  return Number.isFinite(num) ? num.toLocaleString() : '—'
+}
+
+function openTrace() {
+  if (traceUrl.value) window.open(traceUrl.value, '_blank')
+}
+
+function applyFeedbackSummary(summary) {
+  if (summary && typeof summary === 'object') {
+    feedbackCounts.value = { up: summary.up || 0, down: summary.down || 0 }
+  }
+}
+
+async function loadFeedbackCounts() {
+  if (!report.value?.id) return
+  try {
+    const counts = await researchApi.getReportFeedback(report.value.id)
+    applyFeedbackSummary(counts)
+  } catch (e) {
+    // 计数获取失败时保持 0 显示，不打断页面
+  }
+}
+
+async function submitFeedback(rating) {
+  if (!report.value?.id || isSendingFeedback.value) return
+  feedbackRating.value = rating
+  isSendingFeedback.value = true
+  try {
+    const result = await researchApi.addReportFeedback(report.value.id, rating)
+    applyFeedbackSummary(result?.summary)
+    ElMessage.success(rating === 'up' ? '感谢你的认可' : '已收到改进建议')
+  } catch (e) {
+    // 失败提示由 api 拦截器统一处理
+  } finally {
+    isSendingFeedback.value = false
+  }
+}
+
+async function submitComment() {
+  const comment = feedbackComment.value.trim()
+  if (!comment || !feedbackRating.value || isSendingFeedback.value) return
+  isSendingFeedback.value = true
+  try {
+    const result = await researchApi.addReportFeedback(report.value.id, feedbackRating.value, comment)
+    applyFeedbackSummary(result?.summary)
+    feedbackComment.value = ''
+    feedbackRating.value = ''
+    ElMessage.success('意见已提交，感谢反馈')
+  } catch (e) {
+    // 失败提示由 api 拦截器统一处理
+  } finally {
+    isSendingFeedback.value = false
   }
 }
 
@@ -424,8 +549,9 @@ async function generatePRD() {
   }
 }
 
-onMounted(() => {
-  loadReport()
+onMounted(async () => {
+  await loadReport()
+  loadFeedbackCounts()
 })
 
 watch(activeTab, tab => {
@@ -609,6 +735,27 @@ onUnmounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.injection-alert {
+  border-radius: 8px;
+}
+
+.feedback-buttons {
+  display: flex;
+  gap: 8px;
+
+  .el-button {
+    flex: 1;
+    margin: 0;
+  }
+}
+
+.feedback-comment {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .side-actions {

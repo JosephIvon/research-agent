@@ -68,6 +68,24 @@
             </article>
           </div>
 
+          <el-collapse v-if="agentSteps.length" v-model="activeAgentPanel" class="agent-collapse">
+            <el-collapse-item name="steps">
+              <template #title>
+                <span class="agent-collapse-title">Agent 思考过程</span>
+                <span class="agent-collapse-count">{{ agentSteps.length }} 轮</span>
+              </template>
+              <div class="agent-step-list">
+                <div
+                  v-for="(item, index) in agentSteps"
+                  :key="index"
+                  class="agent-step-line"
+                >
+                  {{ formatAgentStepSummary(item) }}
+                </div>
+              </div>
+            </el-collapse-item>
+          </el-collapse>
+
           <div class="activity-panel">
             <div class="panel-heading">
               <div>
@@ -112,7 +130,7 @@ import {
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useResearchStore } from '../stores/research'
-import { getTaskInputSummary } from '../stores/researchTaskHelpers'
+import { formatAgentStepSummary, getTaskInputSummary } from '../stores/researchTaskHelpers'
 
 const route = useRoute()
 const router = useRouter()
@@ -121,8 +139,10 @@ const taskId = String(route.params.id)
 const run = ref(store.getResearchRun(taskId))
 const events = ref(run.value?.events || [])
 const isExecuting = ref(false)
+const activeAgentPanel = ref([])
 
 const timeline = computed(() => run.value?.timeline || [])
+const agentSteps = computed(() => run.value?.agent_steps || [])
 const summary = computed(() => getTaskInputSummary(run.value?.params || {}))
 const currentStageIndex = computed(() => {
   const stage = run.value?.current_stage
@@ -212,7 +232,8 @@ async function retryRun() {
     status: 'pending',
     error: null,
     current_stage: null,
-    events: []
+    events: [],
+    agent_steps: []
   })
   syncRun()
   await executeRun()
@@ -414,6 +435,39 @@ onMounted(() => {
 
 .activity-panel {
   padding: 20px;
+}
+
+.agent-collapse {
+  margin-bottom: 18px;
+  border-top: 1px solid #e4e7ed;
+  border-bottom: 1px solid #e4e7ed;
+}
+
+.agent-collapse-title {
+  color: #172033;
+  font-weight: 700;
+}
+
+.agent-collapse-count {
+  margin-left: 10px;
+  color: #2563eb;
+  font-size: 12px;
+}
+
+.agent-step-list {
+  max-height: 240px;
+  overflow: auto;
+}
+
+.agent-step-line {
+  padding: 8px 0;
+  border-bottom: 1px dashed #edf2f7;
+  color: #334155;
+  line-height: 1.6;
+
+  &:last-child {
+    border-bottom: 0;
+  }
 }
 
 .panel-heading {
