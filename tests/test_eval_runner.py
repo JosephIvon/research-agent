@@ -3,6 +3,8 @@
 全量 11 条由 CI 的 evals job（python -m evals.runner --gate）负责；
 这里选常规/注入/react 对照各一条，保证测试套件自身不超时。
 """
+import json
+
 from evals import runner as eval_runner
 from evals.fixture_source import load_manifest
 
@@ -77,7 +79,10 @@ def test_smoke_cross_source_case_cites_all_sources():
         f"跨来源综合丢了 {metrics['sources_total'] - metrics['sources_cited']} 个来源"
     assert metrics["source_citation_ratio"] == 1.0
     assert metrics["grounding"] >= 0.7 and metrics["dimension_coverage"] >= 0.85, \
-        "低于 M7 触发阈值，应触发 RAG 消融实验"
+        f"低于 M7 触发阈值，应触发 RAG 消融实验；grounding={metrics.get('grounding')} " \
+        f"dimension={metrics.get('dimension_coverage')} " \
+        f"missing_dims={metrics.get('dimensions_missing')} " \
+        f"violations={json.dumps(case.get('citation_violations') or [], ensure_ascii=False)[:200]}"
 
 
 def test_gate_passes_on_current_baseline():
