@@ -62,7 +62,7 @@ class ResearchState(TypedDict):
     # 元数据
     task_id: str
     status: Literal["pending", "decomposing", "researching",
-                   "verifying", "writing", "completed", "failed"]
+                   "verifying", "writing", "completed", "partial", "failed"]
     created_at: datetime
     updated_at: datetime
     termination_reason: Optional[str]  # 状态转换原因

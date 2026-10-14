@@ -74,8 +74,8 @@ from src.workflow.task_store import (
 )
 from src.storage import get_report_db, REPORT_NOT_IN_DB
 from src.logging import get_audit_logger, AuditEvent
-# trace_url 未收录于 src.observability 的 __all__，须从子模块导入
-from src.observability.langfuse_tracer import trace_url
+# 可观测层统一出口。未启用 Langfuse 时全部为 no-op，不产生网络调用与额外开销。
+from src.observability import clear_task_context, end_trace, set_task_context, start_trace, trace_url
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -576,7 +576,11 @@ async def competitive_research(request: Request, req: ResearchRequest):
         )
 
         return {
-            "status": "success" if result["status"] == "completed" else "failed",
+            # partial 不折成 success 也不折成 failed：报告已经产出了但被预算截断，
+            # 说成功是撒谎，说失败又会让调用方白白丢掉这份报告。
+            # 注意 completed 仍对外报 "success"（既有契约，不在本次改动范围）。
+            "status": ("success" if result["status"] == "completed"
+                       else ("partial" if result["status"] == "partial" else "failed")),
             "task_id": result.get("task_id"),
             "query": req.query,
             "report": result.get("report_final"),
@@ -776,10 +780,23 @@ class TaskRequest(BaseModel):
 
 _task_queue: List[asyncio.Task] = []
 
+# 事件状态 → 任务终态。抽成显式映射而不是行内三元：预算超额（partial）与
+# 正常完成（completed）必须能被一眼看出是两回事，行内表达式会把它们糊在一起。
+_TASK_STATUS_BY_EVENT = {
+    "completed": TaskStatus.COMPLETED,
+    "failed": TaskStatus.FAILED,
+    "partial": TaskStatus.PARTIAL,
+}
+
 
 async def _run_research_task(task_id: str, req: TaskRequest, user_id: Optional[str] = None):
     """Background task that runs the research workflow and emits events."""
     from src.workflow.mvp_workflow import MVPWorkflow
+
+    # Langfuse 链路接线：整个任务跑在一个 trace 下，LLM 调用各自成 span。
+    # 两个入口都必须开——未启用时这两行是 no-op（_init 早退），零开销。
+    set_task_context(task_id, user_id=user_id)
+    start_trace("research.run", input={"query": req.query}, task_id=task_id)
 
     store = get_task_store()
     emitter = store.get_or_create_emitter(task_id)
@@ -793,8 +810,15 @@ async def _run_research_task(task_id: str, req: TaskRequest, user_id: Optional[s
         await store.add_event(task_id, event)
         if event.status == "running":
             await store.update(task_id, current_stage=event.stage, current_message=event.message, status=TaskStatus.RUNNING)
-        elif event.status in ("completed", "failed"):
-            await store.update(task_id, current_stage=event.stage, current_message=event.message, status=TaskStatus.FAILED if event.status == "failed" else TaskStatus.COMPLETED)
+        elif event.status in ("completed", "failed", "partial"):
+            # partial = 预算超额收束：报告已产出但内容不完整。它既不是成功也不是失败，
+            # 单列一个终态才能让前端如实提示"这是被截断的结果"，而不是谎称完成。
+            await store.update(
+                task_id,
+                current_stage=event.stage,
+                current_message=event.message,
+                status=_TASK_STATUS_BY_EVENT[event.status],
+            )
 
     emitter._on_event = on_event
 
@@ -826,10 +850,12 @@ async def _run_research_task(task_id: str, req: TaskRequest, user_id: Optional[s
         "cost_report": result.get("cost_report"),
     }
 
-    if result["status"] == "completed":
+    if result["status"] in ("completed", "partial"):
+        # partial 与 completed 走同一条产出路径（报告照常落库），只是终态不同：
+        # 预算超额收束出来的报告是不完整的，标成 completed 就是在骗用户。
         await store.update(
             task_id,
-            status=TaskStatus.COMPLETED,
+            status=_TASK_STATUS_BY_EVENT[result["status"]],
             report_id=result.get("report_id"),
             **research_metadata,
         )
@@ -860,12 +886,15 @@ async def _run_research_task(task_id: str, req: TaskRequest, user_id: Optional[s
 
     # Audit log research completion/failure
     audit = get_audit_logger()
-    if result["status"] == "completed":
+    if result["status"] in ("completed", "partial"):
         audit.log(AuditEvent.RESEARCH_COMPLETE, None, {
             "task_id": task_id,
             "quality_score": result.get("quality_score"),
             "quality_grade": result.get("quality_grade"),
             "competitors_count": len(result.get("competitors", [])),
+            # partial 也记 COMPLETE 是因为报告确实产出了；超收束这一事实记在这里，
+            # 否则审计日志里只剩"成功"，事后无从判断当时是不是被预算截断的。
+            "termination_reason": result.get("termination_reason") if result["status"] == "partial" else None,
         })
     else:
         audit.log(AuditEvent.RESEARCH_FAIL, None, {
@@ -873,6 +902,15 @@ async def _run_research_task(task_id: str, req: TaskRequest, user_id: Optional[s
             "termination_reason": result.get("termination_reason"),
             "quality_score": result.get("quality_score"),
         }, "warning")
+
+    # 关闭 trace：必须放在所有落库之后，且无论成功失败都要走。未启用时是 no-op。
+    end_trace({
+        "status": result["status"],
+        "termination_reason": result.get("termination_reason"),
+        "quality_score": result.get("quality_score"),
+    })
+    # 清掉 contextvars，避免 trace/task 关联残留到复用同一上下文的后续动作。
+    clear_task_context()
 
 
 @limiter.limit(RATE_LIMIT_PER_TOKEN)
@@ -904,7 +942,22 @@ async def create_task(request: Request, req: TaskRequest):
         "target_sites_count": len(req.target_sites),
     })
 
-    asyncio.create_task(_run_research_task(task_id, req, user_id))
+    background = asyncio.create_task(_run_research_task(task_id, req, user_id))
+    # 兜底收尾：工作流抛异常时 _run_research_task 的函数体会被跳过，
+    # end_trace / clear_task_context 都执行不到，trace 会一直挂着不关。
+    # 这里用 done callback 补上，并把异常显式取走记日志——否则 asyncio 会一直
+    # 挂着一个 "Task exception was never retrieved" 的告警。
+    def _finalize_trace(fut: "asyncio.Task") -> None:
+        try:
+            if not fut.cancelled():
+                exc = fut.exception()
+                if exc is not None:
+                    logger.error("research task %s 异常终止", task_id, exc_info=exc)
+                    end_trace({"status": "error", "error": str(exc)})
+        finally:
+            clear_task_context()
+
+    background.add_done_callback(_finalize_trace)
 
     return {
         "task_id": task_id,
@@ -1024,12 +1077,38 @@ def list_history(request: Request):
     return sorted(items, key=lambda item: item.get("created_at", ""), reverse=True)[:100]
 
 
+async def _task_meta_for_report(report_id: str) -> Dict[str, Any]:
+    """按 report_id 反查任务元数据（成本报告 / 注入命中数 / trace 链接）。
+
+    这三个字段此前只在"任务实时轮询"那一路的载荷里出现；从历史报告重新打开时
+    载荷里没有它们，成本卡与 Trace 按钮整个消失——用户刷新一下页面，就再也看不到
+    这次调研花了多少钱、点了跳转过去还会 404。
+
+    这里按 report_id 线性扫任务列表把元数据找回来，且**只在单份报告读取时调用**。
+    列表接口刻意不做 enrichment，否则 N 份报告就是 N 次全量扫描。任务量级涨到
+    需要索引时（Redis store 尤其明显），应改为维护 report_id → task_id 的反查索引。
+    """
+    store = get_task_store()
+    for task in await store.list_tasks():
+        if task.report_id == report_id:
+            return {
+                "cost_report": getattr(task, "cost_report", None),
+                "injection_findings_count": getattr(task, "injection_findings_count", 0),
+                "trace_url": trace_url(task.task_id),
+            }
+    # 找不到归属任务（比如任务存储已过期、或报告来自文件兜底）：如实给空值。
+    # 用 report_id 拼一个假的 trace 链接只会让用户点进一个必然 404 的页面。
+    return {"cost_report": None, "injection_findings_count": 0, "trace_url": None}
+
+
 @limiter.limit(RATE_LIMIT_PER_TOKEN)
 @app.get("/research/history/{report_id}", response_model=Dict[str, Any])
-def get_history_report(request: Request, report_id: str):
+async def get_history_report(request: Request, report_id: str):
     """读取单份历史报告。"""
     _require_report_access(request, report_id)
-    return _load_report_payload(report_id)
+    payload = _load_report_payload(report_id)
+    payload.update(await _task_meta_for_report(report_id))
+    return payload
 
 
 @app.get("/research/compare/{report_id1}/{report_id2}", response_model=Dict[str, Any])

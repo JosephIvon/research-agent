@@ -27,6 +27,8 @@ class TaskStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
+    # 预算耗尽收束：已有结论但未跑完预算，按部分结果交付（README 对外口径）
+    PARTIAL = "partial"
     FAILED = "failed"
 
 

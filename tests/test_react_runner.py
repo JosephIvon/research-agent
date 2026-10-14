@@ -81,6 +81,8 @@ def test_halt_flow_search_then_final_answer(offline):
     assert len(result.steps) == 2
     assert result.steps[0].observations[0]["ok"] is True
     assert result.usage["total"] > 0 and result.usage_estimated is True
+    # 终止原因必须落到最后一轮 step 上（workflow 的 agent_step payload 靠它外发）
+    assert result.steps[-1].stop_reason_if_any == "halt"
 
 
 def test_multiple_tool_calls_in_one_round_execute_in_order(offline):
@@ -133,6 +135,7 @@ def test_max_steps_exits_cleanly(offline):
     assert result.stop_reason == "max_steps"
     assert len(result.steps) == 2
     assert result.answer is None
+    assert result.steps[-1].stop_reason_if_any == "max_steps"
 
 
 def test_token_budget_exceeded(offline):
@@ -140,6 +143,8 @@ def test_token_budget_exceeded(offline):
     result = asyncio.run(ReActRunner(llm, max_steps=5, token_budget=10).run("t"))
     assert result.stop_reason == "budget_exceeded"
     assert result.usage["total"] > 10
+    # 预算在下一轮守卫触发：终止原因回写到最后一轮 step，不是 None
+    assert result.steps[-1].stop_reason_if_any == "budget_exceeded"
 
 
 def test_task_budget_usd_exceeded_stops_and_reports_cost(offline):
@@ -155,6 +160,7 @@ def test_task_budget_usd_exceeded_stops_and_reports_cost(offline):
     assert report["calls"] >= 1 and report["total_tokens"] > 0
     assert report["estimated"] is True, "fake provider 无 usage，必须走估算并打标"
     assert report["limits"]["max_usd"] == 0.0
+    assert result.steps[-1].stop_reason_if_any == "budget_exceeded"
 
 
 def test_task_budget_records_real_usage_when_present(offline):
@@ -174,6 +180,9 @@ def test_task_budget_records_real_usage_when_present(offline):
     assert result.stop_reason == "halt"
     assert result.cost_report["estimated"] is False
     assert result.cost_report["prompt_tokens"] == 120
+    # Runner 的 usage_estimated 与 cost_report 同口径：拿到真值就不得再谎报估算
+    assert result.usage_estimated is False
+    assert result.steps[-1].stop_reason_if_any == "halt"
 
 
 def test_wall_clock_budget_exceeded(offline):
@@ -198,6 +207,7 @@ def test_consecutive_empty_observations_stop(offline):
         ts.get_search_tool = original
     assert result.stop_reason == "empty_observations"
     assert len(result.steps) == 2
+    assert result.steps[-1].stop_reason_if_any == "empty_observations"
 
 
 def test_duplicate_loop_stops_after_nudge(offline):
@@ -209,12 +219,14 @@ def test_duplicate_loop_stops_after_nudge(offline):
     dup_round = result.steps[-1]
     assert dup_round.observations[0]["ok"] is False
     assert "重复调用" in dup_round.observations[0]["error"]
+    assert dup_round.stop_reason_if_any == "duplicate_loop"
 
 
 def test_consecutive_empty_model_responses_is_error(offline):
     llm = _react_llm("", "")
     result = asyncio.run(ReActRunner(llm, max_steps=4).run("t"))
     assert result.stop_reason == "error"
+    assert result.steps[-1].stop_reason_if_any == "error"
 
 
 # --------------------------------------------------------------------------

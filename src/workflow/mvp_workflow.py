@@ -1033,9 +1033,24 @@ class MVPWorkflow:
                 state["sync_results"]["local_file"] = self._save_report(state["report_final"], state.get("task_id"))
                 state["report_id"] = Path(state["sync_results"]["local_file"]).stem
                 self._persist_to_sqlite(state)
-                self._emit("completed", "completed", "completed", "全部完成")
-                state["status"] = "completed"
                 state["termination_reason"] = f"react:{result.stop_reason}"
+                # M6：预算耗尽但终答已产出——结论照常交付，终态标 partial 而非 completed，
+                # 让前端/落库能区分"跑完"与"被预算截断"
+                if result.stop_reason == "budget_exceeded":
+                    state["status"] = "partial"
+                    self._emit(
+                        "partial", "completed", "partial",
+                        f"预算耗尽，按已获得的证据收敛交付（stop_reason={result.stop_reason}）",
+                        payload={
+                            "status": state["status"],
+                            "termination_reason": state["termination_reason"],
+                            "stop_reason": result.stop_reason,
+                            "cost_report": state["cost_report"],
+                        },
+                    )
+                else:
+                    state["status"] = "completed"
+                    self._emit("completed", "completed", "completed", "全部完成")
             else:
                 state["status"] = "failed"
                 state["termination_reason"] = f"react:{result.stop_reason}"

@@ -192,3 +192,77 @@ class TestReportFeedback:
         r = client.post(f"/research/reports/{REPORT_ID}/feedback",
                         json={"rating": "up", "comment": "x" * 501}, headers=auth_headers)
         assert r.status_code == 422
+
+
+# --------------------------------------------------------------------------
+# 预算超额 PARTIAL（M6）与历史报告元数据回填
+# --------------------------------------------------------------------------
+
+class TestPartialStatusWiring:
+    def test_every_terminal_event_maps_to_a_task_status(self):
+        """事件 → 终态的映射必须覆盖工作流真会发的那几个终态。
+
+        按契约断言而不是搜字符串：少一档，on_event 的查表就会 KeyError；
+        而真正被漏掉的是"预算超额的报告被当成成功交付"这种静默错误。
+        """
+        from src.workflow.task_store import TaskStatus
+
+        assert set(server._TASK_STATUS_BY_EVENT) == {"completed", "failed", "partial"}
+        assert server._TASK_STATUS_BY_EVENT["partial"] is TaskStatus.PARTIAL
+        assert server._TASK_STATUS_BY_EVENT["completed"] is TaskStatus.COMPLETED
+        assert server._TASK_STATUS_BY_EVENT["failed"] is TaskStatus.FAILED
+
+    def test_task_status_partial_is_persisted(self, client, auth_headers):
+        """partial 必须能真的存进任务存储并读回来——不是只在映射表里存在。"""
+        from src.workflow.task_store import TaskStatus
+
+        assert TaskStatus.PARTIAL.value == "partial"
+        store = server.get_task_store()
+        asyncio.run(store.create("wiring-partial-001", "预算收束", {"report": True},
+                                 user_id=TEST_USER_ID))
+        asyncio.run(store.update("wiring-partial-001", status=TaskStatus.PARTIAL))
+
+        body = client.get("/research/tasks/wiring-partial-001", headers=auth_headers).json()
+        assert body["status"] == "partial"
+
+
+class TestHistoryReportMeta:
+    """历史报告要能读回成本/注入/trace：刷新页面不该让成本卡整个消失。"""
+
+    def test_history_report_carries_cost_and_trace_meta(self, storage, client, auth_headers):
+        from src.workflow.task_store import TaskStatus
+
+        _register_report(storage, REPORT_ID, TEST_USER_ID)
+        store = server.get_task_store()
+        asyncio.run(store.create("wiring-hist-001", "历史回填", {"report": True},
+                                 user_id=TEST_USER_ID))
+        asyncio.run(store.update(
+            "wiring-hist-001",
+            status=TaskStatus.COMPLETED,
+            report_id=REPORT_ID,
+            cost_report={"total_tokens": 1234, "estimated_usd": 0.42},
+            injection_findings_count=3,
+        ))
+
+        body = client.get(f"/research/history/{REPORT_ID}", headers=auth_headers).json()
+        assert body["cost_report"] == {"total_tokens": 1234, "estimated_usd": 0.42}
+        assert body["injection_findings_count"] == 3
+        # Langfuse 未启用时 trace_url 为 None，但键必须在（前端据此隐藏按钮）
+        assert "trace_url" in body
+
+    def test_history_report_without_owning_task_returns_empty_meta(self, storage, client, auth_headers):
+        """找不到归属任务时要给空值，**不能**拿 report_id 拼一个假的 trace 链接。
+
+        拼出来的链接点进去必然 404——那比不显示按钮更糟：用户只会以为系统坏了。
+
+        这里必须用**另一个** report_id：任务存储是模块级单例，上一条用例建的任务
+        不会随 tmp_path 一起消失。沿用同一个 REPORT_ID 的话本条会捡到它的任务，
+        断言就变成了"永远绿"的假货。
+        """
+        orphan_id = "research_report_20260101_130000_bbbbbbbb"
+        _register_report(storage, orphan_id, TEST_USER_ID)
+
+        body = client.get(f"/research/history/{orphan_id}", headers=auth_headers).json()
+        assert body["cost_report"] is None
+        assert body["injection_findings_count"] == 0
+        assert body["trace_url"] is None

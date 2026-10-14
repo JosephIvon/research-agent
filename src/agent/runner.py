@@ -59,7 +59,11 @@ class ReActRunner:
 
         steps: List[AgentStep] = []
         usage = {"prompt_tokens": 0, "completion_tokens": 0}
-        usage_estimated = True
+        # usage_estimated 口径对齐 TaskBudget.snapshot()["estimated"]：只要有一轮
+        # 拿不到 provider 真值 usage 就整体算估算；一轮都没跑（开跑即超额）同样算估算，
+        # 免得把 0 记账当成真值报出去
+        real_usage_rounds = 0
+        estimated_rounds = 0
         duplicate_counts: Dict[str, int] = {}
         nudged_duplicate = False
         empty_rounds = 0
@@ -94,11 +98,16 @@ class ReActRunner:
                 logger.warning("react runner LLM 调用失败: %s", exc)
                 step.thought = f"[LLM 调用失败] {type(exc).__name__}: {exc}"
                 step.elapsed = round(time.monotonic() - step_start, 4)
-                steps.append(step)
                 stop_reason = "error"
+                step.stop_reason_if_any = stop_reason
+                steps.append(step)
                 break
 
-            _account_usage(usage, raw, messages, usage_estimated)
+            _account_usage(usage, raw, messages)
+            if _round_usage_is_estimated(raw):
+                estimated_rounds += 1
+            else:
+                real_usage_rounds += 1
             self._record_budget(raw, messages)
             content = raw.get("content")
             tool_calls = list(raw.get("tool_calls") or [])
@@ -108,8 +117,9 @@ class ReActRunner:
             if not tool_calls and not (content or "").strip():
                 empty_model_rounds += 1
                 if empty_model_rounds >= config.MODEL_EMPTY_RESPONSE_LIMIT:
-                    steps.append(step)
                     stop_reason = "error"
+                    step.stop_reason_if_any = stop_reason
+                    steps.append(step)
                     break
                 messages.append({
                     "role": "user",
@@ -125,8 +135,9 @@ class ReActRunner:
             if not tool_calls:
                 answer = content
                 step.elapsed = round(time.monotonic() - step_start, 4)
-                steps.append(step)
                 stop_reason = "halt"
+                step.stop_reason_if_any = stop_reason
+                steps.append(step)
                 break
 
             # ---- 执行工具（全部经注册表）----
@@ -191,15 +202,19 @@ class ReActRunner:
                     round_all_empty = False
 
             step.elapsed = round(time.monotonic() - step_start, 4)
+            if round_has_duplicate_overflow:
+                stop_reason = "duplicate_loop"
+            empty_rounds = empty_rounds + 1 if round_all_empty else 0
+            if stop_reason is None and empty_rounds >= config.EMPTY_OBSERVATION_LIMIT:
+                stop_reason = "empty_observations"
+
+            # 终止原因先落回本轮 step 再外发：on_step 回调（workflow 的 agent_step 事件）
+            # 只有在这之前写入才能拿到真值，而不是恒为 None
+            step.stop_reason_if_any = stop_reason
             steps.append(step)
             _emit_step(self.on_step, step)
 
-            if round_has_duplicate_overflow:
-                stop_reason = "duplicate_loop"
-                break
-            empty_rounds = empty_rounds + 1 if round_all_empty else 0
-            if empty_rounds >= config.EMPTY_OBSERVATION_LIMIT:
-                stop_reason = "empty_observations"
+            if stop_reason is not None:
                 break
         else:
             stop_reason = stop_reason or "max_steps"
@@ -207,12 +222,17 @@ class ReActRunner:
         if stop_reason is None:
             stop_reason = "max_steps"
 
+        # 预算/步数等在轮次开始前就触发时不会新建 step，终止原因回写到最后一轮，
+        # 保证 trace 里必定有一处读得到 stop_reason（workflow 的 agent_step payload 依赖它）
+        if steps and steps[-1].stop_reason_if_any is None:
+            steps[-1].stop_reason_if_any = stop_reason
+
         return AgentResult(
             answer=answer,
             stop_reason=stop_reason,
             steps=steps,
             usage={**usage, "total": usage["prompt_tokens"] + usage["completion_tokens"]},
-            usage_estimated=usage_estimated,
+            usage_estimated=estimated_rounds > 0 or real_usage_rounds == 0,
             cost_report=self.budget.snapshot() if self.budget is not None else {},
             elapsed_s=round(time.monotonic() - started, 4),
             workspace=self.workspace,
@@ -245,7 +265,13 @@ class ReActRunner:
         return "\n".join(lines)
 
 
-def _account_usage(usage: Dict[str, int], raw: Dict[str, Any], messages: List[Dict[str, Any]], estimated: bool) -> None:
+def _round_usage_is_estimated(raw: Dict[str, Any]) -> bool:
+    """本轮是否只拿到估算值：provider 缺 prompt/completion 任一真值即为估算。"""
+    raw_usage = raw.get("usage") or {}
+    return raw_usage.get("prompt_tokens") is None or raw_usage.get("completion_tokens") is None
+
+
+def _account_usage(usage: Dict[str, int], raw: Dict[str, Any], messages: List[Dict[str, Any]]) -> None:
     """优先采用 provider 返回的真实 usage；缺失时按字符估算（宁高勿低）。"""
     raw_usage = raw.get("usage") or {}
     prompt_tokens = raw_usage.get("prompt_tokens")
