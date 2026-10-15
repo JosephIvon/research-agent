@@ -815,6 +815,17 @@ class MVPWorkflow:
                 )
                 state["status"] = "failed"
                 state["termination_reason"] = "抽取数据不足或缺来源"
+                # blocked 快照：门禁失败即中止（闭环末到不了 readiness），
+                # 在此落统一裁决观测，让前端/日志/评测看到一致的 blocked 出口
+                state["delivery_readiness"] = {
+                    "verdict": "blocked",
+                    "hard_gates": [
+                        f"来源覆盖率 {state['source_coverage']:.0%}、证据条数 "
+                        f"{state['evidence_count']}，未达生成报告的最低要求",
+                    ],
+                    "reasons": ["硬性条件不满足，中止交付"],
+                    "dimensions": {}, "critical_gaps": [], "actionable_gap": False,
+                }
                 self._emit(
                     "error", "verify", "failed",
                     f"抽取数据不足：来源覆盖率 {state['source_coverage']:.0%}、"
@@ -830,6 +841,13 @@ class MVPWorkflow:
                 state["report_final"] += "\n".join(f"- {r}" for r in quality_report.recommendations)
                 state["status"] = "failed"
                 state["termination_reason"] = "数据质量不足"
+                # blocked 快照（同上）：quality 门禁失败的中止出口
+                state["delivery_readiness"] = {
+                    "verdict": "blocked",
+                    "hard_gates": [f"数据完整度 {quality_report.overall_score:.1f}/10（{quality_report.grade}级）"],
+                    "reasons": ["硬性条件不满足，中止交付"],
+                    "dimensions": {}, "critical_gaps": [], "actionable_gap": False,
+                }
                 self._emit("error", "verify", "failed", f"数据质量不足：{quality_report.overall_score}/10")
                 state["injection_findings_count"] = len(state.get("injection_findings") or [])
                 return state

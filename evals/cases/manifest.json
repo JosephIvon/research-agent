@@ -1,6 +1,6 @@
 {
-  "version": "v1.6",
-  "description": "M4 评测集 v1.6：v1.5 加入 gap_refetch（数值缺口定向补抓端到端）；v1.6 加入 gap_dimension_missing——「报告没写的维度」缺口：初次抽取无定价、报告无定价断言（引用通过）→ 维度补抓 → 重生成新增定价断言 → 维度闭合。共 19 条，样本仍不足 40。",
+  "version": "v1.7",
+  "description": "M4 评测集 v1.7：v1.6 加入 gap_dimension_missing（报告没写的维度）；v1.7 加入 gap_both——数值缺口（Acme 写错定价）与维度缺口（Beta 无定价证据）**同任务组合**：两站各走数值/维度补抓路径，顺带实证预算合并（数值 1 页 + 维度 2 页 = 3 页上限）。共 20 条，样本仍不足 40。",
   "cases": [
     {
       "id": "reg_doccollab",
@@ -619,6 +619,33 @@
           "features"
         ]
       }
+    },
+    {
+      "id": "gap_both",
+      "category": "ungrounded",
+      "mode": "legacy",
+      "query": "对比 Acme 与 Beta 两款日志审计 SaaS 的定价",
+      "sites": [
+        {
+          "key": "acme",
+          "url": "https://acme.test/",
+          "pages": [
+            "index.html"
+          ]
+        },
+        {
+          "key": "beta",
+          "url": "https://beta.test/",
+          "pages": [
+            "index.html"
+          ]
+        }
+      ],
+      "expected": {
+        "dimensions": [
+          "pricing"
+        ]
+      }
     }
   ],
   "fixture_digests": {
@@ -644,6 +671,9 @@
     "gap_ambiguous/llm.json": "d45a78ba3dc729238eef2d4c08452e34d2140c42a8bc47613d3acd261d5e42fb",
     "gap_ambiguous/sites/alpha/index.html": "3bf859483550b32a78c05e29e6e99fd158377a15ec12006298045c2f47e19d98",
     "gap_ambiguous/sites/beta/index.html": "2e19a673138524b0a7572252d6f389cbd44baabd6b36a83115a3800fa0658aa9",
+    "gap_both/llm.json": "29462360ade81c9dca5ccad070a31904a2fb3e1ed6997e0b2c922c060f06b8d7",
+    "gap_both/sites/acme/index.html": "39c70c60ccee31b6b2ef92d247518a162f831cabe74614fa431cf9923ecba410",
+    "gap_both/sites/beta/index.html": "62450608b94d4daa745a3fc4224ccb8006c91687a8b8f9f87335c2a82e69fa5c",
     "gap_dimension_missing/llm.json": "72054e8ffc0f4edda0e84708e87f172cdf36c5f13ab1d60db1b1d59aa7229bf7",
     "gap_dimension_missing/sites/auditx/index.html": "33c9603bea07fe30ebebf188cf864d4c83bcfd0bd468345cda32e4b9535bf5cc",
     "gap_mixed_unknown/llm.json": "d0b84cbc841bbaeb387722baa943fa8d2ba845fdd2132e92474206bd7a0fe440",

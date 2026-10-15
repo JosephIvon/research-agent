@@ -10,14 +10,21 @@
 
 裁决（verdict）语义：
 
-- `blocked`  硬性条件不满足，不可交付（来源覆盖率 / 证据条数 / 幻觉引用）
-- `continue` 引用未通过且判定层识别到可补抓的缺口 → 值得继续
+- `blocked`  硬性条件不满足，不可交付（来源覆盖率 / 证据条数 / 幻觉引用）。
+  闭环末不可达——verify/quality 门禁不过会提前中止，blocked 由门禁失败处
+  落快照承担（见 mvp_workflow）。
 - `ready`    引用通过且无核心维度缺口 → 正常交付
 - `degraded` 其余：引用不过已尽力 / 核心维度缺（报告自洽 ≠ 研究完整）
 
+**不裁决 continue**：单轮补抓架构下"是否继续行动"由判定层 + 接线在
+readiness 之前就已决定（eligible 就补抓、补抓了就 done）——readiness
+再裁决 continue 是永远不可达的死分支，且让状态层越界替行动层做决定。
+"还有可补的缺口"下沉为 `actionable_gap` 观测字段（不驱动，供未来
+多轮循环接线时读取）。
+
 设计约束（与 `plan_gap_refetch` 同一纪律）：纯函数，不联网、不调 LLM、
 不改全局状态。verdict 由调用方拿到的观测值驱动，**不改任何现有闸门的判定**——
-这里是收敛汇报：把散落的判定映射成四态 + 可读依据。
+这里是收敛汇报：把散落的判定映射成三态 + 可读依据。
 """
 from __future__ import annotations
 
@@ -28,7 +35,6 @@ from src.agent.citations import EvidenceStore
 from src.tools.quality_scorer import QualityScorer
 
 VERDICT_BLOCKED = "blocked"
-VERDICT_CONTINUE = "continue"
 VERDICT_READY = "ready"
 VERDICT_DEGRADED = "degraded"
 
@@ -128,6 +134,10 @@ class DeliveryReadiness:
     hard_gates: List[str] = field(default_factory=list)
     dimensions: Dict[str, str] = field(default_factory=dict)
     critical_gaps: List[str] = field(default_factory=list)
+    # 观测：当前是否仍有「可补抓但未尝试」的缺口。不驱动任何行动——
+    # 单轮架构下接线在 readiness 之前已决定是否补抓；此字段供未来
+    # 多轮循环接线读取，也避免「还有缺口」的信息随 continue 一起丢失。
+    actionable_gap: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -136,6 +146,7 @@ class DeliveryReadiness:
             "hard_gates": list(self.hard_gates),
             "dimensions": dict(self.dimensions),
             "critical_gaps": list(self.critical_gaps),
+            "actionable_gap": self.actionable_gap,
         }
 
 
@@ -158,10 +169,12 @@ def assess_delivery_readiness(
     """交付就绪统一裁决（纯函数）。
 
     参数全部是调用方可观测的当前状态；阈值是默认值，调用方可覆盖。
-    不改现有闸门——这里是**收敛汇报**：映射成四态 + 可读依据。
+    不改现有闸门——这里是**收敛汇报**：映射成三态 + 可读依据。
 
-    `refetch_eligible`：判定层是否识别到当前仍有可补抓的缺口。
-    接线方在「已尝试补抓」后传 False（补抓只做一轮，不因同一缺口再继续）。
+    `refetch_eligible`：判定层是否识别到当前仍有可补抓的缺口。**只进
+    `actionable_gap` 观测，不参与 verdict**——单轮架构下接线在 readiness
+    之前已决定是否补抓（eligible 就补抓、补抓了就 done），verdict 只回答
+    "当前能否交付、质量如何"，不重复裁决"是否继续"。
     """
     hard: List[str] = []
     if source_coverage is not None and source_coverage < min_source_coverage:
@@ -190,10 +203,7 @@ def assess_delivery_readiness(
         )
 
     reasons: List[str] = []
-    if not citation_passed and refetch_eligible:
-        verdict = VERDICT_CONTINUE
-        reasons.append("引用校验未通过且判定层识别到可补抓的缺口，值得继续")
-    elif not citation_passed:
+    if not citation_passed:
         verdict = VERDICT_DEGRADED
         reasons.append("引用校验未通过且已尽力（重生成/补抓），按缺口标注交付")
     elif critical:
@@ -215,4 +225,5 @@ def assess_delivery_readiness(
     return DeliveryReadiness(
         verdict=verdict, reasons=reasons, hard_gates=hard,
         dimensions=dimensions, critical_gaps=critical,
+        actionable_gap=bool(refetch_eligible),
     )

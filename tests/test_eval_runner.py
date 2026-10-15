@@ -392,6 +392,46 @@ def test_gap_dimension_missing_case_closes_dimension_gap(tmp_path):
     assert "pricing" not in readiness.get("critical_gaps", []), readiness.get("dimensions")
 
 
+def test_gap_both_case_runs_both_refetch_paths(tmp_path):
+    """组合路径：数值缺口（Acme 写错定价）+ 维度缺口（Beta 无定价证据）同任务触发。
+
+    两站各走数值/维度补抓（attempts=4），并实证预算合并：数值补抓分配
+    per=1 页、维度补抓用剩余预算（1 站×2 页额度），总页数不超
+    GAP_REFETCH_MAX_PAGES。这是"数值/维度两类补抓同任务共存"的唯一端到端盲区。
+    """
+    manifest = load_manifest(verify_digests=True)
+    entry = next(c for c in manifest["cases"] if c["id"] == "gap_both")
+    llm_spec = json.loads(
+        (eval_runner.CASES_DIR / "gap_both" / "llm.json").read_text(encoding="utf-8")
+    )
+    run_out = eval_runner.run_legacy_case(entry, llm_spec, tmp_path)
+    state = run_out["state"]
+
+    assert state["status"] == "completed", state.get("termination_reason")
+    assert state["citation_attempts"] == 4, (
+        f"必须走四次生成（v0 错→v1 重生成→v2 数值补抓后→v3 维度补抓后），"
+        f"实得 {state.get('citation_attempts')}"
+    )
+
+    # 数值补抓：Acme 定价修对（grounding 0→1）
+    gap = state.get("gap_refetch_result") or {}
+    assert gap.get("new_items", 0) >= 1, gap
+    assert gap.get("grounding_before", 0) < gap.get("grounding_after", 0), gap
+
+    # 维度补抓：Beta 定价补齐（报告没写 Beta 定价 → pricing missing → 维度补抓）
+    dim = state.get("dimension_refetch_result") or {}
+    assert dim.get("new_items", 0) >= 1, dim
+    assert dim.get("dims") == ["pricing"], dim
+
+    # 报告覆盖两站定价
+    report = state.get("report_final", "")
+    assert "79 元/月" in report and "69 元/月" in report, report
+
+    # 交付就绪：补抓闭环后无核心缺口 → ready
+    readiness = state.get("delivery_readiness") or {}
+    assert readiness.get("verdict") == "ready", readiness.get("reasons")
+
+
 def test_budget_override_reaches_both_budget_guards(monkeypatch):
     """预算覆写必须同时到达 TaskBudget 与 ReActRunner 两道守卫。
 

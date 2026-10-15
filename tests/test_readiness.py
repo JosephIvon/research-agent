@@ -10,7 +10,6 @@ from src.agent.readiness import (
     DIM_MISSING,
     DIM_UNCONFIRMED,
     VERDICT_BLOCKED,
-    VERDICT_CONTINUE,
     VERDICT_DEGRADED,
     VERDICT_READY,
     assess_delivery_readiness,
@@ -110,7 +109,9 @@ def test_verdict_blocked_on_low_source_coverage():
     assert any("来源覆盖率" in g for g in r.hard_gates)
 
 
-def test_verdict_continue_when_unpassed_and_refetchable():
+def test_unpassed_with_refetchable_gap_is_degraded_but_reports_actionable_gap():
+    """引用不过 + 判定层有可补缺口：verdict 是 degraded（单轮已尽力），
+    actionable_gap 观测保留「还有缺口」信息——不再有 continue 死分支。"""
     store = _store(FULL)
     r = _readiness(
         store,
@@ -118,7 +119,16 @@ def test_verdict_continue_when_unpassed_and_refetchable():
         violations=[_ungrounded_violation(store, "pricing")],
         refetch_eligible=True,
     )
-    assert r.verdict == VERDICT_CONTINUE
+    assert r.verdict == VERDICT_DEGRADED
+    assert r.actionable_gap is True
+
+
+def test_actionable_gap_false_when_no_refetchable_gap():
+    store = _store(FULL)
+    r = _readiness(store)
+    assert r.verdict == VERDICT_READY
+    assert r.actionable_gap is False
+    assert "actionable_gap" in r.to_dict()
 
 
 def test_verdict_degraded_when_unpassed_and_no_refetchable():
