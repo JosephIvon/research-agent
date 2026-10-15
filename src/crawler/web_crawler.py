@@ -62,6 +62,23 @@ DEFAULT_EXCLUDED_SEGMENTS = frozenset({
     "sitemap.xml", "robots.txt", "wp-admin", "wp-login",
 })
 
+# 默认排除集内部的拆分，依据是 2026-10-15 的真实站点实测（方案文档 §5.5.1）：
+# 19 个真实竞品站里有 2 个**产品页**被误伤——
+#   plaid.com/products/auth      （Plaid 的 Auth 产品页，竞品能力核心）
+#   brex.com/product/business-account（Brex Business 产品页）
+# 根因：`auth` / `account` 既是账户状态词，**又是常见产品名**，
+# 而 `_is_excluded` 原本对路径任意深度的 token 一视同仁。
+#
+# 所以这两类词必须区别对待：
+#   文档/板块类（login / legal / careers …）—— 任意深度都排除，
+#       否则 /pricing/login 这类从定价页链过去的登录入口会混进候选。
+#   账户状态类（auth / account）—— 只在**首段**排除，
+#       否则 /products/auth、/product/business-account 这类产品页被静默丢掉。
+#
+# 只移动**实测到碰撞**的词。`profile` / `register` 同样可疑，但本轮
+# 24 站实测里没有观察到碰撞，没有证据就不动——留待有实测时再调整。
+_EXCLUDE_FIRST_SEGMENT_ONLY = frozenset({"auth", "account"})
+
 
 def _term_hit(term: str, haystack: str) -> bool:
     """关键词是否命中。
@@ -77,6 +94,27 @@ def _term_hit(term: str, haystack: str) -> bool:
     return term in haystack
 
 
+def _segment_tokens(seg: str) -> set:
+    """把一个路径段拆成可与排除集比对的 token 集合（含紧凑写法与去扩展名形式）。
+
+    `sign-in` → {signin, sign, in}，`terms.html` → {terms.html, terms}，
+    `accountability-report` → {accountability-report, accountability, report}。
+    """
+    tokens = {seg}
+    compact = seg.replace("-", "").replace("_", "")
+    if compact and compact != seg:
+        tokens.add(compact)
+    for part in seg.replace("%20", " ").replace("_", "-").split("-"):
+        part = part.strip()
+        if not part:
+            continue
+        tokens.add(part)
+        stem = part.split(".", 1)[0]
+        if stem and stem != part:
+            tokens.add(stem)
+    return tokens
+
+
 def _is_excluded(url_path: str, excluded: frozenset) -> bool:
     """路径是否落在噪音段里。
 
@@ -90,26 +128,30 @@ def _is_excluded(url_path: str, excluded: frozenset) -> bool:
 
     但切分必须**与紧凑写法并存**：`sign-in` 切成 `{sign, in}` 谁都不匹配，
     而排除集里写的是 `signin`。所以额外比对一次去掉分隔符的紧凑形式。
+
+    **首段与非首段区别对待**：默认排除集里的 `auth` / `account` 既是账户状态词
+    又是常见产品名，只在**首段**排除（`/auth` 排除，`/products/auth` 保留）；
+    其余词任意深度都排除（`/pricing/login` 仍排除）。依据见
+    `_EXCLUDE_FIRST_SEGMENT_ONLY` 的注释——真实站点实测出的产品页误伤。
+
+    调用方传入**自定义**排除集时不做这个拆分，一律按任意深度排除：
+    自定义集合没有经过这次分类论证，不该继承默认集的语义。
     """
+    split_by_depth = excluded == DEFAULT_EXCLUDED_SEGMENTS
+    seen = 0
     for raw in url_path.split("/"):
         seg = raw.strip().lower()
         if not seg:
             continue
-        tokens = {seg} if seg in excluded else set()
-        compact = seg.replace("-", "").replace("_", "")
-        if compact and compact != seg and compact in excluded:
-            return True
-        for part in seg.replace("%20", " ").replace("_", "-").split("-"):
-            part = part.strip()
-            if not part:
+        # 首段要按**非空段**计数：路径开头的 `/` 会切出一个空串，
+        # 直接用下标会把 `/auth` 的首段算成 index 1，于是首段规则整个失效。
+        is_first = seen == 0
+        seen += 1
+        for token in _segment_tokens(seg):
+            if token not in excluded:
                 continue
-            if part in excluded:
-                return True
-            # 去掉扩展名后再看一次（terms.html → terms）
-            stem = part.split(".", 1)[0]
-            if stem and stem in excluded:
-                return True
-        if tokens:
+            if split_by_depth and not is_first and token in _EXCLUDE_FIRST_SEGMENT_ONLY:
+                continue
             return True
     return False
 

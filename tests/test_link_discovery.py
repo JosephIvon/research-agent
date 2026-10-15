@@ -14,10 +14,21 @@
    兼职"不值得抓"。
 3. **打分不能依赖词表顺序。** 同时命中多个档位时，首命中即 break 会让
    词表顺序变成隐式业务规则。
+
+## 第四组：排除集的深度语义（来自真实站点实测）
+
+2026-10-15 在 24 个真实竞品站上实测发现：`auth` / `account` 既是账户状态词，
+**又是常见产品名**，按任意深度排除会砍掉产品页——
+`plaid.com/products/auth`（Plaid 的 Auth 产品页）与
+`brex.com/product/business-account`（Brex Business 产品页）都曾被静默丢掉。
+但若一律改成「仅首段排除」，`/pricing/login` 这类登录入口又会混进候选。
+所以两类词必须区别对待，这组用例把该区别钉住。
 """
 from src.crawler.web_crawler import (
     DEFAULT_EXCLUDED_SEGMENTS,
     WebCrawler,
+    _EXCLUDE_FIRST_SEGMENT_ONLY,
+    _is_excluded,
     _term_hit,
 )
 
@@ -262,3 +273,130 @@ def test_excluded_segments_cover_the_obvious_noise():
     for segment in ("login", "cart", "privacy", "careers", "terms",
                     "newsletter", "checkout", "register"):
         assert segment in DEFAULT_EXCLUDED_SEGMENTS, f"{segment} 应在排除集中"
+
+
+# --------------------------------------------------------------------------
+# 排除集的深度语义：产品页 vs 登录入口
+#
+# 下面两条 URL 是实测证据，不是构造出来的例子：
+#   https://www.plaid.com/products/auth
+#   https://www.brex.com/product/business-account
+# 它们各自在真实站点上被判为「含定价数值的有用页面」，却因路径里出现
+# auth / account 而被静默排除。丢的恰恰是竞品调研最该看的产品能力页。
+# --------------------------------------------------------------------------
+
+# 实测命中的两个真实产品页（只保留路径，域名不影响判定）
+MEASURED_PRODUCT_PAGES = (
+    "/products/auth",                       # plaid.com
+    "/product/business-account",            # brex.com
+)
+
+
+def test_product_pages_named_after_account_words_are_not_excluded():
+    """`auth` / `account` 是常见产品名，非首段时不得排除。"""
+    for path in MEASURED_PRODUCT_PAGES:
+        assert not _is_excluded(path, DEFAULT_EXCLUDED_SEGMENTS), (
+            f"{path} 是产品页，只因路径里含 auth/account 就被排除——"
+            f"这是真实站点实测出的误伤"
+        )
+
+
+def test_account_words_are_still_excluded_as_the_first_segment():
+    """同一批词在首段时仍是账户入口，必须排除。"""
+    for path in ("/auth", "/account", "/auth/login-flow", "/account-settings",
+                 "/sign-in/auth", "/auth/callback"):
+        assert _is_excluded(path, DEFAULT_EXCLUDED_SEGMENTS), (
+            f"{path} 的首段是账户状态词，应被排除"
+        )
+
+
+def test_product_pages_with_account_words_in_second_segment_are_kept():
+    """对照组：`account` 落在**第二段**时是产品页，与首段语义相反。"""
+    for path in ("/product/account/", "/product/account", "/products/account",
+                 "/product/auth", "/products/auth"):
+        assert not _is_excluded(path, DEFAULT_EXCLUDED_SEGMENTS), (
+            f"{path} 的 account/auth 在第二段，是产品页，不该被排除"
+        )
+
+
+def test_locale_prefixed_account_pages_are_no_longer_excluded_known_tradeoff():
+    """**已知取舍**，写下来是为了别被忘掉：带语言前缀的账户页会漏过排除集。
+
+    wise.com 用 `/cn/account`、stripe.com 用 `/en-cn/...`——语言前缀把
+    `account` 顶到了第二段，于是「仅首段排除」不再命中。这些页面权重得 0、
+    排在候选末尾，所以实测影响极小；但它们**会被抓取**，因为
+    `fetch_site_profile` 会把候选全部抓完。
+
+    要堵这个洞就得引入「语言前缀段」的概念，那是又一次未经检验的推断
+    （哪些前缀算语言代码、哪些是产品线）。本轮没有实测证据支持，先记录。
+    """
+    assert not _is_excluded("/cn/account", DEFAULT_EXCLUDED_SEGMENTS), \
+        "语言前缀确实会让首段规则失效——这条断言把这个已知漏洞钉住"
+    assert _is_excluded("/account", DEFAULT_EXCLUDED_SEGMENTS), \
+        "对照：不带前缀时仍然排除，说明漏洞来自前缀而非规则本身"
+
+
+def test_plural_account_is_not_in_the_default_set_preexisting_behaviour():
+    """`accounts`（复数）不在排除集里——这是**既有行为**，不是本次改动引入的。
+
+    记在这里是为了防止有人以为首段规则顺手修了它。
+    """
+    assert "accounts" not in DEFAULT_EXCLUDED_SEGMENTS
+    assert not _is_excluded("/accounts", DEFAULT_EXCLUDED_SEGMENTS)
+
+
+def test_document_noise_words_stay_excluded_at_any_depth():
+    """文档/板块类噪音词任意深度都排除——否则 /pricing/login 会混进候选。
+
+    这条是「一律改成仅首段排除」方案会打破的既有保证：把 auth/account
+    单独拆出来，正是为了不牺牲它。
+    """
+    for path in ("/pricing/login", "/docs/legal", "/products/careers",
+                 "/blog/privacy", "/help/cart", "/resources/terms-of-service"):
+        assert _is_excluded(path, DEFAULT_EXCLUDED_SEGMENTS), (
+            f"{path} 的 {path.rsplit('/', 1)[-1]} 是噪音词，任意深度都该排除"
+        )
+
+
+def test_exclusion_split_does_not_shrink_the_public_default_set():
+    """拆分只改深度语义，**不能**让公开的 DEFAULT_EXCLUDED_SEGMENTS 变小。
+
+    没有这条守卫，一次「顺手清理」就能把 auth/account 从默认集里删掉，
+    而所有按任意深度排除的调用方都不会发现——排除集是封闭集，删词不可逆。
+    """
+    assert _EXCLUDE_FIRST_SEGMENT_ONLY <= DEFAULT_EXCLUDED_SEGMENTS, (
+        "仅首段排除的词必须仍在默认排除集内，否则公开契约被悄悄改小"
+    )
+    for segment in ("auth", "account", "login", "legal", "careers", "profile",
+                    "register"):
+        assert segment in DEFAULT_EXCLUDED_SEGMENTS, f"{segment} 不该被移出默认排除集"
+
+
+def test_custom_excluded_set_is_not_given_the_depth_split():
+    """自定义排除集不做深度拆分——它没经过分类论证，不该继承默认集语义。
+
+    调用方传 `frozenset({"auth"})` 就是想排除所有 auth 路径；
+    若悄悄改成「仅首段」，等于替调用方改需求。
+    """
+    custom = frozenset({"auth"})
+    assert _is_excluded("/products/auth", custom), \
+        "自定义排除集应按任意深度排除"
+    assert _is_excluded("/auth", custom)
+
+
+def test_measured_product_pages_reach_the_candidate_list_end_to_end():
+    """端到端：这两个产品页必须真的出现在 discover_research_links 结果里。
+
+    只测 `_is_excluded` 不足以保证接线正确——过滤发生在候选生成过程中。
+    """
+    html = _nav(
+        ("/pricing", "Pricing"),
+        ("/products/auth", "Auth"),
+        ("/product/business-account", "Business account"),
+        ("/careers", "Careers"),
+    )
+    links = _discover(html)
+
+    assert "https://example.com/products/auth" in links
+    assert "https://example.com/product/business-account" in links
+    assert "https://example.com/careers" not in links, "首段噪音词仍应被排除"
