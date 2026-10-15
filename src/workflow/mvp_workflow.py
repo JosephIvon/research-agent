@@ -929,7 +929,17 @@ class MVPWorkflow:
             # 看不到——引用校验通过后核心维度仍 missing/unconfirmed 时，用维度
             # 意图选页补抓，重生成让报告**新增**该维度断言。与数值补抓同轮，
             # 一轮不循环；数值补抓已走过的站点也可能在此补齐缺失维度。
-            # 放在数值补抓块**外**：第一次校验就通过（无违规）也必须检查维度缺口。
+            #
+            # **必须放在数值补抓块（上面的 if not citation_result["passed"]）之外。**
+            # 原因链（实测踩过）：
+            # 1. 数值补抓块被包在「第一次校验不过」的 if 里，只有报告产生违规才执行；
+            # 2. 维度缺口的特征恰恰是**无违规**——报告没写定价，就没有 ungrounded
+            #    claim 可判，第一次校验**直接通过**（attempts=1、violations=[]）；
+            # 3. 若维度块也放进该 if 块内，第一次校验通过时整块被跳过，维度缺口
+            #    永远无法触发补抓（实测：dimension_refetch_decision=None、报告
+            #    始终缺定价）——这是"新分支接在现有 if 里被意外跳过"的典型坑。
+            # 所以维度块与校验结果解耦，每次闭环都执行；补抓与否由
+            # plan_dimension_refetch 的 pure 判定决定，不依赖本次校验是否通过。
             dim_grounding_before = citation_result["grounding"]
             dim_decision = await self._maybe_refetch_dimensions(state, evidence_store)
             if dim_decision is not None:
@@ -1621,7 +1631,8 @@ class MVPWorkflow:
         进 evidence_block 重生成，让报告**新增**该维度断言。
 
         闭环顺序同数值补抓：「补抓 → 带新证据重生成 → 校验」（后两步在调用方）。
-        预算：每站 1 页（一个维度缺口一页通常够，/pricing 一页搞定定价），
+        预算：每站 2 页（首页 + 1 个维度意图页，per_site_pages 见
+        plan_dimension_refetch 注释——1 页会只剩首页、选页意图失效），
         候选站数 ≤ max_pages——与数值补抓同一量级的成本刹车，单轮不递归。
         """
         from src.agent.dimension_refetch import plan_dimension_refetch

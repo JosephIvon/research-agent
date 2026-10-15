@@ -160,13 +160,17 @@ def plan_dimension_refetch(
     sites: Sequence[Dict[str, Any]],
     core_dimensions: Sequence[str] = DEFAULT_CORE_DIMENSIONS,
     max_pages: int = 3,
-    per_site_pages: int = 1,
+    per_site_pages: int = 2,
 ) -> DimensionRefetchDecision:
     """维度缺口 → 行动计划（纯函数）。
 
     - 每站算维度状态，核心维度里 missing/unconfirmed 的 → 候选。
-    - 候选页意图 = 缺失维度的 tiers 合并；per-site 抓取页数默认 1
-      （先验：一个维度缺口一页通常够，/pricing 一页搞定定价）。
+    - 候选页意图 = 缺失维度的 tiers 合并；per-site 抓取页数默认 2
+      = **首页 + 1 个维度意图命中的站内页**。
+      ⚠️ 不能是 1：`fetch_site_profile(max_pages=N)` 抓首页 + discover
+      `max(0, N-1)` 个站内页——N=1 时站内页 0 个，page_tiers 选页意图
+      完全失效，维度补抓退化成"只重抽首页"（真实 bug，测试被夹具替身
+      覆写 fetch_site_profile 掩盖）。
     - 预算：候选站数 ≤ `max_pages`（成本刹车，与 ungrounded 补抓同一量级）。
     """
     if not sites:

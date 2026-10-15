@@ -120,7 +120,8 @@ def test_plan_eligible_when_core_dimension_missing_on_a_site():
     assert [c.site_key for c in decision.candidates] == ["beta"]
     cand = decision.candidates[0]
     assert cand.dims == ("pricing",)
-    assert cand.pages == 1
+    # 2 = 首页 + 1 个维度意图页；1 会让 fetch_site_profile 只抓首页、选页失效
+    assert cand.pages == 2
     assert any("pricing" in t for _, terms in cand.page_tiers for t in terms)
 
 

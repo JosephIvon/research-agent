@@ -42,6 +42,7 @@ class _TwoPhaseCrawler:
     def __init__(self, site_url=None):
         self.site_url = site_url or "https://placeholder.example.com"
         self.calls = 0
+        self.profile_kwargs = []  # 记录每次 fetch_site_profile 的实参（透传断言用）
 
     async def __aenter__(self):
         return self
@@ -51,6 +52,7 @@ class _TwoPhaseCrawler:
 
     async def fetch_site_profile(self, url, max_pages=3, **kwargs):
         self.calls += 1
+        self.profile_kwargs.append({"url": url, "max_pages": max_pages, **kwargs})
         if self.calls == 1:
             page = {"url": url, "content": "Acme 官网首页（未披露定价）", "html": ""}
         else:
@@ -213,6 +215,17 @@ def test_dimension_gap_triggers_refetch_and_adds_assertion(tmp_path, monkeypatch
     gap_events = [e for e in collector.events if e.event == "gap_refetch"]
     statuses = [e.status for e in gap_events]
     assert "running" in statuses and "completed" in statuses, statuses
+
+    # 真实爬虫链路透传：维度补抓必须带 page_tiers（意图选页）+ max_pages=2
+    # （首页 + 1 意图页）。夹具替身若不透传，per_site_pages=1 只抓首页的
+    # 真实 bug 会被掩盖——这里直接钉住透传实参。
+    refetch_kwargs = [
+        kw for kw in crawler.profile_kwargs if kw.get("priority_tiers")
+    ]
+    assert refetch_kwargs, "维度补抓必须透传 priority_tiers（维度意图）给爬虫"
+    assert refetch_kwargs[-1]["max_pages"] == 2, (
+        "每站 2 页 = 首页 + 1 意图页；1 页会让 fetch_site_profile 只抓首页"
+    )
 
 
 def test_refetch_runs_through_single_competitor_fetch(tmp_path, monkeypatch):
