@@ -7,6 +7,111 @@ from urllib.parse import urljoin, urlparse, urlunparse
 from src.config.settings import TIMEOUT_SECONDS, MAX_RETRIES, CRAWL_REQUEST_INTERVAL
 from src.security.url_validation import validate_fetch_url
 import asyncio
+import re
+
+
+# --------------------------------------------------------------------------
+# 站内链接发现策略
+#
+# ## 这组默认权重是**先验，不是真理**
+#
+# `DEFAULT_PRIORITY_TIERS` 编码的是"SaaS 风格竞品调研"这一种场景的判断：
+# 定价 > 文档 > 模型 > 接口 > 工作流。对医疗、金融、工业软件、工具类产品
+# 并不成立——它们的 `/适应症`、`/利率`、`/许可`、`/规格` 一律落在最低档。
+# 所以它是**可被覆盖的默认值**，而不是写死在函数里的常量。
+#
+# ## 为什么零分不再是硬边界
+#
+# 原实现是 `if score <= 0: continue`：匹配不到任何词条的链接**永远不会被考虑**。
+# `/sla`、`/security`、`/compliance`、`/enterprise-seats` 全是 0 分——
+# 表外的页面不是排在后面，是**不存在**。这等于把"我不知道"伪装成"没有"。
+#
+# 改为：打分只决定**顺序**，不决定**有无**。真正的过滤交给 `excluded_segments`
+# ——那是一组**可枚举的**噪音路径（登录、购物车、法务、招聘），
+# 与不可穷举的"有用页面"词表性质不同，适合做硬排除。
+# --------------------------------------------------------------------------
+
+DEFAULT_PRIORITY_TIERS = (
+    (100, ("pricing", "price", "plans", "billing", "cost",
+           "定价", "价格", "计费", "套餐")),
+    (90, ("docs", "doc", "quickstart", "guide", "developer",
+          "文档", "开发", "接入")),
+    (85, ("models", "model", "providers", "engines",
+          "模型", "供应商")),
+    (80, ("api", "sdk", "integration", "integrations",
+          "接口", "集成")),
+    (65, ("workflow", "flow", "route", "routing",
+          "工作流", "流程", "路由")),
+    (55, ("console", "dashboard", "控制台", "仪表盘")),
+    (45, ("faq", "help", "support", "常见问题", "帮助", "支持")),
+)
+
+# 多档命中加成：首匹配即 break 是原实现的一处顺序依赖——同时命中
+# pricing 和 api 的 URL 只按先命中的算，与实际价值无关。改成取最高档 +
+# 每多命中一档加一点分，顺序就不再影响结果。
+_MULTI_TIER_BONUS = 3
+
+# 与"竞品调研"无关的噪音路径。与优先级词表不同，这组是**封闭**的：
+# 登录/购物车/法务/招聘在任何行业都与调研无关，可以硬排除。
+DEFAULT_EXCLUDED_SEGMENTS = frozenset({
+    "login", "logout", "signin", "signout", "signup", "register",
+    "auth", "account", "profile", "cart", "checkout", "basket",
+    "privacy", "terms", "legal", "cookie", "cookies", "gdpr",
+    "careers", "career", "jobs", "job", "press", "media",
+    "newsletter", "subscribe", "unsubscribe", "rss", "sitemap",
+    "sitemap.xml", "robots.txt", "wp-admin", "wp-login",
+})
+
+
+def _term_hit(term: str, haystack: str) -> bool:
+    """关键词是否命中。
+
+    **ASCII 词按词边界匹配，中文词按子串匹配。**
+    中文没有词边界，`定价` 只能子串；但英文必须加 `\\b`——裸子串会让
+    `api` 命中 `rapid` / `capital` / `therapist`，`model` 命中 `remodeling`，
+    把无关页面顶进高分区。
+    """
+    if term.isascii():
+        pattern = rf"(?<![a-z0-9]){re.escape(term.lower())}(?![a-z0-9])"
+        return re.search(pattern, haystack) is not None
+    return term in haystack
+
+
+def _is_excluded(url_path: str, excluded: frozenset) -> bool:
+    """路径是否落在噪音段里。
+
+    按 **token 精确比对**，token 由 `/ - _ .` 切出：
+    `privacy-policy` → {privacy, policy}，命中排除集；
+    而 `accountability-report` → {accountability, report}，**不**命中——
+    子串匹配会把 accountability 误判成 account 从而丢掉合规报告页。
+
+    切分是必需的：连字符路径（`privacy-policy`、`sign-in`、`add-to-cart`）
+    在真实站点里比裸单词常见得多，只按整段比对等于排除集形同虚设。
+
+    但切分必须**与紧凑写法并存**：`sign-in` 切成 `{sign, in}` 谁都不匹配，
+    而排除集里写的是 `signin`。所以额外比对一次去掉分隔符的紧凑形式。
+    """
+    for raw in url_path.split("/"):
+        seg = raw.strip().lower()
+        if not seg:
+            continue
+        tokens = {seg} if seg in excluded else set()
+        compact = seg.replace("-", "").replace("_", "")
+        if compact and compact != seg and compact in excluded:
+            return True
+        for part in seg.replace("%20", " ").replace("_", "-").split("-"):
+            part = part.strip()
+            if not part:
+                continue
+            if part in excluded:
+                return True
+            # 去掉扩展名后再看一次（terms.html → terms）
+            stem = part.split(".", 1)[0]
+            if stem and stem in excluded:
+                return True
+        if tokens:
+            return True
+    return False
 
 
 class WebCrawler:
@@ -268,22 +373,34 @@ class WebCrawler:
         return results
 
     @staticmethod
-    def discover_research_links(base_url: str, html_content: str, max_links: int = 4) -> List[str]:
-        """Discover same-origin pages likely to contain research evidence."""
+    def discover_research_links(
+        base_url: str,
+        html_content: str,
+        max_links: int = 4,
+        priority_tiers: Optional[tuple] = None,
+        min_score: int = 0,
+        excluded_segments: Optional[frozenset] = None,
+    ) -> List[str]:
+        """发现同源页面，按「可能含调研证据」排序后取前 `max_links` 条。
+
+        参数
+        ----
+        priority_tiers   : `((权重, (关键词, ...)), ...)`，默认 `DEFAULT_PRIORITY_TIERS`。
+                           **默认值是 SaaS 风格调研的先验，换行业应整表覆盖。**
+        min_score        : 低于此分丢弃。默认 0 = 不丢，只排序。
+                           想恢复旧行为传 1，但这会把表外页面重新变成"不存在"。
+        excluded_segments: 噪音路径段（登录/购物车/法务/招聘…），默认见模块常量。
+
+        打分只决定**顺序**，过滤只由 `excluded_segments` 决定——
+        两者分工明确，不再让"没匹配到关键词"兼职"不值得抓"。
+        """
+        tiers = DEFAULT_PRIORITY_TIERS if priority_tiers is None else priority_tiers
+        excluded = (DEFAULT_EXCLUDED_SEGMENTS if excluded_segments is None
+                    else excluded_segments)
         base = urlparse(validate_fetch_url(base_url))
         soup = BeautifulSoup(html_content, "html.parser")
         candidates = []
         seen = set()
-
-        priority_terms = [
-            (100, ["pricing", "price", "plans", "billing", "cost", "定价", "价格", "计费", "套餐"]),
-            (90, ["docs", "doc", "quickstart", "guide", "developer", "文档", "开发", "接入"]),
-            (85, ["models", "model", "providers", "engines", "模型", "供应商"]),
-            (80, ["api", "sdk", "integration", "integrations", "接口", "集成"]),
-            (65, ["workflow", "flow", "route", "routing", "工作流", "流程", "路由"]),
-            (55, ["console", "dashboard", "控制台", "仪表盘"]),
-            (45, ["faq", "help", "support", "常见问题", "帮助", "支持"]),
-        ]
 
         base_normalized = urlunparse((base.scheme, base.netloc, base.path.rstrip("/") or "/", "", base.query, ""))
         for order, anchor in enumerate(soup.find_all("a", href=True)):
@@ -300,13 +417,21 @@ class WebCrawler:
             if normalized in seen or normalized == base_normalized:
                 continue
 
+            if excluded and _is_excluded(parsed.path, excluded):
+                seen.add(normalized)
+                continue
+
             evidence = f"{anchor.get_text(' ', strip=True)} {parsed.path} {parsed.query}".lower()
-            score = 0
-            for priority, terms in priority_terms:
-                if any(term.lower() in evidence for term in terms):
-                    score = priority
-                    break
-            if score <= 0:
+            # 累加所有命中的档位，而不是首命中即 break：
+            # 原实现让**词表顺序**决定结果，同时命中 pricing 和 api 的 URL
+            # 只按先命中的算。改成"取最高档 + 每多命中一档加一点分"后，
+            # 顺序不再影响打分，多主题页（如 /docs/pricing-api）也能体现价值。
+            matched = [priority for priority, terms in tiers
+                       if any(_term_hit(term, evidence) for term in terms)]
+            score = 0 if not matched else (
+                max(matched) + _MULTI_TIER_BONUS * (len(matched) - 1)
+            )
+            if score < min_score:
                 continue
 
             try:
@@ -317,6 +442,7 @@ class WebCrawler:
             seen.add(normalized)
             candidates.append((score, order, normalized))
 
+        # 同分按文档出现顺序，保证同一份 HTML 永远给出同一结果
         candidates.sort(key=lambda item: (-item[0], item[1]))
         return [url for _, _, url in candidates[:max_links]]
 
