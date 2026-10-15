@@ -158,6 +158,104 @@ def run_react_case(case: Dict[str, Any], llm_spec: Dict[str, Any], tmp: Path) ->
     }
 
 
+@contextmanager
+def _patch_env(**values: str):
+    """临时改环境变量，跑完原样还原。
+
+    工作流的 react 分流是**每次现读** `os.getenv("AGENT_MODE")`（模块常量在
+    import 时就冻结了，改 `src.agent.config.AGENT_MODE` 不起作用），所以必须
+    走环境变量，不能走 `_patched_attrs`。
+    """
+    import os as _os
+
+    saved = {k: _os.environ.get(k) for k in values}
+    for k, v in values.items():
+        _os.environ[k] = v
+    try:
+        yield
+    finally:
+        for k, old in saved.items():
+            if old is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = old
+
+
+def run_budget_case(case: Dict[str, Any], llm_spec: Dict[str, Any], tmp: Path) -> Dict[str, Any]:
+    """预算截断 case：react 模式 + 极低 token 预算，逼出 partial 终态。
+
+    必须走**工作流**而不是裸 ReActRunner——`partial` 是 mvp_workflow 在
+    「预算耗尽且已产出终答」时赋予的状态，直接跑 runner 拿不到它。
+
+    没有这条 case 时 `truncation_rate` 恒为 0.00：指标写好了，却没有任何
+    case 能触发它，等于一套没有输入的仪表。
+    """
+    from src.agent import config as agent_config
+    from src.agent import tool_specs
+    from src.agent import tools as agent_tools
+    from src.workflow import mvp_workflow
+
+    from evals.fixture_source import FixtureSearch
+
+    client = _build_scripted_llm(case, llm_spec)
+    client._script["react"] = [
+        _resolve_react_entry(entry, case, llm_spec) for entry in llm_spec["react"]
+    ]
+
+    max_tokens = int((case.get("agent_budget") or {}).get("max_tokens", 10))
+    search = FixtureSearch(case.get("search_results", []))
+
+    def _passthrough_url(url):
+        return url
+
+    def _passthrough_urls(urls):
+        return list(urls or [])
+
+    with _isolated_storage(tmp), _patch_env(AGENT_MODE="react"), _patched_attrs([
+        (mvp_workflow, "WebCrawler", _make_fixture_crawler_class(case)),
+        (mvp_workflow, "get_llm_client", lambda *a, **k: client),
+        (mvp_workflow, "validate_fetch_url", _passthrough_url),
+        (mvp_workflow, "validate_fetch_urls", _passthrough_urls),
+        # 两处预算都要改：TaskBudget 读 mvp_workflow 的模块常量，ReActRunner
+        # 读 src.agent.config 的。只改一个会让守卫与账本口径不一致，
+        # 测出来的 partial 是假象。
+        (agent_config, "AGENT_TOKEN_BUDGET", max_tokens),
+        (tool_specs, "WebCrawler", _make_fixture_crawler_class(case)),
+        (tool_specs, "get_search_tool", lambda: search),
+        (agent_tools, "validate_fetch_url", _passthrough_url),
+    ]):
+        started = time.monotonic()
+        state = asyncio.run(mvp_workflow.MVPWorkflow().run(
+            case["query"],
+            target_urls=[s["url"] for s in case["sites"]],
+            enable_search=False,
+            deliverables={"report": True, "prd": False},
+            task_id=f"eval-{case['id']}",
+        ))
+        elapsed = time.monotonic() - started
+
+    return {"state": state, "elapsed_s": round(elapsed, 3)}
+
+
+def collect_budget_metrics(case: Dict[str, Any], run_out: Dict[str, Any],
+                           llm_spec: Dict[str, Any]) -> Dict[str, Any]:
+    """预算截断 case 的判定点：终态确实是 partial，且报告非空。
+
+    非空这一条不能省——`partial` 只在**真的交付了报告**时才有意义，
+    收敛失败退回无终答语义时终态是 failed 而不是 partial。
+    """
+    state = run_out["state"]
+    report = state.get("report_final") or ""
+    result = collect_metrics(case, run_out, llm_spec)
+    result["budget"] = {
+        "status": state.get("status"),
+        "termination_reason": state.get("termination_reason"),
+        "report_delivered": bool(report.strip()),
+        "report_chars": len(report),
+    }
+    return result
+
+
 def _resolve_react_entry(entry: Any, case, llm_spec) -> Any:
     """react 脚本条目的模板解析：{{url:<site_key>}} → 真实 URL；字符串终答做 cite 解析。"""
     import copy
@@ -290,10 +388,15 @@ def run_cases(manifest: Dict[str, Any], only: Optional[List[str]] = None) -> Lis
                 react_out: Optional[Dict[str, Any]] = None
                 if mode in ("legacy", "compare"):
                     run_out = run_legacy_case(case, llm_spec, tmp_path)
+                elif mode == "budget":
+                    run_out = run_budget_case(case, llm_spec, tmp_path)
                 if mode == "compare":
                     react_out = run_react_case(case, llm_spec, tmp_path)
 
-                metrics = collect_metrics(case, run_out, llm_spec)
+                if mode == "budget":
+                    metrics = collect_budget_metrics(case, run_out, llm_spec)
+                else:
+                    metrics = collect_metrics(case, run_out, llm_spec)
                 if mode == "compare" and react_out:
                     metrics["react_compare"] = collect_react_compare(case, run_out, react_out)
 

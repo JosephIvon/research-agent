@@ -1,0 +1,35 @@
+{
+  "extract_sequence": [
+    [
+      {
+        "key": "pricing",
+        "value": "入门版 29 元/月，含 2 个席位。",
+        "confidence": 0.9
+      },
+      {
+        "key": "pricing",
+        "value": "专业版 99 元/月，含 10 个席位。",
+        "confidence": 0.9
+      },
+      {
+        "key": "target_users",
+        "value": "中小企业财务团队",
+        "confidence": 0.9
+      }
+    ]
+  ],
+  "report": "## 定价\n\nLedgerly 入门版 29 元/月 {{cite:saas:0}}，专业版 99 元/月 {{cite:saas:1}}。\n\n## 目标用户\n\n面向中小企业财务团队。\n",
+  "react": [
+    {
+      "type": "tool_call",
+      "name": "fetch_site",
+      "arguments": "{\"url\": \"{{url:saas}}\", \"max_pages\": 1}"
+    },
+    {
+      "type": "tool_call",
+      "name": "extract_facts",
+      "arguments": "{\"url\": \"{{url:saas}}\"}"
+    },
+    "## 定价\n\nLedgerly 入门版 29 元/月 {{cite:saas:0}}，专业版 99 元/月 {{cite:saas:1}}。\n\n## 尚未覆盖\n\n预算在抓取第二个竞品网站之前耗尽，功能、限制与竞品对比维度未获取到公开数据。\n"
+  ]
+}

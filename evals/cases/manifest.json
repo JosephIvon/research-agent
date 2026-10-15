@@ -449,9 +449,41 @@
           "content": "云主机导航"
         }
       ]
+    },
+    {
+      "id": "budget_partial",
+      "category": "budget",
+      "mode": "budget",
+      "query": "调研 Ledgerly 记账 SaaS 的定价与目标用户",
+      "sites": [
+        {
+          "key": "saas",
+          "url": "https://ledgerly.test/",
+          "pages": [
+            "index.html"
+          ]
+        }
+      ],
+      "expected": {
+        "dimensions": [
+          "pricing"
+        ]
+      },
+      "agent_budget": {
+        "max_tokens": 1400
+      },
+      "search_results": [
+        {
+          "title": "Ledgerly 官网",
+          "url": "https://ledgerly.test/",
+          "content": "Ledgerly 记账 SaaS，入门版 29 元/月"
+        }
+      ]
     }
   ],
   "fixture_digests": {
+    "budget_partial/llm.json": "ac2e97455141a15db017233b97b6af4ff94108e53866e1fde1a40421b8ca996f",
+    "budget_partial/sites/saas/index.html": "d03b9f9e056bc12b56890f621d612986b3a0e2a7c48bea694373599ad43d1903",
     "conf_pricing/llm.json": "40b215be86c8db533648e39680aa9797d94865c099617f6b019a9a4c7b546e37",
     "conf_pricing/sites/blog/post.html": "5031b31e3c95758950f0502199414add459268bb3d1796e7550b411f7095b937",
     "conf_pricing/sites/official/pricing.html": "9df67b1cfda0cf7cf121cab95423b99f1f7127d1de16035bf2e1c066de2b3592",
