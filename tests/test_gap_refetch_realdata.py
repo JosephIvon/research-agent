@@ -27,6 +27,7 @@ from src.agent.gap_refetch import (
     REASON_ELIGIBLE,
     REASON_NO_UNGROUNDED_CLAIM,
     plan_gap_refetch,
+    refetchable_gaps,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -178,4 +179,52 @@ def test_real_repaired_drafts_are_all_not_eligible():
         decision = _plan(llm, sites, names, res["violations"])
         assert decision.eligible is False, f"{cid} 对版不应触发补抓"
         assert decision.reason == REASON_NO_UNGROUNDED_CLAIM, f"{cid}: {decision.reason}"
+
+
+# --------------------------------------------------------------------------
+# 「可补抓的缺口」在真实校验产物上的行为
+# --------------------------------------------------------------------------
+
+def test_real_gap_is_refetchable_only_when_the_number_lands_on_a_page():
+    """真实错版（59 写成 89）的缺口 89：补抓页有 89 才算可补抓。
+
+    反例同样重要：补抓页只有 59（站点的真值）时**不可**补抓——
+    那正是实测里占 42% 的「站点上压根没有这个数」，此时再重生成只会让模型再编一个。
+    """
+    llm, sites, names = _case("gap_ungrounded")
+    violations = _verify(llm, sites, 0)["violations"]
+    ungrounded = [v for v in violations if v["type"] == "ungrounded_claim"]
+    assert ungrounded[0]["missing_numbers"] == ["89"]
+
+    assert refetchable_gaps(violations, ["专业版 89 元/席位，含审计日志。"]) == {
+        violations.index(ungrounded[0]): ["89"]
+    }
+
+    assert refetchable_gaps(violations, ["专业版 59 元/席位，含审计日志。"]) == {}
+
+
+def test_real_ambiguous_gap_is_refetchable_but_still_never_fetched():
+    """歧义违规的**数字**仍可能可补抓——归属歧义是选页判定的事，不是这里的事。
+
+    两道闸门各管一件事：先判该不该为这个站点抓（`plan_gap_refetch`），
+    再判抓到的页面里到底有没有料（`refetchable_gaps`）。混在一起就会互相掩盖。
+    """
+    llm, sites, names = _case("gap_ambiguous")
+    violations = _verify(llm, sites, 0)["violations"]
+    ungrounded = [v for v in violations if v["type"] == "ungrounded_claim"]
+    assert ungrounded[0]["missing_numbers"] == ["89"]
+
+    assert _plan(llm, sites, names, violations).reason == REASON_AMBIGUOUS_TARGET
+    assert refetchable_gaps(violations, ["Alpha 企业版 89 美元。"]) == {
+        violations.index(ungrounded[0]): ["89"]
+    }
+
+
+def test_real_repaired_draft_has_no_refetchable_gap():
+    """对版校验通过 → violations 里没有 ungrounded → 可补抓集合必为空。"""
+    for cid, (sites, names) in _CASES.items():
+        llm = _llm(cid)
+        violations = _verify(llm, sites, 1)["violations"]
+        assert refetchable_gaps(violations, ["89 59 199 全部出现在这一页。"]) == {}, cid
+
 

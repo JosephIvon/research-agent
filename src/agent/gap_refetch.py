@@ -24,9 +24,13 @@
 
 ## 缺口数字只用于观测
 
-`missing_numbers` 会被带进决策对象，但**判定过程从不读它**。
+`missing_numbers` 会被带进决策对象，但**选页判定从不读它**。
 它的用途是事后测量：抓完之后回头看这些数字有没有出现在新证据里。
 那是度量，不是决策 —— 且对开放领域免疫。
+
+唯一的例外是本模块末尾的 `refetchable_gaps`。它读数字，但读的是**「这个数字
+能否在已抓到的页面里被定位到」**——一个可以用字符串集合回答的定位问题，
+不含任何语义推断。理由与代价见该函数自己的文档。
 
 ## 设计纪律
 
@@ -46,12 +50,13 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
-from src.agent.citations import EvidenceStore
+from src.agent.citations import EvidenceStore, extract_numbers
 
 __all__ = [
     "GapRefetchCandidate",
     "GapRefetchDecision",
     "plan_gap_refetch",
+    "refetchable_gaps",
     "site_of",
 ]
 
@@ -292,3 +297,58 @@ def plan_gap_refetch(
         eligible=True, reason=REASON_ELIGIBLE, candidates=candidates,
         page_budget=budget, skipped=skipped, seen_violation_types=seen,
     )
+
+
+# --------------------------------------------------------------------------
+# 什么是「可补抓的缺口」
+# --------------------------------------------------------------------------
+
+def refetchable_gaps(
+    violations: Sequence[Dict[str, Any]],
+    page_texts: Sequence[str],
+) -> Dict[int, List[str]]:
+    """哪些缺口是**可补抓的**——即值得为它再跑一次报告重生成。
+
+    调用时机是**抓完之后、重生成之前**，所以这个判定不花钱：页面正文已经在手。
+    它的唯一作用是拦住整条链上最贵的一次调用（完整报告生成）。
+
+    返回 `{violation 在 violations 里的下标: 该违规里可补抓的数字}`。
+    空 dict = 一个都不够格，调用方应跳过重生成。
+
+    两条门槛同时成立才算可补抓：
+
+    1. **数字至少两位。** 个位数在任何页面上都存在，定位不到具体页，补抓修不了它。
+       实测 20 个缺失数字里 12 个（60%）是这种。
+    2. **数字出现在补抓页的正文里。** 匹配复用 `citations.extract_numbers`，
+       与 `verify_report` 同一套归一化——第一版工装用原始子串找数字，
+       `99043013` 在页面上是 `9 90 43 01 3`，把「站点上有」误判成「没有」，
+       分布因此不稳（见方案文档 §5.5.2 的两处坑）。
+
+    为什么第 2 条能省下大头：真实运行实测（5 组 / 20 个缺失数字，剔除噪音后 n=12）
+    显示 **42% 的缺口在站点上压根不存在**，是模型编的数。对这类缺口重生成，
+    模型只会再编一个，而代价是一次完整报告生成。
+
+    shortcut: 本定义只挡「压根不存在」，**不挡「到处都是」**。像 `24` 这种在半数
+    以上页面都出现的数仍会通过第 2 条。要区分它们需要按出现页数设阈值，
+    而 page_budget 只有 3 页、n=12 的样本支撑不了任何阈值——先要更多真实运行。
+    """
+    seen_numbers: set = set()
+    for text in page_texts or []:
+        seen_numbers.update(extract_numbers(text))
+    if not seen_numbers:
+        return {}
+
+    out: Dict[int, List[str]] = {}
+    for index, v in enumerate(violations or []):
+        if not isinstance(v, dict) or v.get("type") != "ungrounded_claim":
+            continue
+        missing = v.get("missing_numbers")
+        if not isinstance(missing, (list, tuple)):
+            continue
+        tokens = [
+            str(t) for t in missing
+            if len(str(t)) > 1 and str(t) in seen_numbers
+        ]
+        if tokens:
+            out[index] = tokens
+    return out

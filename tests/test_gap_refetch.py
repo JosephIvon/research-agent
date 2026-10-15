@@ -16,6 +16,7 @@ from src.agent.gap_refetch import (
     REASON_UNRESOLVABLE_CITATION,
     REASON_VIOLATION_NOT_STRUCTURED,
     plan_gap_refetch,
+    refetchable_gaps,
     site_of,
 )
 
@@ -376,3 +377,96 @@ def test_site_of_groups_pages_of_same_competitor():
     assert site_of("https://acme.com/docs/api") == "acme.com"
     assert site_of("https://acme.com") != site_of("https://globex.com")
     assert site_of("") == ""
+
+
+# --------------------------------------------------------------------------
+# 「可补抓的缺口」：抓完之后、重生成之前的第二道闸门
+# --------------------------------------------------------------------------
+
+def test_gap_found_in_refetched_page_is_refetchable():
+    """补抓页正文里有这个数字 → 可补抓，调用方据此才值得重跑一次报告生成。"""
+    violations = [_ungrounded(["aaa1"], ["89"])]
+
+    got = refetchable_gaps(violations, ["Acme 企业版年付 89 美元/席位。"])
+
+    assert got == {0: ["89"]}
+
+
+def test_gap_absent_from_every_page_is_not_refetchable():
+    """站点上压根没有这个数（实测占 42%）→ 不补抓，拦住那次昂贵的报告重生成。"""
+    violations = [_ungrounded(["aaa1"], ["99043013"])]
+
+    assert refetchable_gaps(violations, ["Acme 入门版 29 元/月。", "支持 SSO。"]) == {}
+
+
+def test_single_digit_is_dropped_even_when_page_contains_it():
+    """个位数在任何页面都存在，定位不到具体页；补抓修不了它。"""
+    violations = [_ungrounded(["aaa1"], ["7"])]
+
+    assert refetchable_gaps(violations, ["Acme 支持 7 种集成。"]) == {}
+
+
+def test_one_qualifying_number_is_enough_for_a_violation():
+    """一条违规里多个缺失数字，只要有一个够格就算可补抓。"""
+    violations = [_ungrounded(["aaa1"], ["89", "99043013"])]
+
+    got = refetchable_gaps(violations, ["Acme 企业版 89 美元。"])
+
+    assert got == {0: ["89"]}, "够格的留下，不够格的不要进结果"
+
+
+def test_thousands_separator_is_normalised_like_verify_report():
+    """页面写 1,000、缺口记 1000 仍要命中——归一化必须与 verify_report 同款。
+
+    用原始子串比对会漏判，正是 §5.5.2 记下的那处工装坑。
+    """
+    violations = [_ungrounded(["aaa1"], ["1000"])]
+
+    assert refetchable_gaps(violations, ["企业版 1,000 元/月起。"]) == {0: ["1000"]}
+
+
+def test_index_aligns_with_input_order_across_skipped_types():
+    """下标必须对齐传入的 violations：调用方要靠它把句子取出来拼提示词。"""
+    violations = [
+        {"type": "unknown_citation", "detail": "引用了不存在的证据 id"},
+        _ungrounded(["aaa1"], ["89"]),
+        {"type": "uncited_claim", "detail": "未标注证据"},
+        _ungrounded(["aaa1"], ["59"]),
+    ]
+
+    got = refetchable_gaps(violations, ["Acme 企业版 59 美元。"])
+
+    assert got == {3: ["59"]}, "不是 {1: ...}——位置不能被跳过的类型挤走"
+
+
+def test_no_page_text_means_nothing_is_refetchable():
+    """补抓全被拦截/超时 → 没有页面在手，任何缺口都不可补抓。"""
+    assert refetchable_gaps([_ungrounded(["aaa1"], ["89"])], []) == {}
+    assert refetchable_gaps([_ungrounded(["aaa1"], ["89"])], None) == {}
+
+
+def test_non_ungrounded_violations_are_never_counted():
+    """幻觉 id / 无引用句不参与：它们的修法不是补抓。"""
+    violations = [
+        {"type": "unknown_citation", "detail": "…", "missing_numbers": ["89"]},
+        {"type": "uncited_claim", "detail": "…", "missing_numbers": ["59"]},
+    ]
+
+    assert refetchable_gaps(violations, ["89 59 都在这页。"]) == {}
+
+
+def test_malformed_violation_is_skipped_not_guessed():
+    """结构化字段缺失或类型不对就跳过，不从 detail 的中文句子里猜数字，也不崩。"""
+    page = ["89 在这页。"]
+
+    missing_field = {"type": "ungrounded_claim", "detail": "数值 89 在所引证据原文中找不到"}
+    assert refetchable_gaps([missing_field], page) == {}
+
+    # 非可迭代的脏数据：宁可跳过，不能把整条补抓链带崩
+    not_a_list = {"type": "ungrounded_claim", "detail": "…", "missing_numbers": 5}
+    assert refetchable_gaps([not_a_list], page) == {}
+
+    # 字符串形态也不当列表用：逐字符迭代出来全是单位数，判定结果必为空
+    as_string = {"type": "ungrounded_claim", "detail": "…", "missing_numbers": "89"}
+    assert refetchable_gaps([as_string], page) == {}
+
