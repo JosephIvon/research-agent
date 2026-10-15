@@ -38,7 +38,9 @@ RUN uv run playwright install chromium --with-deps \
 COPY . .
 
 # 创建非root用户和输出目录
-RUN useradd --create-home --shell /usr/sbin/nologin appuser \
+# appuser 固定 uid=1000：与常见部署用户/GitHub Actions runner 对齐，
+# bind mount 的 output 目录（属主来自宿主机）容器内才有写权限。
+RUN useradd --create-home --shell /usr/sbin/nologin --uid 1000 appuser \
     && mkdir -p /app/output \
     && chown -R appuser:appuser /app /ms-playwright
 

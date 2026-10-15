@@ -84,6 +84,17 @@ jobs:
           echo "LLM_PROVIDER=fake" >> "$GITHUB_ENV"
           echo "Generated ephemeral SEARXNG_SECRET / JWT_SECRET_KEY; LLM_PROVIDER=fake (.env stays untracked)"
 
+      - name: Ensure writable output dir (bind mount uses host ownership)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # /app/output 是 bind mount，容器内属主来自宿主机目录。CI runner 上
+          # 若该目录由 docker daemon 以 root 新建，容器内非 root 的 appuser
+          # 写不进去，报告落盘即 PermissionError（e2e-real-services 实测踩坑）。
+          # .gitkeep 保证目录存在于 checkout，这里再显式放开写权限兜底。
+          mkdir -p output
+          chmod -R a+rwX output
+
       - name: Start SearXNG and Redis (docker compose v2, waits for healthchecks)
         shell: bash
         run: |
@@ -214,6 +225,17 @@ jobs:
             fi
           } > .env
           echo "Generated ephemeral .env with provider credentials"
+
+      - name: Ensure writable output dir (bind mount uses host ownership)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # /app/output 是 bind mount，容器内属主来自宿主机目录。CI runner 上
+          # 若该目录由 docker daemon 以 root 新建，容器内非 root 的 appuser
+          # 写不进去，报告落盘即 PermissionError（e2e-real-services 实测踩坑）。
+          # .gitkeep 保证目录存在于 checkout，这里再显式放开写权限兜底。
+          mkdir -p output
+          chmod -R a+rwX output
 
       - name: Start services and assert the backend became healthy
         shell: bash

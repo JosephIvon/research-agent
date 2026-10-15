@@ -76,7 +76,8 @@ dist/
 .settings/
 
 # ============== Output & Logs ==============
-output/
+output/*
+!output/.gitkeep
 *.log
 .logs/
 .learnings/

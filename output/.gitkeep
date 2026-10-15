@@ -1,0 +1,4 @@
+# 此目录挂载为容器的 /app/output（报告落盘目录）。
+# .gitkeep 让 output/ 存在于仓库：CI checkout 后目录属主是 runner 用户，
+# 容器内 appuser（uid 1000）才能写入——否则 docker daemon 以 root 新建
+# 目录，bind mount 遮蔽镜像内属主，报告落盘即 PermissionError。
