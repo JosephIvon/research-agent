@@ -21,7 +21,7 @@ CASES_DIR = EVALS_DIR / "cases"
 RESULTS_DIR = EVALS_DIR / "results"
 BASELINE_DIR = EVALS_DIR / "baselines"
 # 基线与 manifest 版本同步：新增用例必须升版本并重算（不滚动覆盖历史）
-BASELINE_VERSION = "v1.1"
+BASELINE_VERSION = "v1.2"
 DEFAULT_BASELINE = BASELINE_DIR / f"{BASELINE_VERSION}.json"
 
 from evals.fixture_source import load_manifest, update_fixture_digests  # noqa: E402
@@ -217,8 +217,13 @@ def run_budget_case(case: Dict[str, Any], llm_spec: Dict[str, Any], tmp: Path) -
         (mvp_workflow, "validate_fetch_url", _passthrough_url),
         (mvp_workflow, "validate_fetch_urls", _passthrough_urls),
         # 两处预算都要改：TaskBudget 读 mvp_workflow 的模块常量，ReActRunner
-        # 读 src.agent.config 的。只改一个会让守卫与账本口径不一致，
-        # 测出来的 partial 是假象。
+        # 读 src.agent.config 的。二者同源于同一个 config 值，生产环境永远相等；
+        # 只改一处会造出运行时不存在的状态。实测（max_tokens=1400 的本 case）：
+        # 只改一处终态**仍是** partial，total/calls 与两处都改时逐项相同
+        # （3504 / 4），所以 partial 并非假象；真正的差异在账本上——
+        # 只改 agent.config 时 cost_report.limits.max_tokens 记的是
+        # config 默认的 120000，与 case 声明的 1400 对不上。
+        (mvp_workflow, "AGENT_TOKEN_BUDGET", max_tokens),
         (agent_config, "AGENT_TOKEN_BUDGET", max_tokens),
         (tool_specs, "WebCrawler", _make_fixture_crawler_class(case)),
         (tool_specs, "get_search_tool", lambda: search),

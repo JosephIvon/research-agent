@@ -16,7 +16,7 @@ Helps product managers and market researchers quickly complete competitive analy
 | 🛡️ Indirect prompt-injection defense | Boundary markers, scan-and-neutralize (zero-width stripped first), read-only tool whitelist with second-pass SSRF validation at execution points, output echo checking, audit counters, 62 deterministic regression fixtures |
 | 🔌 MCP Server | Research capabilities exposed over standard MCP (`/mcp`, official SDK, stateless streamable-http); tool schemas share a single source with the agent registry (consistency-tested); callable from Claude Desktop / Cursor |
 | 🚦 Rate limiting | Global backstop middleware plus an explicit `/mcp` guard (the middleware cannot reach mounted sub-apps); bucketed by token and by IP; switchable off globally |
-| 📊 Offline evals + CI gate | 12 deterministic cases (regular 4 / conflicting-sources 2 / missing-data 2 / injection 2 / 10-source synthesis 1 / ReAct comparison 1), sha256-pinned fixtures, injection pass rate = 1.00 as a hard gate; 👍/👎 report feedback feeds new eval cases |
+| 📊 Offline evals + CI gate | 13 deterministic cases (regular 4 / conflicting-sources 2 / missing-data 2 / injection 2 / 10-source synthesis 1 / ReAct comparison 1 / budget truncation 1), sha256-pinned fixtures, injection pass rate = 1.00 as a hard gate; 👍/👎 report feedback feeds new eval cases |
 | 📈 Observability & cost | Per-task token/USD accounting with budget guard (real usage first, estimates always flagged; per-page extraction cost is accounted too); Langfuse tracing via contextvars, zero-overhead when disabled |
 | 🔎 Smart Search | SearXNG/Bing/SerpAPI, auto-retrieve competitor info |
 | 🕷️ Web Crawling | Login scenarios, batch-shared browser instance, SSRF protection |
@@ -43,21 +43,21 @@ FastAPI server ──── /mcp mount (stateless streamable-http, dedicated rat
         +-- LLM gateway (5 providers + deterministic fake playback; breaker/backoff/failover)
         +-- Langfuse tracing (contextvars, no-op fallback)
 
-evals/ (offline evals + CI gate) ── 12 cases drive the real workflow end-to-end, sha256-pinned fixtures
+evals/ (offline evals + CI gate) ── 13 cases drive the real workflow end-to-end, sha256-pinned fixtures
 ```
 
 ## Engineering & Eval Metrics
 
-All numbers are reproducible (commands below); sources: `evals/baselines/v1.1.json` and test runs.
+All numbers are reproducible (commands below); sources: `evals/baselines/v1.2.json` and test runs.
 
 | Metric | Value |
 |--------|-------|
-| Backend tests | 574 passed / 7 skipped (every skip is environmental: needs a local backend, real credentials, or a real Redis) |
+| Backend tests | 580 passed / 7 skipped (every skip is environmental: needs a local backend, real credentials, or a real Redis) |
 | Frontend tests | 40 passing, `vite build` clean |
-| Offline eval gate | 12/12 cases completed, PASS |
+| Offline eval gate | 13/13 cases completed (one delivered as `partial`), PASS |
 | Citation coverage / validity / grounding (all categories) | 1.0 / 1.0 / 1.0 |
 | Injection fixture pass rate (hard CI gate) | 1.00 |
-| Delivery rate / truncation rate | 1.00 / 0.00 (`partial` counts as delivered; truncation is tracked separately so it is never smoothed away) |
+| Delivery rate / truncation rate | 1.00 / 0.077 (`partial` counts as delivered; truncation is tracked separately so it is never smoothed away) |
 | ReAct comparison | 66.7% fewer pages fetched (6→2), citation metrics not degraded |
 | 10-source synthesis | 10/10 sources cited with valid evidence |
 
@@ -65,6 +65,7 @@ All numbers are reproducible (commands below); sources: `evals/baselines/v1.1.js
 
 - The four citation metrics prove "no format-level fabrication", **not** factual correctness. "Data completeness" is presented separately and explicitly declared as not measuring correctness.
 - The 1.00 injection rate is green on **this repository's own fixture set** — it is not a guarantee against all attacks. Output validation is the last hard boundary in the six-layer defense.
+- The 0.077 truncation rate is 1 of 13 cases — a **deliberately constructed budget case** (the token allowance is pushed into the measured convergence band to force a `partial`). It does **not** mean 7.7% of real tasks get truncated. That case self-certifies that the budget is what terminates it via a flip experiment: the same fixture with the budget released finishes as `completed`, and with the budget so small it trips before the first round it is `failed`. Asserting "it is partial" alone proves nothing. The metric used to sit at a constant 0.00 (no case could trigger it); the gate only warns about it, never fails on it.
 - Grounding accepts **multiplicative derivations between evidence numbers** (annualisation ×12, a 20% discount as ×8/10, …); those do not block delivery. Known trade-off and residual boundary:
   - Addition and subtraction were removed from the operation table after measured ablation — they let "two unrelated prices whose difference happens to equal the target" pass as a derivation (`99 - 49 = 50`). The cost is that financial phrasings like "a 15-percentage-point increase" are no longer accepted as derived.
   - Residual boundary: when a single evidence item holds several unrelated numbers, multiplying two of them can still coincide with a fabricated value. On real extraction shapes (0–3 numbers per evidence item) the measured leakage rate is 0.2%–1.3%, most of which is legitimate annualisation. A regression test pins that ceiling so it cannot silently grow.

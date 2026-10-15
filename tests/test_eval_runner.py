@@ -67,7 +67,7 @@ def test_fixture_digest_tamper_is_detected():
 def test_smoke_cross_source_case_cites_all_sources():
     """跨 ≥10 来源综合（M7 门控前置）：全部来源都要被有效引用。"""
     manifest = load_manifest(verify_digests=True)
-    assert manifest["version"] == "v1.1"
+    assert manifest["version"] == "v1.2"
 
     results = _run(manifest, ["cross_cloudprice"])
     case = results[0]
@@ -208,3 +208,49 @@ def test_every_manifest_case_uses_a_mode_the_runner_implements():
         if mode == "budget":
             assert case.get("agent_budget", {}).get("max_tokens"), \
                 f"budget 模式必须显式给 agent_budget.max_tokens，否则默认 10 会开跑即超额"
+
+
+def test_budget_override_reaches_both_budget_guards(monkeypatch):
+    """预算覆写必须同时到达 TaskBudget 与 ReActRunner 两道守卫。
+
+    只 patch 一处时终态**仍是** partial，total/calls 与两处都改时逐项相同
+    （3504 / 4）——所以只看终态的测试根本抓不到少 patch 一处这件事。
+    真正会漂的是账本口径：只改 agent.config 那一处时，
+    cost_report.limits.max_tokens 记下来的是 config 默认的 120000，
+    与 case 声明的 1400 对不上；反之 runner.token_budget 仍是 120000。
+    这里把两个口径都盯住，少 patch 任何一处都会变红。
+    """
+    import tempfile
+    from pathlib import Path
+
+    from src.agent import runner as runner_mod
+
+    seen = {}
+    original_init = runner_mod.ReActRunner.__init__
+
+    def _spy(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        seen["runner_token_budget"] = self.token_budget
+
+    monkeypatch.setattr(runner_mod.ReActRunner, "__init__", _spy)
+
+    manifest = load_manifest(verify_digests=True)
+    entry = next(c for c in manifest["cases"] if c["id"] == BUDGET_CASE_ID)
+    declared = int(entry["agent_budget"]["max_tokens"])
+    llm_spec = json.loads(
+        (eval_runner.CASES_DIR / BUDGET_CASE_ID / "llm.json").read_text(encoding="utf-8")
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        state = eval_runner.run_budget_case(entry, llm_spec, Path(tmp))["state"]
+
+    assert state.get("status") == "partial", "覆写额度后本 case 应收束成 partial"
+    assert seen.get("runner_token_budget") == declared, (
+        f"ReActRunner 读到 token_budget={seen.get('runner_token_budget')}，"
+        f"case 声明的是 {declared}——src.agent.config 的 AGENT_TOKEN_BUDGET 没被覆写"
+    )
+    limits = (state.get("cost_report") or {}).get("limits") or {}
+    assert limits.get("max_tokens") == declared, (
+        f"账本快照记的上限是 {limits.get('max_tokens')}，case 声明的是 {declared}"
+        "——mvp_workflow 的 AGENT_TOKEN_BUDGET 没被覆写"
+    )

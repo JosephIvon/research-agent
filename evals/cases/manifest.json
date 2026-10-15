@@ -1,6 +1,6 @@
 {
-  "version": "v1.1",
-  "description": "M4 离线评测集 v1.1：v1 基础上新增 cross_source 类目（M7 门控前置），共 12 条，逐步扩到 40+",
+  "version": "v1.2",
+  "description": "M4 离线评测集 v1.2：v1.1 基础上新增 budget 类目（预算耗尽收敛为 partial 交付），共 13 条，逐步扩到 40+",
   "cases": [
     {
       "id": "reg_doccollab",
