@@ -52,7 +52,7 @@ All numbers are reproducible (commands below); sources: `evals/baselines/v1.3.js
 
 | Metric | Value |
 |--------|-------|
-| Backend tests | 663 passed / 7 skipped (every skip is environmental: needs a local backend, real credentials, or a real Redis) |
+| Backend tests | 660+ passing, 7 skipped (skips are environmental: needs a local backend, real credentials, or a real Redis) |
 | Frontend tests | 40 passing, `vite build` clean |
 | Offline eval gate | 14/14 cases completed (one delivered as `partial`), PASS |
 | Citation coverage / validity / grounding (all categories) | 1.0 / 1.0 / 1.0 |
