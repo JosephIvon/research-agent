@@ -1,0 +1,26 @@
+{
+  "extract_sequence": [
+    [
+      {"key": "pricing", "value": "Acme 专业版 79 元/月，含 90 天日志留存。", "confidence": 0.9},
+      {"key": "features", "value": ["日志检索", "告警规则"], "confidence": 0.9},
+      {"key": "models", "value": ["SaaS 多租户"], "confidence": 0.9},
+      {"key": "target_users", "value": "中大型企业", "confidence": 0.9},
+      {"key": "integrations", "value": "支持 Prometheus 导出", "confidence": 0.9},
+      {"key": "limitations", "value": "私有化部署未公开", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价检索速度快", "confidence": 0.9}
+    ],
+    [
+      {"key": "pricing", "value": "Beta 基础版 59 元/月，含 30 天日志留存。", "confidence": 0.9},
+      {"key": "features", "value": ["日志检索"], "confidence": 0.9},
+      {"key": "models", "value": ["SaaS 多租户"], "confidence": 0.9},
+      {"key": "target_users", "value": "初创团队", "confidence": 0.9},
+      {"key": "integrations", "value": "支持 Grafana 导出", "confidence": 0.9},
+      {"key": "limitations", "value": "私有化部署未公开", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价响应速度快", "confidence": 0.9}
+    ]
+  ],
+  "report": [
+    "## 定价\n\nAcme 专业版 89 元/月 {{cite:acme:0}}。\n\nBeta 基础版 69 元/月 {{cite:beta:0}}。\n\n## 目标用户\n\nAcme 面向中大型企业，Beta 面向初创团队。\n",
+    "## 定价\n\nAcme 专业版 79 元/月 {{cite:acme:0}}。\n\nBeta 基础版 59 元/月 {{cite:beta:0}}。\n\n## 目标用户\n\nAcme 面向中大型企业，Beta 面向初创团队。\n"
+  ]
+}

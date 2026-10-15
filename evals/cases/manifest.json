@@ -1,6 +1,6 @@
 {
-  "version": "v1.3",
-  "description": "M4 评测集 v1.3：v1.2 加入 budget 类目把预算截断如实呈现为 partial；v1.3 加入 ungrounded 类目——首版报告数值无据（ungrounded_claim）、重生成修正后才通过，用来给「引用违规」这项指标一个真实样本。共 14 条，样本仍不足 40。",
+  "version": "v1.4",
+  "description": "M4 评测集 v1.4：v1.3 加入 ungrounded 类目（gap_ungrounded）给「引用违规」真实样本；v1.4 扩展该形态——多竞品各自缺口（gap_multi_site）、幻觉 id 与真缺口混入（gap_mixed_unknown）、一句引两家归属歧义（gap_ambiguous），共 17 条，样本仍不足 40。",
   "cases": [
     {
       "id": "reg_doccollab",
@@ -501,6 +501,82 @@
           "target_users"
         ]
       }
+    },
+    {
+      "id": "gap_multi_site",
+      "category": "ungrounded",
+      "mode": "legacy",
+      "query": "对比 Acme 与 Beta 两款日志 SaaS 的定价与目标用户",
+      "sites": [
+        {
+          "key": "acme",
+          "url": "https://acme.test/",
+          "pages": [
+            "index.html"
+          ]
+        },
+        {
+          "key": "beta",
+          "url": "https://beta.test/",
+          "pages": [
+            "index.html"
+          ]
+        }
+      ],
+      "expected": {
+        "dimensions": [
+          "pricing",
+          "target_users"
+        ]
+      }
+    },
+    {
+      "id": "gap_mixed_unknown",
+      "category": "ungrounded",
+      "mode": "legacy",
+      "query": "调研 Gamma 日志审计 SaaS 的定价与功能",
+      "sites": [
+        {
+          "key": "gamma",
+          "url": "https://gamma.test/",
+          "pages": [
+            "index.html"
+          ]
+        }
+      ],
+      "expected": {
+        "dimensions": [
+          "pricing",
+          "features"
+        ]
+      }
+    },
+    {
+      "id": "gap_ambiguous",
+      "category": "ungrounded",
+      "mode": "legacy",
+      "query": "对比 Alpha 与 Beta 的定价",
+      "sites": [
+        {
+          "key": "alpha",
+          "url": "https://alpha.test/",
+          "pages": [
+            "index.html"
+          ]
+        },
+        {
+          "key": "beta",
+          "url": "https://beta.test/",
+          "pages": [
+            "index.html"
+          ]
+        }
+      ],
+      "expected": {
+        "dimensions": [
+          "pricing"
+        ]
+      }
     }
   ],
   "fixture_digests": {
@@ -523,6 +599,14 @@
     "cross_cloudprice/sites/cloud_h/index.html": "7b1d5b5867199013632da73cd6c8c84f1652ab5b9f8661718bf0fee672086087",
     "cross_cloudprice/sites/cloud_i/index.html": "66e6b10b83dbca15e24d6d943e7681ec46044532daed740204c70f37c74bcabd",
     "cross_cloudprice/sites/cloud_j/index.html": "90d203f56ebda0f42cc17662e2716960dc08d6caecc4f9357e8f2c29ae13d0f8",
+    "gap_ambiguous/llm.json": "d45a78ba3dc729238eef2d4c08452e34d2140c42a8bc47613d3acd261d5e42fb",
+    "gap_ambiguous/sites/alpha/index.html": "3bf859483550b32a78c05e29e6e99fd158377a15ec12006298045c2f47e19d98",
+    "gap_ambiguous/sites/beta/index.html": "2e19a673138524b0a7572252d6f389cbd44baabd6b36a83115a3800fa0658aa9",
+    "gap_mixed_unknown/llm.json": "d0b84cbc841bbaeb387722baa943fa8d2ba845fdd2132e92474206bd7a0fe440",
+    "gap_mixed_unknown/sites/gamma/index.html": "ddd278cb14dd38386306e402c4ca78770fcc6976fcc1934da7803b604f06185f",
+    "gap_multi_site/llm.json": "66dbc8b722dbfe21327250477aa264b7d4adb96c96b74701bd8179a84f2a293d",
+    "gap_multi_site/sites/acme/index.html": "4aa06c60d806ee23a6e0c5b96830a5428e06fee57363b52721f691348e9b2fbd",
+    "gap_multi_site/sites/beta/index.html": "d6b4fe5c5c8843efbf32bd13a682238ea644158873fc5c8117b2e5b21285b9db",
     "gap_ungrounded/llm.json": "b40ec132bafdb50176600bea38228b82638b8f4b35269ade056aff5d1a439cca",
     "gap_ungrounded/sites/auditx/index.html": "1b14a14803f6b98bba718735032c055cd740f7fe3c015d43a386d17eee80e73d",
     "inj_heavy/llm.json": "a57b68e62d0c4956e06d7c28cb2a9ae1264d54d7603aeebcd65511eba2f604a2",

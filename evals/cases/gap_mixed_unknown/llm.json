@@ -1,0 +1,17 @@
+{
+  "extract_sequence": [
+    [
+      {"key": "pricing", "value": "Gamma 企业版 99 元/月，含 180 天留存。", "confidence": 0.9},
+      {"key": "features", "value": ["合规导出", "审计追踪"], "confidence": 0.9},
+      {"key": "models", "value": ["SaaS 多租户"], "confidence": 0.9},
+      {"key": "target_users", "value": "合规敏感企业", "confidence": 0.9},
+      {"key": "integrations", "value": "支持 SIEM 对接", "confidence": 0.9},
+      {"key": "limitations", "value": "私有化部署未公开", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价审计追踪完善", "confidence": 0.9}
+    ]
+  ],
+  "report": [
+    "## 定价\n\nGamma 企业版 199 元/月 {{cite:gamma:0}}。\n\n相比上季度涨幅 10% [e:deadbeef1234]。\n\n## 功能\n\n提供合规导出与审计追踪。\n",
+    "## 定价\n\nGamma 企业版 99 元/月 {{cite:gamma:0}}。\n\n## 功能\n\n提供合规导出与审计追踪。\n"
+  ]
+}

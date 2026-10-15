@@ -1,0 +1,26 @@
+{
+  "extract_sequence": [
+    [
+      {"key": "pricing", "value": "Alpha 专业版 79 元/月。", "confidence": 0.9},
+      {"key": "features", "value": ["日志检索"], "confidence": 0.9},
+      {"key": "models", "value": ["SaaS 多租户"], "confidence": 0.9},
+      {"key": "target_users", "value": "企业客户", "confidence": 0.9},
+      {"key": "integrations", "value": ["API"], "confidence": 0.9},
+      {"key": "limitations", "value": "私有化部署未公开", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价稳定可靠", "confidence": 0.9}
+    ],
+    [
+      {"key": "pricing", "value": "Beta 基础版 59 元/月。", "confidence": 0.9},
+      {"key": "features", "value": ["告警规则"], "confidence": 0.9},
+      {"key": "models", "value": ["SaaS 多租户"], "confidence": 0.9},
+      {"key": "target_users", "value": "初创团队", "confidence": 0.9},
+      {"key": "integrations", "value": ["Webhook"], "confidence": 0.9},
+      {"key": "limitations", "value": "私有化部署未公开", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价简单易用", "confidence": 0.9}
+    ]
+  ],
+  "report": [
+    "## 定价\n\nAlpha 与 Beta 定价相同，都是 89 元/月 {{cite:alpha:0}} {{cite:beta:0}}。\n\n## 目标用户\n\nAlpha 面向企业，Beta 面向初创。\n",
+    "## 定价\n\nAlpha 专业版 79 元/月 {{cite:alpha:0}}；Beta 基础版 59 元/月 {{cite:beta:0}}。\n\n## 目标用户\n\nAlpha 面向企业，Beta 面向初创。\n"
+  ]
+}
