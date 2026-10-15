@@ -72,8 +72,12 @@ services:
       - SEARCH_PROVIDER=${SEARCH_PROVIDER:-searxng}
       - SEARCH_TIMEOUT=${SEARCH_TIMEOUT:-15}
       - SEARCH_MAX_RESULTS=${SEARCH_MAX_RESULTS:-10}
+      # L3→L2 轨迹沉淀：设置后所有 LLM 调用按意图录制到 /app/recordings
+      # （录出的文件可被 LLM_PROVIDER=fake LLM_FAKE_SCRIPT=... 直接回放）
+      - LLM_RECORD_SCRIPT=${LLM_RECORD_SCRIPT:-}
     volumes:
       - ./output:/app/output
+      - ./recordings:/app/recordings
     restart: unless-stopped
     healthcheck:
       # 用**就绪**探针而非存活探针：缺 LLM 密钥时 /health 仍返回 200，

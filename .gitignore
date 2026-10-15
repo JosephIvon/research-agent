@@ -79,6 +79,9 @@ dist/
 # ============== Output & Logs ==============
 output/*
 !output/.gitkeep
+# 真跑 LLM 轨迹录制（LLM_RECORD_SCRIPT 落盘处，本地沉淀/CI artifact 用）
+recordings/*
+!recordings/.gitkeep
 *.log
 .logs/
 .learnings/

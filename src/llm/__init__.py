@@ -937,6 +937,134 @@ _PROVIDERS = {
 }
 
 
+class RecordingLLMClient(LLMClient):
+    """包装真实客户端，把每次响应按「意图 + 调用序」录制为可回放脚本。
+
+    用途：把 e2e 真跑（L3）的模型轨迹一键沉淀回离线回放（L2）——录出的
+    JSON 与 ScriptedLLMClient 的脚本格式逐字兼容：直接
+    ``LLM_PROVIDER=fake LLM_FAKE_SCRIPT=<path>`` 回放，或并入 evals case
+    的 llm.json（站点 HTML 夹具另行拷贝，录制只负责模型侧）。
+
+    为什么 key 是 intent+序号而不是 hash(messages)：
+    - messages 含 system prompt，prompt 一改版全部 fixture 失效；
+    - 真模型有温度，同请求不同响应，hash 锁死的是「这一次的随机结果」。
+    intent 序列在 prompt 改版后通常稳定，是回放可维护的唯一锚点。
+
+    归一化规则（对齐 ScriptedLLMClient._validate 接受的条目类型）：
+    - 纯文本 → str
+    - 单 tool_call → ``{"type": "tool_call", "name", "arguments"}``
+    - 多 tool_call → ``{"type": "tool_calls", "calls": [...]}``
+    - extract_structured_data 的 dict → json.dumps 成 str（回放侧
+      ScriptedLLMClient.extract_structured_data 会 json.loads 还原；直接
+      存 dict 会被脚本构造校验拒绝）
+
+    识别不出意图的调用照常透传、不落盘（仅 warning）：录制是尽力而为，
+    不能反过来阻断真跑。每次调用后原子落盘（.tmp + rename）——进程被
+    kill 也不丢已录条目。
+    """
+
+    provider_name = "recording"
+
+    def __init__(self, inner: LLMClient, path: Optional[str] = None):
+        self._inner = inner
+        self._path = path
+        self.script: Dict[str, List[Any]] = {}
+
+    def __getattr__(self, name: str) -> Any:
+        # default_model / api_key / base_url 等属性被调用方直接读，代理到被包装客户端
+        return getattr(self._inner, name)
+
+    # ------------------------------------------------------------------
+    # 归一化：真客户端的返回形态 → ScriptedLLMClient 脚本条目
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _normalize_call(tc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """单个 tool_call → 脚本条目。兼容内建形态与 OpenAI function 形态。"""
+        if not isinstance(tc, dict):
+            return None
+        name = tc.get("name") or (tc.get("function") or {}).get("name")
+        if not name:
+            return None
+        arguments = tc.get("arguments")
+        if arguments is None:
+            arguments = (tc.get("function") or {}).get("arguments")
+        if not isinstance(arguments, str):
+            arguments = json.dumps(arguments or {}, ensure_ascii=False)
+        return {"type": "tool_call", "name": name, "arguments": arguments}
+
+    @classmethod
+    def _normalize_raw(cls, raw: Dict[str, Any]) -> Optional[Any]:
+        """chat_completion_raw 的完整返回 → 脚本条目。"""
+        calls = [c for c in (cls._normalize_call(tc) for tc in raw.get("tool_calls") or []) if c]
+        if calls:
+            return calls[0] if len(calls) == 1 else {"type": "tool_calls", "calls": calls}
+        content = raw.get("content")
+        return content if isinstance(content, str) and content.strip() else None
+
+    def _record(self, entry: Optional[Any], messages: Optional[List[Dict[str, str]]] = None,
+                intent: Optional[str] = None) -> None:
+        if entry is None:
+            return
+        if intent is None:
+            intent = detect_llm_intent(messages or [])
+        if intent is None:
+            logger.warning("[recording] 无法识别调用意图，本条不录制（调用照常透传）")
+            return
+        self.script.setdefault(intent, []).append(entry)
+        if self._path:
+            self.dump(self._path)
+
+    def dump(self, path: str) -> None:
+        """原子落盘：先写 .tmp 再 rename，读侧永远看到完整文件。"""
+        directory = os.path.dirname(os.path.abspath(path))
+        os.makedirs(directory, exist_ok=True)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(self.script, fh, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+
+    # ------------------------------------------------------------------
+    # LLMClient 接口：透传 + 录制
+    # ------------------------------------------------------------------
+
+    def chat_completion(self, messages, model=None, temperature=0.2, max_tokens=4096,
+                        tools=None, tool_choice="auto", timeout=None,
+                        usage_sink=None) -> Union[str, Dict[str, Any], None]:
+        result = self._inner.chat_completion(
+            messages, model=model, temperature=temperature, max_tokens=max_tokens,
+            tools=tools, tool_choice=tool_choice, timeout=timeout, usage_sink=usage_sink,
+        )
+        entry = result if isinstance(result, str) else self._normalize_call(result or {})
+        self._record(entry, messages=messages)
+        return result
+
+    def chat_completion_raw(self, messages, model=None, temperature=0.2, max_tokens=4096,
+                            tools=None, tool_choice="auto", timeout=None) -> Dict[str, Any]:
+        result = self._inner.chat_completion_raw(
+            messages, model=model, temperature=temperature, max_tokens=max_tokens,
+            tools=tools, tool_choice=tool_choice, timeout=timeout,
+        )
+        self._record(self._normalize_raw(result), messages=messages)
+        return result
+
+    def stream_completion(self, messages, model=None, temperature=0.2, max_tokens=4096,
+                          usage_sink=None, include_usage=None) -> str:
+        result = self._inner.stream_completion(
+            messages, model=model, temperature=temperature, max_tokens=max_tokens,
+            usage_sink=usage_sink, include_usage=include_usage,
+        )
+        if isinstance(result, str) and result.strip():
+            self._record(result, messages=messages)
+        return result
+
+    def extract_structured_data(self, content: str, schema: Dict[str, Any]) -> Dict[str, Any]:
+        result = self._inner.extract_structured_data(content, schema)
+        # 回放侧按 "extract_structured" 意图消费（ScriptedLLMClient 的约定）
+        self._record(json.dumps(result, ensure_ascii=False), intent="extract_structured")
+        return result
+
+
 def get_llm_client(provider: Optional[str] = None) -> LLMClient:
     """
     获取LLM客户端实例
@@ -975,7 +1103,13 @@ def get_llm_client(provider: Optional[str] = None) -> LLMClient:
         raise ValueError(f"Unknown LLM provider: {selected_provider}. "
                        f"Available providers: {list(_PROVIDERS.keys())}")
 
-    return client_class()
+    client = client_class()
+    # L3→L2 轨迹沉淀：设置 LLM_RECORD_SCRIPT=<path> 后，所有调用按意图录制，
+    # 录出的文件可直接被 ScriptedLLMClient（LLM_FAKE_SCRIPT）回放。不设则零开销。
+    record_path = os.getenv("LLM_RECORD_SCRIPT")
+    if record_path:
+        return RecordingLLMClient(client, record_path)
+    return client
 
 
 def list_available_providers() -> List[str]:
