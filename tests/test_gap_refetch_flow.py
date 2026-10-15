@@ -1,0 +1,228 @@
+"""缺口定向补抓（gap refetch）接线集成测试。
+
+真实链路「引用校验仍不过 → 判定层 → 补抓 → 带新证据重生成 → 第三次校验」
+在测试里用 ScriptedLLMClient + 两阶段爬虫替身完整走一遍：
+
+- extract 脚本按调用轮次推进：[初次(无定价), 补抓(含定价)] 表达「初次缺、补抓得」
+- report 脚本按轮次推进：[首版错, 二版仍错, 补抓后对] 表达三次生成
+- 爬虫替身：首次调用返回无定价页，之后返回定价页
+
+隔离手法与 test_agent_mode_wiring.py 一致（monkeypatch 工作流网络边界 +
+临时输出目录 + 临时 SQLite），不经过 evals 夹具框架——因为
+`resolve_citations` 只能把报告引用解析到 `extract_sequence[site_idx]`，
+表达不了「报告引用补抓新增证据」的 id，所以这里直接手算 `make_evidence_id`。
+"""
+import asyncio
+import json
+
+from src.agent.citations import make_evidence_id
+from src.llm import ScriptedLLMClient
+
+SITE_URL = "https://acme.example.com/pricing"
+
+# 初次抽取：覆盖 6 个质量维度但**不含定价**（过 quality/verify 门禁，触发真缺口）
+INITIAL_ITEMS = [
+    {"key": "features", "value": "日志检索", "confidence": 0.9},
+    {"key": "models", "value": "SaaS 多租户", "confidence": 0.9},
+    {"key": "target_users", "value": "中大型企业", "confidence": 0.9},
+    {"key": "integrations", "value": "支持 Prometheus 导出", "confidence": 0.9},
+    {"key": "limitations", "value": "私有化部署未公开", "confidence": 0.9},
+    {"key": "reviews", "value": "用户评价检索速度快", "confidence": 0.9},
+]
+PRICING_ITEM = {"key": "pricing", "value": "79 元/月", "confidence": 0.9}
+
+_FEATURES_ID = make_evidence_id(SITE_URL, "features", "日志检索")
+_PRICING_ID = make_evidence_id(SITE_URL, "pricing", "79 元/月")
+
+
+class _TwoPhaseCrawler:
+    """首次抓取返回无定价页，之后（补抓）返回定价页。site_url 可选：
+    工作流批量/就地构造都走无参 `WebCrawler()`，测试里单站场景无需绑定。"""
+
+    def __init__(self, site_url=None):
+        self.site_url = site_url or "https://placeholder.example.com"
+        self.calls = 0
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def fetch_site_profile(self, url, max_pages=3, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            page = {"url": url, "content": "Acme 官网首页（未披露定价）", "html": ""}
+        else:
+            page = {"url": url, "content": "Acme 专业版定价页：79 元/月", "html": ""}
+        return {
+            "url": url,
+            "content": page["content"],
+            "pages": [page],
+            "discovered_urls": [],
+        }
+
+
+class _EventCollector:
+    def __init__(self):
+        self.events = []
+
+    async def emit(self, event):
+        self.events.append(event)
+
+
+def _wire_offline(monkeypatch, tmp_path, llm_client, crawler_cls):
+    from src.config import settings
+    from src.storage import database as dbmod
+    from src.workflow import mvp_workflow
+
+    monkeypatch.setattr(mvp_workflow, "get_llm_client", lambda *a, **k: llm_client)
+    monkeypatch.setattr(mvp_workflow, "WebCrawler", crawler_cls)
+    monkeypatch.setattr(mvp_workflow, "validate_fetch_url", lambda u: u)
+    monkeypatch.setattr(mvp_workflow, "validate_fetch_urls", lambda us: list(us))
+    monkeypatch.setattr(settings, "OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setattr(dbmod, "DATABASE_PATH", str(tmp_path / "reports.db"))
+    monkeypatch.setattr(dbmod, "_report_db", None)
+
+
+def _run_legacy(monkeypatch, tmp_path, script, crawler_cls=None):
+    from src.workflow import mvp_workflow
+
+    llm = ScriptedLLMClient(script=script)
+    _wire_offline(monkeypatch, tmp_path, llm, crawler_cls or _TwoPhaseCrawler)
+
+    workflow = mvp_workflow.MVPWorkflow()
+    collector = _EventCollector()
+    workflow._event_emitter = collector
+    state = asyncio.run(workflow.run(
+        "Acme 定价调研",
+        target_urls=[SITE_URL],
+        enable_search=False,
+        deliverables={"report": True, "prd": False},
+        task_id="gap-flow-0001",
+    ))
+    return state, collector
+
+
+def test_refetch_turns_third_draft_green(tmp_path, monkeypatch):
+    """真缺口闭环：首版/二版 ungrounded → 补抓得定价 → 第三次校验通过。
+
+    这是「补抓 → 带新证据重生成 → 第三次校验」顺序的实锤——如果只重建证据库
+    不重生成（评审问题 A 的坑），报告仍引用旧证据，第三次必然不过。
+    """
+    crawler = _TwoPhaseCrawler(SITE_URL)
+    script = {
+        "decompose": ['[{"id": "1", "description": "分析目标网站内容", "priority": 1}]'],
+        "extract": [
+            json.dumps(INITIAL_ITEMS, ensure_ascii=False),
+            json.dumps([PRICING_ITEM], ensure_ascii=False),
+        ],
+        "report": [
+            f"## 定价\n\nAcme 专业版 99 元/月 [e:{_FEATURES_ID}]。\n",
+            f"## 定价\n\nAcme 专业版 99 元/月 [e:{_FEATURES_ID}]。\n",
+            f"## 定价\n\nAcme 专业版 79 元/月 [e:{_PRICING_ID}]。\n",
+        ],
+    }
+    state, collector = _run_legacy(monkeypatch, tmp_path, script, lambda: crawler)
+
+    assert state["status"] == "completed", state.get("termination_reason")
+    assert state["citation_attempts"] == 3, (
+        f"attempts={state.get('citation_attempts')} "
+        f"decision={state.get('gap_refetch_decision')} "
+        f"result={state.get('gap_refetch_result')}"
+    )
+    assert state["citation_trusted"] is True, state.get("citation_violations")
+
+    # 判定层判 eligible，补抓拿到定价证据
+    decision = state["gap_refetch_decision"]
+    assert decision["eligible"] is True, decision
+    assert [c["competitor_url"] for c in decision["candidates"]] == ["acme.example.com"]
+    result = state["gap_refetch_result"]
+    assert result["new_items"] == 1 and result["candidates"] == 1
+    assert state["refetched_evidence"][0]["key"] == "pricing"
+
+    # 报告交付的是修正后的定价
+    assert "79 元/月" in state["report_final"]
+    assert "99 元/月" not in state["report_final"]
+
+    # 事件流：gap_refetch running → completed（判定层触发的证据）
+    gap_events = [e for e in collector.events if e.event == "gap_refetch"]
+    statuses = [e.status for e in gap_events]
+    assert "running" in statuses and "completed" in statuses, statuses
+
+
+def test_refetch_runs_through_single_competitor_fetch(tmp_path, monkeypatch):
+    """补抓复用 `_fetch_single_competitor`：注入防护与抽取链路天然复用。
+
+    同时验证判定层分到的页数额度（per_candidate_pages）被透传给爬虫——
+    这是补抓的成本刹车。
+    """
+    crawler = _TwoPhaseCrawler(SITE_URL)
+    script = {
+        "extract": [
+            json.dumps(INITIAL_ITEMS, ensure_ascii=False),
+            json.dumps([PRICING_ITEM], ensure_ascii=False),
+        ],
+        "report": [
+            f"## 定价\n\nAcme 专业版 99 元/月 [e:{_FEATURES_ID}]。\n",
+            f"## 定价\n\nAcme 专业版 99 元/月 [e:{_FEATURES_ID}]。\n",
+            f"## 定价\n\nAcme 专业版 79 元/月 [e:{_PRICING_ID}]。\n",
+        ],
+    }
+
+    from src.workflow import mvp_workflow
+
+    llm = ScriptedLLMClient(script=script)
+    _wire_offline(monkeypatch, tmp_path, llm, lambda: crawler)
+    calls = []
+    original = mvp_workflow.MVPWorkflow._fetch_single_competitor
+
+    async def _spy(self, url, *args, **kwargs):
+        calls.append({"url": url, "max_pages": kwargs.get("max_pages"),
+                      "crawler": kwargs.get("crawler")})
+        return await original(self, url, *args, **kwargs)
+
+    monkeypatch.setattr(mvp_workflow.MVPWorkflow, "_fetch_single_competitor", _spy)
+
+    workflow = mvp_workflow.MVPWorkflow()
+    state = asyncio.run(workflow.run(
+        "Acme 定价调研", target_urls=[SITE_URL], enable_search=False,
+        deliverables={"report": True, "prd": False}, task_id="gap-spy-0001",
+    ))
+
+    assert state["status"] == "completed"
+    # 初次抓取 + 补抓各 1 次；补抓那次带共享爬虫与判定层额度
+    assert len(calls) == 2, [c["url"] for c in calls]
+    refetch_call = calls[1]
+    assert refetch_call["max_pages"] == 1, "页数额度必须透传（per_candidate_pages）"
+    assert refetch_call["crawler"] is not None, "补抓必须复用共享爬虫实例"
+
+
+def test_refetch_skipped_when_only_unknown_citations(tmp_path, monkeypatch):
+    """只有 unknown_citation（幻觉 id）→ 判定层不触发补抓 → 低可信交付。
+
+    幻觉 id 补页面补不出，交给重生成；这里二版仍幻觉 → 明确不补抓、挂低可信。
+    """
+    script = {
+        "extract": [json.dumps(INITIAL_ITEMS, ensure_ascii=False)],
+        "report": [
+            "## 定价\n\nAcme 专业版 99 元/月 [e:deadbeef1234]。\n",
+            "## 定价\n\nAcme 专业版 99 元/月 [e:deadbeef1234]。\n",
+        ],
+    }
+    state, collector = _run_legacy(monkeypatch, tmp_path, script)
+
+    assert state["status"] == "completed", state.get("termination_reason")
+    assert state["citation_trusted"] is False, "二版仍幻觉 → 低可信交付"
+    assert "低可信" in state["report_final"], "必须显式标记而非静默交付"
+
+    decision = state["gap_refetch_decision"]
+    assert decision["eligible"] is False
+    assert decision["reason"] == "no_ungrounded_claim", decision["reason"]
+    assert "gap_refetch_result" not in state, "判定不触发就不该有补抓动作"
+
+    gap_events = [e for e in collector.events if e.event == "gap_refetch"]
+    assert gap_events and gap_events[0].status == "skipped", [
+        (e.event, e.status) for e in collector.events
+    ]
+

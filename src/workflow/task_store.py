@@ -61,6 +61,8 @@ class TaskEventType(str, Enum):
     INJECTION_DETECTED = "injection_detected"
     # 预算耗尽收束（M6）：报告已交付但被截断，与 completed 互斥
     PARTIAL = "partial"
+    # 缺口定向补抓（gap refetch）：判定层决定补抓 / 补抓进行中 / 补抓完成 / 判定不触发
+    GAP_REFETCH = "gap_refetch"
 
 
 #: 事件名白名单。`_emit` 对表用，避免每个调用点各自遍历枚举。

@@ -204,10 +204,12 @@ def test_citation_guard_is_wired_into_run():
     """
     source = inspect.getsource(MVPWorkflow.run)
 
-    # 两次真实校验调用（初稿 + 重生成后），而不是"源码里出现过这个名字"
+    # 至少两次真实校验调用（初稿 + 重生成后是闭环基线）。缺口定向补抓
+    # （gap refetch）在判定触发时会追加第三次校验（补抓 → 重生成 → 校验），
+    # 所以不锁死次数；变异验证的强度来自"必须真的调用"，不是次数本身。
     assert source.count(
         'verify_report, state["report_final"], evidence_store'
-    ) == 2, "初稿与重生成后都必须各跑一次真实校验"
+    ) >= 2, "初稿与重生成后都必须各跑一次真实校验"
 
     assert "format_violations" in source, "重生成必须带违规清单，否则模型不知道改什么"
     assert "violations_feedback=feedback," in source, "必须把违规清单真的传进重生成提示词"

@@ -260,6 +260,11 @@ SSE_KEEPALIVE_SECONDS = _get_int("SSE_KEEPALIVE_SECONDS", 30)  # SSE 心跳间�
 EXTRACTION_SOURCE_COVERAGE_MIN = _get_float("EXTRACTION_SOURCE_COVERAGE_MIN", 0.8)
 EXTRACTION_MIN_EVIDENCE_ITEMS = _get_int("EXTRACTION_MIN_EVIDENCE_ITEMS", 3)
 
+# 缺口定向补抓（gap refetch）：引用校验仍不过时，判定层允许的**单轮**总页数额度。
+# 这是补抓的成本刹车——只做一轮、每站页数受 per_candidate_pages 约束，
+# 不递归、不循环。legacy 整段没有 token 预算，补抓的护栏就是这个小额度。
+GAP_REFETCH_MAX_PAGES = _get_int("GAP_REFETCH_MAX_PAGES", 3)
+
 # 服务配置
 APP_ENV = os.getenv("APP_ENV", "development").lower()
 AUDIT_LOG_ENABLED = _get_bool("AUDIT_LOG_ENABLED", True)

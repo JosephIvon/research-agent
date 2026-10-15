@@ -18,6 +18,7 @@ from src.config.settings import (
     CRAWL_MIN_CONCURRENCY,
     CRAWL_REQUEST_INTERVAL,
     MIN_COMPETITORS_FOR_COMPARISON,
+    GAP_REFETCH_MAX_PAGES,
     LLM_MAX_CONTENT_CHARS
 )
 from src.security.url_validation import UnsafeURL, validate_fetch_url, validate_fetch_urls
@@ -887,6 +888,35 @@ class MVPWorkflow:
                     verify_report, state["report_final"], evidence_store
                 )
 
+                # 第二次校验仍不过 → 判定是否定向补抓（只处理真·证据缺口）。
+                # 闭环顺序固定为「补抓 → 带新证据重生成 → 第三次校验」：
+                # 只重建证据库不重生成，报告里 [e:id] 仍指向旧证据，第三次校验
+                # 必然不过——补抓的产出必须进入报告模型可见的证据表才有意义。
+                if not citation_result["passed"]:
+                    state["citation_violations"] = citation_result["violations"]
+                    decision = await self._maybe_refetch_for_gaps(state, evidence_store)
+                    if decision is not None:
+                        evidence_store = EvidenceStore.from_extracted_data(state["extracted_data"])
+                        state["evidence_store"] = evidence_store
+                        state["status"] = "report_regenerating"
+                        self._emit(
+                            "citation_check", "verify", "running",
+                            f"补抓 {len(decision.candidates)} 个竞品后重新生成报告"
+                            f"（证据 {len(evidence_store)} 条）",
+                        )
+                        state["report_final"] = await self.copywriter.generate_report(
+                            user_query,
+                            state["extracted_data"],
+                            verification_result,
+                            competitors=state["competitors"],
+                            quality_report=quality_report,
+                            evidence_store=evidence_store,
+                        )
+                        state["citation_attempts"] = 3
+                        citation_result = await asyncio.to_thread(
+                            verify_report, state["report_final"], evidence_store
+                        )
+
             state["citation_report"] = {
                 k: v for k, v in citation_result.items() if k != "violations"
             }
@@ -1297,11 +1327,16 @@ class MVPWorkflow:
         login_url: Optional[str] = None,
         custom_selectors: Optional[Dict[str, List[str]]] = None,
         crawler: Optional[WebCrawler] = None,
+        max_pages: Optional[int] = None,
     ) -> Dict[str, Any]:
         """抓取单个竞品页面并提取信息。
 
         爬虫来源优先级：显式传入 crawler > 批次共享实例（_fetch_all_competitors
         建立，惰性创建整批复用）> 就地新开一个、用完即关（独立调用场景）。
+
+        max_pages：可选。透传给 `fetch_site_profile` 的站内页数上限。
+        补抓路径用它把每站抓取量限制在判定层分到的额度（per_candidate_pages）内；
+        None 时沿用爬虫默认（整站 profile）。
         """
         self._emit("crawl_progress", "crawl", "running", f"正在抓取 {url}", payload={"url": url, "name": "unknown"})
         try:
@@ -1311,12 +1346,16 @@ class MVPWorkflow:
                     active_crawler = await self._acquire_batch_crawler()
                 if active_crawler is None:
                     active_crawler = await stack.enter_async_context(WebCrawler())
-                profile = await active_crawler.fetch_site_profile(
-                    url,
+                # max_pages 只在补抓显式给定时透传；None 时不传，让爬虫走默认值
+                # （FixtureSiteSource 的 max(1, max_pages) 对 None 会炸）
+                profile_kwargs: Dict[str, Any] = dict(
                     auth_credentials=auth_credentials,
                     login_url=login_url,
                     custom_selectors=custom_selectors,
                 )
+                if max_pages is not None:
+                    profile_kwargs["max_pages"] = max_pages
+                profile = await active_crawler.fetch_site_profile(url, **profile_kwargs)
 
                 # 信任边界：抓到的正文是攻击者可控内容，必须在进入任何提示词之前清洗。
                 # 探针取自**清洗前**原文，存进本次 run 的 state，留给报告出口做独立回声校验。
@@ -1384,6 +1423,107 @@ class MVPWorkflow:
                 "status": "failed",
                 "error_message": str(e)
             }
+
+    async def _maybe_refetch_for_gaps(
+        self,
+        state: Dict[str, Any],
+        evidence_store: EvidenceStore,
+    ) -> Optional[Any]:
+        """引用校验仍不过时，按判定层决定是否做一次定向补抓。
+
+        闭环顺序固定为「补抓 → 带新证据重生成 → 第三次校验」（见调用方注释）：
+        只重建证据库不重生成，报告里 [e:id] 仍指向旧证据，第三次校验必然不过——
+        补抓的产出必须进入报告模型可见的证据表才有意义。
+
+        补抓复用 `_fetch_single_competitor`：整站 profile（含站内发现）、注入防护、
+        抽取全部走与初次抓取相同的链路，零新网络代码。每站页数被限制在判定层
+        分到的额度（per_candidate_pages）内——这是补抓的成本刹车（单轮、不递归）。
+
+        返回判定层决策；`eligible=False` 时返回 None，调用方照旧走低可信交付。
+        """
+        from src.agent.gap_refetch import plan_gap_refetch, site_of
+
+        violations = state.get("citation_violations") or []
+        target_sites = [
+            {"url": s.get("url", ""), "name": s.get("name", "")}
+            for s in (state.get("target_sites") or [])
+            if s.get("url")
+        ]
+        decision = plan_gap_refetch(
+            violations, evidence_store, target_sites, max_pages=GAP_REFETCH_MAX_PAGES,
+        )
+        state["gap_refetch_decision"] = decision.to_dict()
+
+        if not decision.eligible:
+            self._emit(
+                "gap_refetch", "verify", "skipped",
+                f"不触发补抓（{decision.reason}）",
+                payload=decision.to_dict(),
+            )
+            return None
+
+        self._emit(
+            "gap_refetch", "verify", "running",
+            f"检测到 {len(decision.candidates)} 个竞品存在未解决的数值缺口，开始定向补抓",
+            payload=decision.to_dict(),
+        )
+
+        new_evidence: List[Dict[str, Any]] = []
+        refetched: List[Dict[str, Any]] = []
+        async with contextlib.AsyncExitStack() as stack:
+            crawler = await stack.enter_async_context(WebCrawler())
+            for cand in decision.candidates:
+                site_cfg = next(
+                    (
+                        s for s in (state.get("target_sites") or [])
+                        if site_of(str(s.get("url") or "")) == cand.competitor_url
+                    ),
+                    None,
+                )
+                try:
+                    comp = await self._fetch_single_competitor(
+                        site_cfg.get("url") if site_cfg else cand.competitor_url,
+                        auth_credentials=(site_cfg or {}).get("auth_credentials"),
+                        login_url=(site_cfg or {}).get("login_url"),
+                        custom_selectors=state.get("custom_selectors"),
+                        max_pages=cand.per_candidate_pages,
+                        crawler=crawler,
+                    )
+                except Exception as e:  # noqa: BLE001 —— 单站补抓失败不拖垮整批
+                    logger.warning(f"补抓失败 {cand.competitor_url}: {e}")
+                    refetched.append({
+                        "url": cand.competitor_url, "status": "failed", "error": str(e),
+                    })
+                    continue
+                refetched.append({
+                    "url": cand.competitor_url,
+                    "status": comp.get("status"),
+                    "items": len(comp.get("extracted_data") or []),
+                })
+                new_evidence.extend(comp.get("extracted_data") or [])
+
+        state.setdefault("extracted_data", [])
+        before = len(state["extracted_data"])
+        state["extracted_data"].extend(new_evidence)
+        state["refetched_evidence"] = new_evidence
+        state["gap_refetch_result"] = {
+            "candidates": len(decision.candidates),
+            "refetched": refetched,
+            "new_items": len(new_evidence),
+            "evidence_before": before,
+            "evidence_after": len(state["extracted_data"]),
+        }
+
+        self._emit(
+            "gap_refetch", "verify", "completed",
+            f"补抓完成：{len(new_evidence)} 条新证据（累计 {len(state['extracted_data'])} 条）",
+            payload={
+                "candidates": len(decision.candidates),
+                "new_items": len(new_evidence),
+                "evidence_after": len(state["extracted_data"]),
+            },
+        )
+        return decision
 
     def _save_report(self, content: str, task_id: Optional[str] = None) -> str:
         """保存报告到本地文件"""
