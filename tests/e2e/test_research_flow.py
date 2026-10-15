@@ -150,6 +150,7 @@ def test_full_research_flow(real_service_credentials, live_backend):
     terminal_error = None
     last_error_seen = None
     graceful_degraded = False
+    citation_payload = None  # 引用校验通过事件的指标，通过时一并打印
     timeline: list = []  # "elapsed_s:event/stage" 序列，诊断用
     last_event_id = -1  # SSE 续传游标；-1 = 从起点回放全部
     reconnect_attempts = 0
@@ -203,6 +204,8 @@ def test_full_research_flow(real_service_credentials, live_backend):
                                     timeline.append(f"{time.time() - start:.0f}s:{event_type}/{stage}")
                                     if event_id is not None:
                                         last_event_id = max(last_event_id, int(event_id))
+                                    if event_type == "citation_check" and event_obj.get("status") == "completed":
+                                        citation_payload = event_obj.get("payload") or {}
                                     # 任务级终止事件才算结果。
                                     # 可接受的终点（产品"诚实降级"设计）：
                                     #   completed                                       → 报告产出
@@ -250,3 +253,10 @@ def test_full_research_flow(real_service_credentials, live_backend):
         )
     if completed:
         assert final_data is not None
+
+    # 结果形态直接打进日志（CI 用 -s，stdout 实时可见）：completed 还是
+    # verify 降级——测试通过本身不区分这两种形态，M7 存档需要它。
+    outcome = "completed(报告产出)" if completed else "graceful_degraded(verify 数据不足)"
+    detail = f"引用校验 {citation_payload}" if citation_payload else ""
+    print(f"[e2e-result] 终态={outcome} 耗时 {time.time() - start:.0f}s "
+          f"重连 {reconnect_attempts} 次 {detail}", flush=True)

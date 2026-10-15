@@ -266,7 +266,7 @@ jobs:
           set -euo pipefail
           uv run --extra dev pytest tests/e2e/ \
             -m "real_services" \
-            -v -rs --strict-markers -p no:cacheprovider \
+            -v -rs --strict-markers -p no:cacheprovider -s \
             --junitxml=pytest-report.xml || REAL_FAILED=1
           if [ "${REAL_FAILED:-0}" = "1" ]; then
             uv run python .github/scripts/parse_junit.py pytest-report.xml || true
