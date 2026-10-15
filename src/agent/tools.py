@@ -45,8 +45,11 @@ class Tool:
 class ToolRegistry:
     """按名称索引的工具集合；每个 Runner 实例持有一份（handler 可带 workspace 闭包）。"""
 
-    def __init__(self):
+    def __init__(self, url_validator: Optional[Callable[[str], str]] = None):
         self._tools: Dict[str, Tool] = {}
+        # URL 参数二次 SSRF 校验的注入口：生产走 validate_fetch_url，评测注入
+        # passthrough 让夹具 .test 域名过闸（替代 monkeypatch 模块属性）。
+        self._url_validator = url_validator if url_validator is not None else validate_fetch_url
 
     def add(self, tool: Tool) -> None:
         if not tool.read_only:
@@ -94,8 +97,7 @@ class ToolRegistry:
             return {"ok": False, "data": None, "error": f"{type(exc).__name__}: {exc}",
                     "elapsed": round(time.monotonic() - started, 4)}
 
-    @staticmethod
-    def _validate_arguments(tool: Tool, arguments: Dict[str, Any]) -> Optional[str]:
+    def _validate_arguments(self, tool: Tool, arguments: Dict[str, Any]) -> Optional[str]:
         if not isinstance(arguments, dict):
             return f"参数必须是 JSON 对象，实际: {type(arguments).__name__}"
         for required in tool.parameters.get("required", []):
@@ -107,7 +109,7 @@ class ToolRegistry:
             if not value:
                 continue
             try:
-                validate_fetch_url(value)
+                self._url_validator(value)
             except UnsafeURL as exc:
                 return f"参数 {param} 的 URL 被安全策略拒绝: {exc}"
             except ValueError as exc:

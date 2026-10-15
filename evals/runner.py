@@ -96,41 +96,6 @@ def _build_scripted_llm(case: Dict[str, Any], llm_spec: Dict[str, Any]):
     return ScriptedLLMClient(script=script)
 
 
-def run_legacy_case(case: Dict[str, Any], llm_spec: Dict[str, Any], tmp: Path) -> Dict[str, Any]:
-    from src.workflow import mvp_workflow
-
-    from evals.fixture_source import FixtureSiteSource
-
-    source = FixtureSiteSource(case["sites"], CASES_DIR / case["id"])
-    client = _build_scripted_llm(case, llm_spec)
-
-    def _passthrough_url(url):
-        return url
-
-    def _passthrough_urls(urls):
-        return list(urls or [])
-
-    with _isolated_storage(tmp), _patched_attrs([
-        (mvp_workflow, "WebCrawler", FixtureSiteSource),
-        (mvp_workflow, "get_llm_client", lambda *a, **k: client),
-        (mvp_workflow, "validate_fetch_url", _passthrough_url),
-        (mvp_workflow, "validate_fetch_urls", _passthrough_urls),
-    ]):
-        # 每个站点一个独立夹具源实例，经类工厂把 case 上下文带进去
-        mvp_workflow.WebCrawler = _make_fixture_crawler_class(case)
-        started = time.monotonic()
-        state = asyncio.run(mvp_workflow.MVPWorkflow().run(
-            case["query"],
-            target_urls=[s["url"] for s in case["sites"]],
-            enable_search=False,
-            deliverables={"report": True, "prd": False},
-            task_id=f"eval-{case['id']}",
-        ))
-        elapsed = time.monotonic() - started
-
-    return {"state": state, "elapsed_s": round(elapsed, 3)}
-
-
 def _make_fixture_crawler_class(case: Dict[str, Any]):
     """每次实例化都生成绑定本 case 的夹具源（工作流按站点逐个 async with）。"""
     from evals.fixture_source import FixtureSiteSource
@@ -142,64 +107,93 @@ def _make_fixture_crawler_class(case: Dict[str, Any]):
     return _BoundFixtureCrawler
 
 
+class EvalHarness:
+    """case → 被测对象的构造器：剧本 LLM + 夹具网络边界 + 隔离存储收拢到一处。
+
+    曾散在三个 run_* 里的 12+ 个 monkeypatch 点（mvp_workflow/tool_specs/
+    agent_tools 的模块属性 + 模块常量 + AGENT_MODE 环境变量）已全部清零：
+    依赖经 MVPWorkflow / build_default_tools / ReActRunner 的构造注入口传入。
+    新增网络边界时只需在这里补参数——漏传会直接 TypeError，而不是旧 patch
+    模式下的静默假绿。
+    """
+
+    def __init__(self, case: Dict[str, Any], llm_spec: Dict[str, Any]):
+        self.case = case
+        self.llm_spec = llm_spec
+        self._crawler_cls = _make_fixture_crawler_class(case)
+        from evals.fixture_source import FixtureSearch
+        self.search = FixtureSearch(case.get("search_results", []))
+
+    def scripted_llm(self, with_react: bool = False):
+        """剧本客户端；with_react=True 时附加 react 轮次脚本（react/budget 模式）。"""
+        client = _build_scripted_llm(self.case, self.llm_spec)
+        if with_react:
+            client._script["react"] = [
+                _resolve_react_entry(entry, self.case, self.llm_spec)
+                for entry in self.llm_spec["react"]
+            ]
+        return client
+
+    def workflow(self, react_script: bool = False, **overrides):
+        """legacy/budget 模式的被测工作流：依赖全注入，无 monkeypatch。"""
+        from src.workflow.mvp_workflow import MVPWorkflow
+
+        return MVPWorkflow(
+            llm_client=self.scripted_llm(with_react=react_script),
+            crawler_factory=self._crawler_cls,
+            url_validator=lambda u: u,
+            **overrides,
+        )
+
+    def react_runner(self, max_steps: int = 8):
+        """裸 ReActRunner（compare 模式）：工具集显式装配夹具网络边界。"""
+        from src.agent.runner import ReActRunner
+        from src.agent.tool_specs import build_default_tools
+
+        client = self.scripted_llm(with_react=True)
+        workspace: Dict[str, Any] = {}
+        tools = build_default_tools(
+            client, workspace,
+            crawler_factory=self._crawler_cls,
+            search_factory=lambda: self.search,
+            url_validator=lambda u: u,
+        )
+        return ReActRunner(client, tools=tools, workspace=workspace, max_steps=max_steps)
+
+
+def run_legacy_case(case: Dict[str, Any], llm_spec: Dict[str, Any], tmp: Path) -> Dict[str, Any]:
+    harness = EvalHarness(case, llm_spec)
+
+    with _isolated_storage(tmp):
+        started = time.monotonic()
+        state = asyncio.run(harness.workflow().run(
+            case["query"],
+            target_urls=[s["url"] for s in case["sites"]],
+            enable_search=False,
+            deliverables={"report": True, "prd": False},
+            task_id=f"eval-{case['id']}",
+        ))
+        elapsed = time.monotonic() - started
+
+    return {"state": state, "elapsed_s": round(elapsed, 3)}
+
+
 def run_react_case(case: Dict[str, Any], llm_spec: Dict[str, Any], tmp: Path) -> Dict[str, Any]:
     """react 模式：ReActRunner + 夹具搜索/爬虫，统计实际抓取量。"""
-    from src.agent import tool_specs
-    from src.agent.runner import ReActRunner
-    from src.agent import tools as agent_tools
+    harness = EvalHarness(case, llm_spec)
+    runner = harness.react_runner(max_steps=8)
 
-    from evals.fixture_source import FixtureSearch, FixtureSiteSource, resolve_citations
-
-    react_entries = [
-        _resolve_react_entry(entry, case, llm_spec)
-        for entry in llm_spec["react"]
-    ]
-    client_llm = _build_scripted_llm(case, llm_spec)
-    client_llm._script["react"] = react_entries
-
-    source = _make_fixture_crawler_class(case)()
-    search = FixtureSearch(case.get("search_results", []))
-
-    def _passthrough_url(url):
-        return url
-
-    with _isolated_storage(tmp), _patched_attrs([
-        (tool_specs, "WebCrawler", _make_fixture_crawler_class(case)),
-        (tool_specs, "get_search_tool", lambda: search),
-        (agent_tools, "validate_fetch_url", _passthrough_url),
-    ]):
+    with _isolated_storage(tmp):
         started = time.monotonic()
-        result = asyncio.run(ReActRunner(client_llm, max_steps=8).run(case["query"]))
+        result = asyncio.run(runner.run(case["query"]))
         elapsed = time.monotonic() - started
 
     return {
         "result": result,
         "elapsed_s": round(elapsed, 3),
-        "fetch_calls": source.fetch_calls,   # 0：计数在类工厂实例上，改用爬虫类统计
+        # 0：真实抓取计数发生在工具闭包内的爬虫实例上，这里不重复统计
+        "fetch_calls": 0,
     }
-
-
-@contextmanager
-def _patch_env(**values: str):
-    """临时改环境变量，跑完原样还原。
-
-    工作流的 react 分流是**每次现读** `os.getenv("AGENT_MODE")`（模块常量在
-    import 时就冻结了，改 `src.agent.config.AGENT_MODE` 不起作用），所以必须
-    走环境变量，不能走 `_patched_attrs`。
-    """
-    import os as _os
-
-    saved = {k: _os.environ.get(k) for k in values}
-    for k, v in values.items():
-        _os.environ[k] = v
-    try:
-        yield
-    finally:
-        for k, old in saved.items():
-            if old is None:
-                _os.environ.pop(k, None)
-            else:
-                _os.environ[k] = old
 
 
 def run_budget_case(case: Dict[str, Any], llm_spec: Dict[str, Any], tmp: Path) -> Dict[str, Any]:
@@ -210,48 +204,25 @@ def run_budget_case(case: Dict[str, Any], llm_spec: Dict[str, Any], tmp: Path) -
 
     没有这条 case 时 `truncation_rate` 恒为 0.00：指标写好了，却没有任何
     case 能触发它，等于一套没有输入的仪表。
+
+    token_budget 一个参数同时驱动 TaskBudget（工作流侧）和 ReActRunner
+    的 token_budget（config 侧）——二者本就是同源双口径，只喂一处会让
+    cost_report.limits 与 case 声明对不上（旧 monkeypatch 时代的坑，
+    见 git 历史）。agent_mode="react" 显式注入，不再借道环境变量。
     """
-    from src.agent import config as agent_config
-    from src.agent import tool_specs
-    from src.agent import tools as agent_tools
-    from src.workflow import mvp_workflow
-
-    from evals.fixture_source import FixtureSearch
-
-    client = _build_scripted_llm(case, llm_spec)
-    client._script["react"] = [
-        _resolve_react_entry(entry, case, llm_spec) for entry in llm_spec["react"]
-    ]
-
+    harness = EvalHarness(case, llm_spec)
     max_tokens = int((case.get("agent_budget") or {}).get("max_tokens", 10))
-    search = FixtureSearch(case.get("search_results", []))
 
-    def _passthrough_url(url):
-        return url
+    workflow = harness.workflow(
+        react_script=True,
+        search_factory=lambda: harness.search,
+        token_budget=max_tokens,
+        agent_mode="react",
+    )
 
-    def _passthrough_urls(urls):
-        return list(urls or [])
-
-    with _isolated_storage(tmp), _patch_env(AGENT_MODE="react"), _patched_attrs([
-        (mvp_workflow, "WebCrawler", _make_fixture_crawler_class(case)),
-        (mvp_workflow, "get_llm_client", lambda *a, **k: client),
-        (mvp_workflow, "validate_fetch_url", _passthrough_url),
-        (mvp_workflow, "validate_fetch_urls", _passthrough_urls),
-        # 两处预算都要改：TaskBudget 读 mvp_workflow 的模块常量，ReActRunner
-        # 读 src.agent.config 的。二者同源于同一个 config 值，生产环境永远相等；
-        # 只改一处会造出运行时不存在的状态。实测（max_tokens=1400 的本 case）：
-        # 只改一处终态**仍是** partial，total/calls 与两处都改时逐项相同
-        # （3504 / 4），所以 partial 并非假象；真正的差异在账本上——
-        # 只改 agent.config 时 cost_report.limits.max_tokens 记的是
-        # config 默认的 120000，与 case 声明的 1400 对不上。
-        (mvp_workflow, "AGENT_TOKEN_BUDGET", max_tokens),
-        (agent_config, "AGENT_TOKEN_BUDGET", max_tokens),
-        (tool_specs, "WebCrawler", _make_fixture_crawler_class(case)),
-        (tool_specs, "get_search_tool", lambda: search),
-        (agent_tools, "validate_fetch_url", _passthrough_url),
-    ]):
+    with _isolated_storage(tmp):
         started = time.monotonic()
-        state = asyncio.run(mvp_workflow.MVPWorkflow().run(
+        state = asyncio.run(workflow.run(
             case["query"],
             target_urls=[s["url"] for s in case["sites"]],
             enable_search=False,

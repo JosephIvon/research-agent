@@ -541,11 +541,54 @@ class CopywriterAgent:
 class MVPWorkflow:
     """MVP工作流 - 2-agent模式：协调者 + 文案撰写员"""
 
-    def __init__(self, event_emitter=None):
-        self.llm_client = get_llm_client()
+    def __init__(self, event_emitter=None, *,
+                 llm_client: Optional[LLMClient] = None,
+                 crawler_factory=None,
+                 search_factory=None,
+                 url_validator=None,
+                 token_budget: Optional[int] = None,
+                 agent_mode: Optional[str] = None):
+        """依赖注入口：全部可选，None 时走生产默认。
+
+        默认值必须在**方法体内**运行时解析模块属性（`WebCrawler`、
+        `validate_fetch_url` 等都是 from-import 名字）：大量测试用
+        `monkeypatch.setattr(mvp_workflow, ...)` 打模块属性，def 默认参数
+        会在定义时固化原始引用，patch 就失效了。
+
+        评测（evals）改用这组参数构造与线上一致的工作流，替代运行期
+        monkeypatch——补丁面曾是隐式契约：每新增一个网络边界，都要同步
+        改 evals 的 patch 列表，漏一处就是假绿。
+        """
+        # None 哨兵而不是 `crawler_factory=WebCrawler`：见 docstring，运行时解析
+        self.llm_client = llm_client if llm_client is not None else get_llm_client()
         self.coordinator = CoordinatorAgent(self.llm_client)
         self.copywriter = CopywriterAgent(self.llm_client)
         self._event_emitter = event_emitter
+        # 存原始注入值（None=未注入）：legacy 管线经 crawler_factory property
+        # 运行时解析默认；react 工具链只在显式注入时才覆盖 tool_specs 侧默认
+        self._crawler_factory = crawler_factory
+        self._search_factory = search_factory
+        self._token_budget = token_budget  # None → 使用点运行时读 AGENT_TOKEN_BUDGET
+        self._agent_mode = agent_mode      # None → 使用点运行时读 AGENT_MODE 环境变量
+        self._validate_url = url_validator if url_validator is not None else validate_fetch_url
+        self._url_validator_injected = url_validator is not None
+        if url_validator is None:
+            self._validate_urls = validate_fetch_urls
+        else:
+            # 注入单值校验器时批量退化为逐个过闸；生产路径仍走原生批量实现
+            self._validate_urls = lambda urls: [url_validator(u) for u in (urls or [])]
+
+    @property
+    def crawler_factory(self):
+        """legacy 管线的爬虫工厂：显式注入优先；否则**运行时**读模块属性
+        WebCrawler——`monkeypatch.setattr(mvp_workflow, "WebCrawler", ...)`
+        的既有测试依赖这一点，def 默认参数会在定义时固化原始引用。
+
+        getattr 兜底：部分单测用 object.__new__ 构造部分初始化实例
+        （绕过 LLM 客户端构造），新属性在那些实例上不存在。
+        """
+        injected = getattr(self, "_crawler_factory", None)
+        return injected if injected is not None else WebCrawler
 
     def _state(self) -> Dict[str, Any]:
         """取当前 run 的 state。_fetch_single_competitor 也可能被独立调用，
@@ -728,8 +771,10 @@ class MVPWorkflow:
         self.state = state
 
         # AGENT_MODE=react：切换到 ReAct 工具循环（模型自主规划抓取/抽取/对比），
-        # 以下是 legacy 固定管线，路径保持不动。env 运行时读取，方便部署侧切换。
-        if os.getenv("AGENT_MODE", "legacy").lower() == "react":
+        # 以下是 legacy 固定管线，路径保持不动。env 运行时读取，方便部署侧切换；
+        # 评测用 agent_mode="react" 显式注入，不再借道环境变量。
+        mode = self._agent_mode if self._agent_mode is not None else os.getenv("AGENT_MODE", "legacy")
+        if mode.lower() == "react":
             return await self._run_react_mode(state, user_query, state["target_urls"])
 
         try:
@@ -1132,7 +1177,7 @@ class MVPWorkflow:
         try:
             budget = TaskBudget(
                 state["task_id"],
-                max_tokens=AGENT_TOKEN_BUDGET,
+                max_tokens=self._token_budget if self._token_budget is not None else AGENT_TOKEN_BUDGET,
                 max_usd=AGENT_USD_BUDGET,
             )
             workspace: Dict[str, Any] = {}
@@ -1151,14 +1196,33 @@ class MVPWorkflow:
                     },
                 )
 
+            # 网络边界只在**显式注入**时才覆盖 react 工具链的默认（tool_specs
+            # 侧的 WebCrawler / get_search_tool / ToolRegistry 默认校验器）——
+            # 无条件传会把 workflow 级默认压过 tool_specs 侧的 monkeypatch，
+            # 两套替换点本就服务不同场景：legacy 管线看 workflow，react 看 tool_specs。
+            tool_kwargs: Dict[str, Any] = {}
+            injected_crawler = getattr(self, "_crawler_factory", None)
+            if injected_crawler is not None:
+                tool_kwargs["crawler_factory"] = injected_crawler
+            if self._search_factory is not None:
+                tool_kwargs["search_factory"] = self._search_factory
+            injected_validator = getattr(self, "_url_validator_injected", False)
+            if injected_validator:
+                tool_kwargs["url_validator"] = self._validate_url
+
             runner = ReActRunner(
                 self.llm_client,
                 # budget 要透给工具闭包：extract_facts 的逐页 LLM 调用是单任务
                 # 最大的 token 开销，不接进 TaskBudget 的话 token/USD 两道守卫
                 # 会按"只有 ReAct 轮"的账放行，系统性低估。
-                tools=build_default_tools(self.llm_client, workspace, budget=budget),
+                tools=build_default_tools(
+                    self.llm_client, workspace, budget=budget, **tool_kwargs
+                ),
                 workspace=workspace,
                 budget=budget,
+                # token_budget 与 TaskBudget 同源（M6 双口径），None 时 Runner
+                # 落 config 默认——生产二者本就同值
+                token_budget=self._token_budget,
                 on_step=_on_step,
             )
             result = await runner.run(user_query, target_urls=target_urls)
@@ -1252,7 +1316,7 @@ class MVPWorkflow:
             if len(safe_urls) >= MAX_FETCH_URLS:
                 break
             try:
-                safe_urls.extend(validate_fetch_urls([url]))
+                safe_urls.extend(self._validate_urls([url]))
             except UnsafeURL as exc:
                 logger.warning(f"跳过不安全搜索结果 {url}: {exc}")
         return safe_urls
@@ -1266,20 +1330,20 @@ class MVPWorkflow:
     ) -> List[Dict[str, Any]]:
         sites: List[Dict[str, Any]] = []
         seen_urls = set()
-        legacy_login_url = validate_fetch_url(login_url) if login_url else None
+        legacy_login_url = self._validate_url(login_url) if login_url else None
 
         for site in target_sites or []:
-            url = validate_fetch_url(site["url"])
+            url = self._validate_url(site["url"])
             if url in seen_urls:
                 continue
             seen_urls.add(url)
             sites.append({
                 "url": url,
                 "auth_credentials": site.get("auth_credentials"),
-                "login_url": validate_fetch_url(site["login_url"]) if site.get("login_url") else None,
+                "login_url": self._validate_url(site["login_url"]) if site.get("login_url") else None,
             })
 
-        for url in validate_fetch_urls(target_urls or []):
+        for url in self._validate_urls(target_urls or []):
             if url in seen_urls:
                 continue
             seen_urls.add(url)
@@ -1422,7 +1486,7 @@ class MVPWorkflow:
             return None
         async with self._batch_crawler_lock:
             if self._batch_crawler is None:
-                self._batch_crawler = await stack.enter_async_context(WebCrawler())
+                self._batch_crawler = await stack.enter_async_context(self.crawler_factory())
             return self._batch_crawler
 
     async def _fetch_single_competitor(
@@ -1454,7 +1518,7 @@ class MVPWorkflow:
                 if active_crawler is None:
                     active_crawler = await self._acquire_batch_crawler()
                 if active_crawler is None:
-                    active_crawler = await stack.enter_async_context(WebCrawler())
+                    active_crawler = await stack.enter_async_context(self.crawler_factory())
                 # max_pages 只在补抓显式给定时透传；None 时不传，让爬虫走默认值
                 # （FixtureSiteSource 的 max(1, max_pages) 对 None 会炸）
                 profile_kwargs: Dict[str, Any] = dict(
@@ -1582,7 +1646,7 @@ class MVPWorkflow:
         new_evidence: List[Dict[str, Any]] = []
         refetched: List[Dict[str, Any]] = []
         async with contextlib.AsyncExitStack() as stack:
-            crawler = await stack.enter_async_context(WebCrawler())
+            crawler = await stack.enter_async_context(self.crawler_factory())
             for cand in decision.candidates:
                 site_cfg = next(
                     (
@@ -1712,7 +1776,7 @@ class MVPWorkflow:
         new_evidence: List[Dict[str, Any]] = []
         refetched: List[Dict[str, Any]] = []
         async with contextlib.AsyncExitStack() as stack:
-            crawler = await stack.enter_async_context(WebCrawler())
+            crawler = await stack.enter_async_context(self.crawler_factory())
             for cand in decision.candidates:
                 site_cfg = next(
                     (s for s in sites if str(s.get("url") or "") == cand.competitor_url),

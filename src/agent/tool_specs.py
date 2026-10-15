@@ -36,7 +36,10 @@ api_flow、workflow、limitations、reviews。value 保留可核验事实与数�
 不要概括性形容词。只输出 JSON。"""
 
 
-def build_default_tools(llm_client, workspace: Dict[str, Any], budget: Any = None) -> ToolRegistry:
+def build_default_tools(llm_client, workspace: Dict[str, Any], budget: Any = None, *,
+                        crawler_factory=None,
+                        search_factory=None,
+                        url_validator=None) -> ToolRegistry:
     """构造一次 react 运行的工具集。llm_client 供 extract_facts 使用。
 
     `budget` 是可选的 TaskBudget（M6）。传了就让 `extract_facts` 的逐页 LLM
@@ -47,14 +50,21 @@ def build_default_tools(llm_client, workspace: Dict[str, Any], budget: Any = Non
     了 TaskBudget——`runner._record_budget` 只对 ReAct 轮次记账，工具闭包构造时
     压根没拿到 budget。结果是 token/USD 两道守卫按"只有 ReAct 轮"的账去放行，
     系统性低估真实开销。
+
+    crawler/search/url_validator 是网络边界的注入口（None 走生产默认）：
+    评测传夹具实现，替代 monkeypatch 模块属性。
     """
-    registry = ToolRegistry()
+    if crawler_factory is None:
+        crawler_factory = WebCrawler
+    if search_factory is None:
+        search_factory = get_search_tool
+    registry = ToolRegistry(url_validator=url_validator)
 
     # ------------------------------------------------------------------
     # web_search
     # ------------------------------------------------------------------
     async def _web_search(query: str, num_results: int = 5) -> List[Dict[str, Any]]:
-        tool = get_search_tool()
+        tool = search_factory()
         results = await asyncio.to_thread(tool.search, query, num_results)
         return [
             {
@@ -88,7 +98,7 @@ def build_default_tools(llm_client, workspace: Dict[str, Any], budget: Any = Non
     # fetch_site
     # ------------------------------------------------------------------
     async def _fetch_site(url: str, max_pages: int = 3) -> Dict[str, Any]:
-        async with WebCrawler() as crawler:
+        async with crawler_factory() as crawler:
             profile = await crawler.fetch_site_profile(url, max_pages=max_pages)
         pages = profile.get("pages", [])
         workspace.setdefault("sites", {})[url] = profile
