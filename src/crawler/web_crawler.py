@@ -7,7 +7,31 @@ from urllib.parse import urljoin, urlparse, urlunparse
 from src.config.settings import TIMEOUT_SECONDS, MAX_RETRIES, CRAWL_REQUEST_INTERVAL
 from src.security.url_validation import validate_fetch_url
 import asyncio
+import logging
 import re
+import time
+
+logger = logging.getLogger(__name__)
+
+
+# 重试在定义上不可能成功的失败类型。
+#
+# `Download is starting` 意味着该 URL 返回的是文件而不是页面——重试只会
+# 再下载一次同一个文件，永远产不出 HTML。实测（8 站 × 30 页 × 3 遍）在
+# linode 上观察到 1 次。
+#
+# **不要把 `ERR_CONNECTION_CLOSED` 放进来**：同样实测到 43 次，但全部来自
+# 超时设成 10s 的探针（生产是 60s），换成生产超时后只剩 2/30。
+# 样本量不足以支持「不重试」，而误伤真实的临时 TCP reset 代价更大。
+# 等生产日志能分类统计失败原因后再定（见方案文档 §5.7 的 P4）。
+_NON_RETRYABLE_MARKERS = ("Download is starting",)
+
+
+def _is_non_retryable(exc: Exception) -> bool:
+    """该异常是否属于「重试也不可能成功」的类型。"""
+    text = str(exc)
+    return any(marker in text for marker in _NON_RETRYABLE_MARKERS)
+
 
 
 # --------------------------------------------------------------------------
@@ -276,7 +300,14 @@ class WebCrawler:
             priority_tiers=priority_tiers,
         )
 
+        # 失败页必须留痕。原来的 `except Exception: continue` 把 URL 和原因一起
+        # 吞掉，生产日志里只剩「少了几页」这个事实，无法区分超时、被切断连接、
+        # 还是该 URL 压根不是页面。实测 8 站 × 30 页 × 3 遍时，这个盲区逼得
+        # 结论只能靠外部探针取证；这里补上 `(url, 异常类型, 耗时)`。
+        failed_pages: List[Dict[str, object]] = []
+
         for discovered_url in discovered_urls:
+            started = time.monotonic()
             try:
                 page = await self._fetch_page_snapshot(
                     discovered_url,
@@ -288,7 +319,18 @@ class WebCrawler:
                     max_attempts=1,
                 )
                 pages.append(page)
-            except Exception:
+            except Exception as e:
+                elapsed = round(time.monotonic() - started, 1)
+                failed_pages.append({
+                    "url": discovered_url,
+                    "error": type(e).__name__,
+                    "elapsed_seconds": elapsed,
+                    "detail": str(e)[:200],
+                })
+                logger.warning(
+                    "抓取失败 %s（%.1fs）%s: %s",
+                    discovered_url, elapsed, type(e).__name__, str(e)[:150],
+                )
                 continue
 
         return {
@@ -296,6 +338,7 @@ class WebCrawler:
             "content": self.combine_page_texts(pages),
             "pages": pages,
             "discovered_urls": discovered_urls,
+            "failed_pages": failed_pages,
         }
 
     async def _fetch_page_snapshot(
@@ -386,7 +429,7 @@ class WebCrawler:
                     except Exception:
                         pass
 
-                if attempt < attempts - 1:
+                if attempt < attempts - 1 and not _is_non_retryable(e):
                     await asyncio.sleep(retry_delay)
                     retry_delay *= 2
                     continue
