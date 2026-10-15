@@ -788,6 +788,12 @@ def verify_report(
                 "detail": (
                     f"数值 {'、'.join(missing)} 在所引证据原文中找不到：{_trim(sentence)}"
                 ),
+                # 结构化字段：`detail` 是给人看的自由文本（喂重生成提示词），
+                # 无法反解出「缺哪个数、原本引了谁」，下游的缺口判定拿不到机器可读的输入。
+                # 缺这三个字段，缺口定向补抓只能靠解析中文句子猜——那就不是确定性判定了。
+                "missing_numbers": list(missing),
+                "cited_ids": list(cited),
+                "sentence": sentence,
             })
         else:
             grounded_claims += 1
