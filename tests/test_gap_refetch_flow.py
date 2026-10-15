@@ -228,6 +228,38 @@ def test_dimension_gap_triggers_refetch_and_adds_assertion(tmp_path, monkeypatch
     )
 
 
+def test_dimension_refetch_skipped_when_budget_exhausted(tmp_path, monkeypatch):
+    """数值补抓用满共享预算 → 维度补抓不触发（budget_insufficient）。
+
+    预算合并口径的防回归：remaining < 每站下限 2 时强行触发会退化回
+    per_site=1 的坑（只剩首页、选页意图失效），必须显式跳过并记录原因。
+    """
+    from src.agent.citations import EvidenceStore
+    from src.workflow import mvp_workflow
+
+    llm = ScriptedLLMClient(script={"extract": ["[]"], "report": ["占位"], "decompose": ["[]"]})
+    _wire_offline(monkeypatch, tmp_path, llm, _TwoPhaseCrawler)
+    workflow = mvp_workflow.MVPWorkflow()
+    collector = _EventCollector()
+    workflow._event_emitter = collector
+
+    state = {"target_sites": [{"url": SITE_URL}]}
+    workflow.state = state  # _emit 内部经 _state() 读状态
+    store = EvidenceStore.from_extracted_data([
+        {"key": "features", "value": "日志检索", "source_url": SITE_URL},
+    ])
+    decision = asyncio.run(workflow._maybe_refetch_dimensions(
+        state, store, remaining_budget=1,
+    ))
+    assert decision is None
+    assert state["dimension_refetch_decision"]["reason"] == "budget_insufficient"
+    # 未触发抓取：只有 skipped 事件，没有 running/completed
+    gap_events = [e for e in collector.events if e.event == "gap_refetch"]
+    assert gap_events and all(e.status == "skipped" for e in gap_events), [
+        e.status for e in gap_events
+    ]
+
+
 def test_refetch_runs_through_single_competitor_fetch(tmp_path, monkeypatch):
     """补抓复用 `_fetch_single_competitor`：注入防护与抽取链路天然复用。
 

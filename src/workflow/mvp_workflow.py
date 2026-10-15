@@ -858,6 +858,10 @@ class MVPWorkflow:
             )
             state["citation_attempts"] = 1
 
+            # decision 供「预算合并」计算（维度补抓共享 GAP_REFETCH_MAX_PAGES）：
+            # 必须在 861 的 if 块外初始化，否则第一次校验直接通过时未定义。
+            decision = None
+
             if not citation_result["passed"]:
                 # 第一次校验的违规明细会在第二次 verify 之后被覆盖（见下方
                 # 的 state["citation_violations"] 赋值）。重生成成功与否决定了这个
@@ -925,6 +929,15 @@ class MVPWorkflow:
                         state["gap_refetch_result"]["grounding_before"] = grounding_before
                         state["gap_refetch_result"]["grounding_after"] = citation_result["grounding"]
 
+            # 预算合并（拍板口径）：GAP_REFETCH_MAX_PAGES 是数值+维度两类补抓的
+            # **共享总预算**，不是各自独立。数值补抓已分配页数（per_candidate_pages
+            # 之和，承诺抓取量、失败不退还——保守）从总预算扣除，剩余给维度补抓。
+            refetch_used_pages = (
+                sum(c.per_candidate_pages for c in decision.candidates)
+                if decision is not None else 0
+            )
+            remaining_budget = max(0, GAP_REFETCH_MAX_PAGES - refetch_used_pages)
+
             # 维度缺口补抓（新分支）：报告**没写**的核心维度不产生违规、判定层
             # 看不到——引用校验通过后核心维度仍 missing/unconfirmed 时，用维度
             # 意图选页补抓，重生成让报告**新增**该维度断言。与数值补抓同轮，
@@ -941,7 +954,9 @@ class MVPWorkflow:
             # 所以维度块与校验结果解耦，每次闭环都执行；补抓与否由
             # plan_dimension_refetch 的 pure 判定决定，不依赖本次校验是否通过。
             dim_grounding_before = citation_result["grounding"]
-            dim_decision = await self._maybe_refetch_dimensions(state, evidence_store)
+            dim_decision = await self._maybe_refetch_dimensions(
+                state, evidence_store, remaining_budget=remaining_budget,
+            )
             if dim_decision is not None:
                 evidence_store = EvidenceStore.from_extracted_data(state["extracted_data"])
                 state["evidence_store"] = evidence_store
@@ -1622,6 +1637,7 @@ class MVPWorkflow:
         self,
         state: Dict[str, Any],
         evidence_store: EvidenceStore,
+        remaining_budget: Optional[int] = None,
     ) -> Optional[Any]:
         """核心维度缺口 → 定向补抓（报告**没写**的维度，判定层看不到）。
 
@@ -1631,15 +1647,36 @@ class MVPWorkflow:
         进 evidence_block 重生成，让报告**新增**该维度断言。
 
         闭环顺序同数值补抓：「补抓 → 带新证据重生成 → 校验」（后两步在调用方）。
-        预算：每站 2 页（首页 + 1 个维度意图页，per_site_pages 见
-        plan_dimension_refetch 注释——1 页会只剩首页、选页意图失效），
-        候选站数 ≤ max_pages——与数值补抓同一量级的成本刹车，单轮不递归。
+        预算：与数值补抓**共享** GAP_REFETCH_MAX_PAGES（拍板口径），`remaining_budget`
+        是数值补抓扣完后的剩余；候选站数 = remaining//per_site_pages（每站 2 页
+        = 首页 + 1 个维度意图页，见 plan_dimension_refetch 注释——1 页会只剩首页、
+        选页意图失效）。剩余不足 2 页时**不触发**并记录 budget_insufficient，
+        强行触发会退化回 per_site=1 的坑。单轮不递归。
         """
-        from src.agent.dimension_refetch import plan_dimension_refetch
+        from src.agent.dimension_refetch import (
+            REASON_BUDGET_INSUFFICIENT,
+            plan_dimension_refetch,
+        )
 
         sites = [s for s in (state.get("target_sites") or []) if s.get("url")]
+        budget = GAP_REFETCH_MAX_PAGES if remaining_budget is None else remaining_budget
+        if budget < 2:
+            state["dimension_refetch_decision"] = {
+                "eligible": False,
+                "reason": REASON_BUDGET_INSUFFICIENT,
+                "candidates": [],
+                "skipped": [],
+            }
+            self._emit(
+                "gap_refetch", "verify", "skipped",
+                f"维度补抓预算不足（剩余 {budget} 页 < 每站下限 2），跳过",
+                payload={"reason": REASON_BUDGET_INSUFFICIENT, "remaining_budget": budget},
+            )
+            return None
+
         decision = plan_dimension_refetch(
-            evidence_store, sites, max_pages=GAP_REFETCH_MAX_PAGES,
+            evidence_store, sites,
+            max_pages=budget // 2, per_site_pages=2,
         )
         state["dimension_refetch_decision"] = decision.to_dict()
 

@@ -33,6 +33,7 @@ from src.agent.readiness import (
 
 REASON_NO_CORE_DIMENSION_GAP = "no_core_dimension_gap"
 REASON_NO_SITES = "no_sites"
+REASON_BUDGET_INSUFFICIENT = "budget_insufficient"
 
 # 维度 → 站内页面意图（priority_tiers 格式，权重风格对齐 discover 先验）。
 # pricing/features/models 精调，其余单意图兜底。缺了哪个维度都能补抓。

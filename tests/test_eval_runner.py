@@ -349,6 +349,10 @@ def test_gap_refetch_case_closes_the_loop(tmp_path):
     readiness = state.get("delivery_readiness") or {}
     assert readiness.get("verdict") == "ready", readiness.get("reasons")
 
+    # 预算合并 + 维度闭合：数值补抓已修定价 → 维度检查不再补抓
+    dim_decision = state.get("dimension_refetch_decision") or {}
+    assert dim_decision.get("eligible") is False, dim_decision
+
 
 def test_gap_dimension_missing_case_closes_dimension_gap(tmp_path):
     """gap_dimension_missing 端到端：报告**没写**的维度 → 维度补抓 → 重生成新增断言。
