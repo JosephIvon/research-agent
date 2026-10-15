@@ -151,70 +151,102 @@ def test_full_research_flow(real_service_credentials, live_backend):
     last_error_seen = None
     graceful_degraded = False
     timeline: list = []  # "elapsed_s:event/stage" 序列，诊断用
+    last_event_id = -1  # SSE 续传游标；-1 = 从起点回放全部
+    reconnect_attempts = 0
+    max_reconnects = 3  # 重连上限：后端真挂了不无限空转
 
-    sse_headers = {**headers, "Accept": "text/event-stream"}
-    with requests.get(sse_url, headers=sse_headers, stream=True, timeout=max_wait) as resp:
-        assert resp.status_code == 200
-        # 字节层缓冲 + 在 \n\n 处切块：chunk 边界可能切断 UTF-8 多字节字符，
-        # 逐块 decode 会随机抛 UnicodeDecodeError（实测 chunk_size=256 下
-        # 真实触发过）。切完的整块再解码，字符必然完整。
-        buffer = b""
-        for chunk in resp.iter_content(chunk_size=256):
-            if time.time() - start > max_wait:
-                break
-            if chunk:
-                buffer += chunk
-                # SSE events are separated by blank lines (\n\n)
-                while b"\n\n" in buffer:
-                    block, buffer = buffer.split(b"\n\n", 1)
-                    event_type = None
-                    data_lines = []
-                    for line in block.decode("utf-8", errors="replace").split("\n"):
-                        if line.startswith("event: "):
-                            event_type = line[7:].strip()
-                        elif line.startswith("data: "):
-                            data_lines.append(line[6:].strip())
-                    if data_lines and event_type:
-                        data_str = "\n".join(data_lines)
-                        try:
-                            event_obj = json.loads(data_str)
-                        except ValueError:
-                            event_obj = {}
-                        stage = event_obj.get("stage", "?")
-                        timeline.append(f"{time.time() - start:.0f}s:{event_type}/{stage}")
-                        # 任务级终止事件才算结果。
-                        # 可接受的终点（产品"诚实降级"设计）：
-                        #   completed                                       → 报告产出
-                        #   error + stage=verify + 质量/数据不足            → 明确说明缺什么，非静默失败
-                        # 不可接受的终点：
-                        #   error 且 payload 未标 recoverable               → 流程中途崩溃，立即停，不再傻等
-                        #   error 但 payload.recoverable=True（如抓取失败）  → 产品设计会继续，记录后继续等终态
-                        if event_type == "completed":
-                            final_data = data_str
-                            completed = True
+    # 服务端支持 Last-Event-ID 续传（产品自身的重连设计）。真服务全链路最长
+    # 15 分钟，单条 SSE 连接可能因网络抖动/容器重启在任务跑到一半时断开——
+    # 那是最亏的断法：后台任务还在继续，客户端却以为失败了。这里按产品语义
+    # 重连：断流且未到终态就带 Last-Event-ID 重新订阅，服务端从上次位置续传
+    # （task.events 持久化在 Redis，重连时按 id > last_event_id 回放）。
+    while not (completed or graceful_degraded or terminal_error):
+        if time.time() - start > max_wait or reconnect_attempts > max_reconnects:
+            break
+        sse_headers = {**headers, "Accept": "text/event-stream"}
+        if last_event_id >= 0:
+            sse_headers["Last-Event-ID"] = str(last_event_id)
+        try:
+            with requests.get(sse_url, headers=sse_headers, stream=True, timeout=max_wait) as resp:
+                if resp.status_code != 200:
+                    last_error_seen = f"SSE 连接返回 HTTP {resp.status_code}"
+                else:
+                    # 字节层缓冲 + 在 \n\n 处切块：chunk 边界可能切断 UTF-8 多字节字符，
+                    # 逐块 decode 会随机抛 UnicodeDecodeError（实测 chunk_size=256 下
+                    # 真实触发过）。切完的整块再解码，字符必然完整。
+                    buffer = b""
+                    for chunk in resp.iter_content(chunk_size=256):
+                        if time.time() - start > max_wait:
                             break
-                        elif event_type == "error":
-                            is_degradation = (
-                                stage == "verify"
-                                and ("数据质量不足" in data_str or "抽取数据不足" in data_str)
-                            )
-                            recoverable = bool((event_obj.get("payload") or {}).get("recoverable"))
-                            if is_degradation:
-                                graceful_degraded = True
-                                break
-                            last_error_seen = data_str
-                            if not recoverable:
-                                terminal_error = data_str
-                                break
-                if completed or graceful_degraded or terminal_error:
-                    break
+                        if chunk:
+                            buffer += chunk
+                            # SSE events are separated by blank lines (\n\n)
+                            while b"\n\n" in buffer:
+                                block, buffer = buffer.split(b"\n\n", 1)
+                                event_type = None
+                                event_id = None
+                                data_lines = []
+                                for line in block.decode("utf-8", errors="replace").split("\n"):
+                                    if line.startswith("event: "):
+                                        event_type = line[7:].strip()
+                                    elif line.startswith("id: "):
+                                        event_id = line[4:].strip()
+                                    elif line.startswith("data: "):
+                                        data_lines.append(line[6:].strip())
+                                if data_lines and event_type:
+                                    data_str = "\n".join(data_lines)
+                                    try:
+                                        event_obj = json.loads(data_str)
+                                    except ValueError:
+                                        event_obj = {}
+                                    stage = event_obj.get("stage", "?")
+                                    timeline.append(f"{time.time() - start:.0f}s:{event_type}/{stage}")
+                                    if event_id is not None:
+                                        last_event_id = max(last_event_id, int(event_id))
+                                    # 任务级终止事件才算结果。
+                                    # 可接受的终点（产品"诚实降级"设计）：
+                                    #   completed                                       → 报告产出
+                                    #   error + stage=verify + 质量/数据不足            → 明确说明缺什么，非静默失败
+                                    # 不可接受的终点：
+                                    #   error 且 payload 未标 recoverable               → 流程中途崩溃，立即停，不再傻等
+                                    #   error 但 payload.recoverable=True（如抓取失败）  → 产品设计会继续，记录后继续等终态
+                                    if event_type == "completed":
+                                        final_data = data_str
+                                        completed = True
+                                        break
+                                    elif event_type == "error":
+                                        is_degradation = (
+                                            stage == "verify"
+                                            and ("数据质量不足" in data_str or "抽取数据不足" in data_str)
+                                        )
+                                        recoverable = bool((event_obj.get("payload") or {}).get("recoverable"))
+                                        if is_degradation:
+                                            graceful_degraded = True
+                                            break
+                                        last_error_seen = data_str
+                                        if not recoverable:
+                                            terminal_error = data_str
+                                            break
+                        if completed or graceful_degraded or terminal_error:
+                            break
+                    # 走到这 = 流正常结束且未到终态（连接被服务端关闭/网络抖动），
+                    # 交由外层 while 带 Last-Event-ID 重连
+        except requests.exceptions.RequestException as exc:
+            last_error_seen = f"SSE 连接异常: {type(exc).__name__}: {exc}"
+        if completed or graceful_degraded or terminal_error:
+            break
+        reconnect_attempts += 1
+        if reconnect_attempts <= max_reconnects:
+            time.sleep(1)  # 重连前留一口气，避免紧贴断流瞬间反复撞墙
 
     if not completed and not graceful_degraded:
         elapsed = time.time() - start
         timeline_str = " -> ".join(timeline) if timeline else "(未收到任何事件)"
+        # 最后错误放最前：annotation 有截断风险，错误必须第一个被看到
         pytest.fail(
-            f"真链路未到终态（已等 {elapsed:.0f}s / 上限 {max_wait}s）"
-            f"；事件时间线: {timeline_str}；最后错误: {terminal_error or last_error_seen}"
+            f"真链路未到终态（已等 {elapsed:.0f}s / 上限 {max_wait}s，重连 {reconnect_attempts} 次）"
+            f"；最后错误: {terminal_error or last_error_seen}"
+            f"；事件时间线: {timeline_str}"
         )
     if completed:
         assert final_data is not None

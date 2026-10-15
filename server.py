@@ -1053,8 +1053,6 @@ async def stream_task_events(task_id: str, request: Request):
     # SSE 同样必须校验归属，否则可订阅他人任务的实时事件流
     _require_task_access(task, request)
 
-    q = store.subscribe_task(task_id)
-
     # 回放起点：带 Last-Event-ID 才从该 id 之后续传；否则从 -1 开始（回放全部，
     # 含 id=0 的 task_created）。曾默认 0，而 task_created 的 id 恰好是 0——
     # `event.id > 0` 把首个事件永远过滤掉，全新连接永远收不到 task_created
@@ -1066,20 +1064,35 @@ async def stream_task_events(task_id: str, request: Request):
         except ValueError:
             pass
 
+    # 先订阅、进流后再取快照：快照只覆盖订阅前已持久化的事件，订阅后的事件走
+    # 队列。若先取快照后订阅，快照与订阅之间的窗口里发出的事件既不在快照里、
+    # 也没进本连接的队列——重连时静默丢事件（实测复现：任务秒级完成时，第二条
+    # 连接带 Last-Event-ID 重连，快照-订阅窗口内的事件全部丢失，10 秒收不到任何
+    # 数据）。快照与队列可能重复携带同一批事件，用 replay_from（id 游标）去重，
+    # 保证不重不漏。
+    q = store.subscribe_task(task_id)
+
     async def event_stream():
         try:
-            for event in task.events:
-                if event.id > last_event_id:
-                    yield f"id: {event.id}\nevent: {event.event}\ndata: {json.dumps(event.to_dict(), ensure_ascii=False)}\n\n"
+            replay_from = last_event_id
+            task = await store.get(task_id)
+            if task is not None:
+                for event in task.events:
+                    if event.id > replay_from:
+                        replay_from = event.id
+                        yield f"id: {event.id}\nevent: {event.event}\ndata: {json.dumps(event.to_dict(), ensure_ascii=False)}\n\n"
 
             while True:
                 if await request.is_disconnected():
                     break
                 try:
                     event = await asyncio.wait_for(q.get(), timeout=SSE_KEEPALIVE_SECONDS)
-                    yield f"id: {event.id}\nevent: {event.event}\ndata: {json.dumps(event.to_dict(), ensure_ascii=False)}\n\n"
                 except asyncio.TimeoutError:
                     yield f": keepalive\n\n"
+                    continue
+                if event.id > replay_from:
+                    replay_from = event.id
+                    yield f"id: {event.id}\nevent: {event.event}\ndata: {json.dumps(event.to_dict(), ensure_ascii=False)}\n\n"
         finally:
             # 客户端断开时释放订阅，否则队列会永久滞留在 emitter 上
             store.unsubscribe_task(task_id, q)
