@@ -1,0 +1,17 @@
+{
+  "extract_sequence": [
+    [
+      {"key": "pricing", "value": "团队版 59 元/月，含 30 天日志留存。", "confidence": 0.9},
+      {"key": "features", "value": ["日志检索", "告警规则"], "confidence": 0.9},
+      {"key": "models", "value": ["SaaS 多租户"], "confidence": 0.9},
+      {"key": "target_users", "value": "中小研发团队", "confidence": 0.9},
+      {"key": "integrations", "value": "支持 Prometheus 与 Grafana 导出", "confidence": 0.9},
+      {"key": "limitations", "value": "私有化部署未公开", "confidence": 0.9},
+      {"key": "reviews", "value": "用户评价检索速度快", "confidence": 0.9}
+    ]
+  ],
+  "report": [
+    "## 定价\n\nAuditX 团队版 89 元/月 {{cite:auditx:0}}。\n\n## 功能\n\n提供日志检索与告警规则。\n\n## 目标用户\n\n面向中小研发团队。\n\n## 限制\n\n私有化部署未公开披露，页面上没有给出任何私有化部署信息，需联系销售确认。\n",
+    "## 定价\n\nAuditX 团队版 59 元/月 {{cite:auditx:0}}。\n\n## 功能\n\n提供日志检索与告警规则。\n\n## 目标用户\n\n面向中小研发团队。\n\n## 限制\n\n私有化部署未公开披露，页面上没有给出任何私有化部署信息，需联系销售确认。\n"
+  ]
+}

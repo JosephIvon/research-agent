@@ -21,7 +21,7 @@ CASES_DIR = EVALS_DIR / "cases"
 RESULTS_DIR = EVALS_DIR / "results"
 BASELINE_DIR = EVALS_DIR / "baselines"
 # 基线与 manifest 版本同步：新增用例必须升版本并重算（不滚动覆盖历史）
-BASELINE_VERSION = "v1.2"
+BASELINE_VERSION = "v1.3"
 DEFAULT_BASELINE = BASELINE_DIR / f"{BASELINE_VERSION}.json"
 
 from evals.fixture_source import load_manifest, update_fixture_digests  # noqa: E402
@@ -68,9 +68,17 @@ def _build_scripted_llm(case: Dict[str, Any], llm_spec: Dict[str, Any]):
 
     from evals.fixture_source import resolve_citations
 
+    # report 可以是单条（字符串）或**按调用顺序的多条**（列表）。
+    # 多条的用途：脚本化「首版报告有违规 → 重生成修正」。ScriptedLLMClient 在
+    # 同一意图的脚本耗尽后重复最后一条（src/llm/__init__.py:760-761），
+    # 所以 [错版, 对版] 天然就是「第 1 次校验不过、第 2 次通过」。
+    reports = llm_spec["report"]
+    if isinstance(reports, str):
+        reports = [reports]
+
     script: Dict[str, List[Any]] = {
         "extract": [json.dumps(items, ensure_ascii=False) for items in llm_spec["extract_sequence"]],
-        "report": [resolve_citations(llm_spec["report"], case, llm_spec)],
+        "report": [resolve_citations(r, case, llm_spec) for r in reports],
     }
     return ScriptedLLMClient(script=script)
 
@@ -405,6 +413,8 @@ def run_cases(manifest: Dict[str, Any], only: Optional[List[str]] = None) -> Lis
                 if mode == "compare" and react_out:
                     metrics["react_compare"] = collect_react_compare(case, run_out, react_out)
 
+                first_attempt = run_out["state"].get("citation_first_attempt") or {}
+
                 results.append({
                     "id": case["id"],
                     "category": case["category"],
@@ -413,9 +423,21 @@ def run_cases(manifest: Dict[str, Any], only: Optional[List[str]] = None) -> Lis
                     "termination_reason": run_out["state"].get("termination_reason"),
                     # 排障带出：分母/推导句直接决定 grounding，CI annotation 可见
                     "citation_debug": {
-                        k: run_out["state"].get("citation_report", {}).get(k)
-                        for k in ("claims_checked", "citations_seen",
-                                  "derived_claim_count", "citation_coverage")
+                        **{
+                            k: (run_out["state"].get("citation_report") or {}).get(k)
+                            for k in ("claims_checked", "citations_seen",
+                                      "derived_claim_count", "citation_coverage")
+                        },
+                        # 引用违规的**触发率**分母。第一次 verify 的违规明细在重生成
+                        # 后会被覆盖（mvp_workflow.py 落 state["citation_violations"]
+                        # 那行只保留终判），所以这里取的是工作流另存的首轮留档。
+                        # 没有这几个字段，「有多少报告需要补救」这个问题无法回答。
+                        "attempts": run_out["state"].get("citation_attempts"),
+                        "first_violation_count": first_attempt.get("violation_count", 0),
+                        "first_violation_types": first_attempt.get("violation_types", []),
+                        "final_violation_count": (run_out["state"].get("citation_report") or {}).get(
+                            "violation_count"
+                        ),
                     },
                     "derived_claims": (run_out["state"].get("citation_report", {}) or {}).get(
                         "derived_claims", []

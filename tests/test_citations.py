@@ -15,6 +15,7 @@ from src.agent.citations import (
     iter_claims,
     make_evidence_id,
     verify_report,
+    violation_types,
 )
 
 
@@ -1044,3 +1045,43 @@ def test_derivation_leak_is_bounded_by_evidence_density():
             f"[{label}] 漏放行 {len(leaked)} 个，超出上限 {cap} "
             f"（2026-10-14 实测 {measured}）——推导判定变松了，需重估：{leaked[:20]}"
         )
+
+
+# --------------------------------------------------------------------------
+# violation_types：留档用的违规类型集合
+#
+# 这条纯函数之所以要单独单测：评测基线里的 first_violation_types 直接来自它。
+# 离线夹具中**唯一**出现的违规类型是 ungrounded_claim，所以端到端测试无法区分
+# 「从实际违规读出来」与「写死成 ungrounded_claim」——两者结果完全相同。
+# 这里用混合类型把它钉死，写死会立刻变红。
+# --------------------------------------------------------------------------
+
+
+def test_violation_types_reads_actual_violations_not_a_fixed_constant():
+    mixed = [
+        {"type": "ungrounded_claim", "detail": "数值 89 在所引证据原文中找不到"},
+        {"type": "uncited_claim", "detail": "含数值结论没有标注来源"},
+        {"type": "unknown_citation", "detail": "引用了不存在的证据 id"},
+        {"type": "ungrounded_claim", "detail": "重复类型应去重"},
+    ]
+    # 排序按码位：'g'(103) < 'k'(107)，所以 ungrounded 排在 unknown **前面**。
+    # （写这条断言时我按读音想当然写成 unknown 在前，全量回归直接变红。）
+    assert violation_types(mixed) == [
+        "uncited_claim", "ungrounded_claim", "unknown_citation"
+    ]
+
+
+def test_violation_types_keeps_unreadable_entries_visible():
+    """类型缺失或为空的条目必须显式落进 unknown，不能悄悄消失。
+
+    静默丢弃会让「违规条数」与「类型集合」对不上——事后按类型统计时，
+    总数说有 3 处，类型集合却只解释得清 2 处，而没人知道第三处去哪了。
+    """
+    assert violation_types(
+        [{"type": "ungrounded_claim"}, {}, {"type": None}, {"type": ""}]
+    ) == ["ungrounded_claim", "unknown"]
+
+
+def test_violation_types_handles_empty_input():
+    assert violation_types([]) == []
+    assert violation_types(None) == []

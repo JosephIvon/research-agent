@@ -67,7 +67,13 @@ def test_fixture_digest_tamper_is_detected():
 def test_smoke_cross_source_case_cites_all_sources():
     """跨 ≥10 来源综合（M7 门控前置）：全部来源都要被有效引用。"""
     manifest = load_manifest(verify_digests=True)
-    assert manifest["version"] == "v1.2"
+    # 守的是「manifest 与基线同版本」这条约定（新增用例必须升版本并重算），
+    # 而不是某个具体版本号。此前这里硬编码 "v1.2"，每升一次基线就得改一次——
+    # 久而久之它只会变成一个必须手工同步的字符串，早就不再检查任何东西了。
+    assert manifest["version"] == eval_runner.BASELINE_VERSION, (
+        f"manifest 版本 {manifest['version']} 与基线版本 "
+        f"{eval_runner.BASELINE_VERSION} 不同步：新增用例必须升版本并重算基线"
+    )
 
     results = _run(manifest, ["cross_cloudprice"])
     case = results[0]
@@ -208,6 +214,105 @@ def test_every_manifest_case_uses_a_mode_the_runner_implements():
         if mode == "budget":
             assert case.get("agent_budget", {}).get("max_tokens"), \
                 f"budget 模式必须显式给 agent_budget.max_tokens，否则默认 10 会开跑即超额"
+
+
+# --------------------------------------------------------------------------
+# 引用违规记账
+#
+# 这组字段（attempts / first_violation_count / first_violation_types /
+# final_violation_count）回答的是「有多少报告需要补救、被补救成功了吗」。
+#
+# 它们的来历和 truncation_rate 一模一样：指标写好了，却**没有任何 case 能触发**
+# ——13 条旧 case 全部 citation_validity=1.0，因为夹具的抽取脚本与报告模板是配套
+# 设计的，引用必然对得上。所以补了 gap_ungrounded：首版报告把 59 写成 89
+# 并引用了正确的证据 id（正是模型「记错数字」的真实形态），重生成修正。
+#
+# 下面三条测试的作用是**防止这个样本被悄悄改没**：样本一消失，指标就退回恒零，
+# 而恒零看起来和「全部合规」完全一样。
+# --------------------------------------------------------------------------
+
+UNGROUNDED_CASE_ID = "gap_ungrounded"
+
+
+def test_ungrounded_case_triggers_a_violation_then_repairs_it():
+    """这条 case 必须真的触发 ungrounded_claim 并在重生成后修好。
+
+    断言精确到类型与次数，而不是「最终通过」——只看终态的话，
+    把首版报告改回正确数字也能让测试变绿，而样本就没了。
+    """
+    manifest = load_manifest(verify_digests=True)
+    case = _run(manifest, [UNGROUNDED_CASE_ID])[0]
+    dbg = case["citation_debug"]
+
+    assert case["status"] == "completed", (
+        f"重生成后应交付完整报告，实得 {case['status']!r}（{case.get('termination_reason')}）"
+    )
+    assert dbg["attempts"] == 2, f"应走过一次重生成，实得 attempts={dbg['attempts']!r}"
+    assert dbg["first_violation_count"] == 1, (
+        f"首轮应恰好 1 处违规，实得 {dbg['first_violation_count']!r}"
+    )
+    assert dbg["first_violation_types"] == ["ungrounded_claim"], (
+        f"首轮违规类型必须是 ungrounded_claim（数值无据），"
+        f"实得 {dbg['first_violation_types']!r}"
+    )
+    assert dbg["final_violation_count"] == 0, "重生成后不应残留违规"
+
+
+def test_ungrounded_case_fails_if_the_offending_number_disappears():
+    """反向守卫：首版报告的错数字必须真的与证据不符。
+
+    数字归一化若被改动（例如把 89 也认成 59），违规会消失、样本静默失效。
+    这里直接断言「首版文本里的数字不在所引证据原文中」，
+    把夹具与校验器之间的契约钉死。
+    """
+    from evals.fixture_source import CASES_DIR, resolve_citations
+    from src.agent.citations import extract_numbers
+
+    case_spec = next(
+        c for c in load_manifest(verify_digests=True)["cases"]
+        if c["id"] == UNGROUNDED_CASE_ID
+    )
+    llm_spec = json.loads(
+        (CASES_DIR / UNGROUNDED_CASE_ID / "llm.json").read_text(encoding="utf-8")
+    )
+    first_report = llm_spec["report"][0]
+    resolved = resolve_citations(first_report, case_spec, llm_spec)
+
+    evidence_text = llm_spec["extract_sequence"][0][0]["value"]
+    report_numbers = set(extract_numbers(resolved))
+    evidence_numbers = set(extract_numbers(evidence_text))
+
+    assert report_numbers, "首版报告必须含数值，否则测不到 ungrounded_claim"
+    assert report_numbers - evidence_numbers, (
+        "首版报告必须存在**证据里没有**的数字（错数字），"
+        f"实得报告数字 {report_numbers} 全部包含于证据数字 {evidence_numbers}"
+    )
+    assert len(llm_spec["report"]) == 2, "需要「错版 + 修正版」两条脚本才能模拟重生成"
+
+
+def test_violation_accounting_is_present_on_every_case_and_not_vacuous():
+    """每条 case 都必须带齐 4 个记账字段，且全集中至少有一条真的非零。
+
+    前半句堵字段消失，后半句堵样本消失——只有后半句能防住「删掉 gap_ungrounded
+    后所有测试仍然全绿」这种事，因为恒零和合规在字段层面长得一模一样。
+    """
+    manifest = load_manifest(verify_digests=True)
+    results = _run(manifest, [c["id"] for c in manifest["cases"]])
+
+    fields = ("attempts", "first_violation_count",
+              "first_violation_types", "final_violation_count")
+    for row in results:
+        dbg = row["citation_debug"]
+        missing = [f for f in fields if f not in dbg]
+        assert not missing, f"case {row['id']} 的 citation_debug 缺字段: {missing}"
+
+    nonzero = [r["id"] for r in results
+               if (r["citation_debug"]["first_violation_count"] or 0) > 0]
+    assert nonzero, (
+        "全集中没有任何 case 触发过引用违规——'引用违规'这项指标已退回恒零，"
+        "和 truncation_rate 曾经踩的坑同构。检查 gap_ungrounded 夹具是否还在、"
+        "或数字归一化是否变了。"
+    )
 
 
 def test_budget_override_reaches_both_budget_guards(monkeypatch):

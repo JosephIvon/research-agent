@@ -31,6 +31,7 @@ from src.agent.citations import (
     NUMBER_RE,
     format_violations,
     verify_report,
+    violation_types,
 )
 from src.security.injection import (
     UNTRUSTED_NOTICE,
@@ -857,6 +858,14 @@ class MVPWorkflow:
             state["citation_attempts"] = 1
 
             if not citation_result["passed"]:
+                # 第一次校验的违规明细会在第二次 verify 之后被覆盖（见下方
+                # 的 state["citation_violations"] 赋值）。重生成成功与否决定了这个
+                # 任务有没有走过「校验不过 → 补救」这条路径，而这批类型是事后唯一
+                # 能回答「它当初为什么被重生成」的线索——不留档就永远查不到了。
+                state["citation_first_attempt"] = {
+                    "violation_count": citation_result["violation_count"],
+                    "violation_types": violation_types(citation_result["violations"]),
+                }
                 self._emit(
                     "citation_check", "verify", "running",
                     f"引用校验未通过（{citation_result['violation_count']} 处），带违规清单重生成",

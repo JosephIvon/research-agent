@@ -835,6 +835,18 @@ def _trim(sentence: str, limit: int = 80) -> str:
     return flat if len(flat) <= limit else flat[:limit] + "…"
 
 
+def violation_types(violations: List[Dict[str, Any]]) -> List[str]:
+    """违规类型去重排序。
+
+    **逐条读实际违规**，不推断、不按场景写死——留档字段一旦与真实违规脱钩，
+    事后统计「多少报告因数值无据而重生成」就成了编出来的数字。
+
+    类型缺失或为空的条目归入 ``"unknown"``：宁可显式标出"认不出来"，
+    也不要让它悄悄消失，那会让违规总数与类型集合对不上。
+    """
+    return sorted({str(v.get("type") or "unknown") for v in violations or []})
+
+
 # 违规类型的人话说明。给模型看英文标识符没有意义，它需要知道**要改什么**。
 VIOLATION_HINTS = {
     "uncited_claim": "含数值的结论没有标注任何证据来源",
