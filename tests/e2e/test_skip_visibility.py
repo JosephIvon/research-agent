@@ -55,6 +55,11 @@ def _run_pytest(args, overrides=None):
     """Run pytest in a subprocess with the e2e gating variables pinned."""
     env = {key: value for key, value in os.environ.items() if key not in INHERITED_GATE_VARS}
     env["PYTHONDONTWRITEBYTECODE"] = "1"
+    # 嵌套 pytest 的输出含中文；不钉死 UTF-8 的话，父进程会拿区域编码
+    # （Windows 上是 GBK）去解，可能直接抛 UnicodeDecodeError——那是测试的
+    # 故障而不是被测代码的，会把红绿判反。
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
     env.update(overrides or {})
     return subprocess.run(
         [sys.executable, "-m", "pytest", *args, "-p", "no:cacheprovider"],
@@ -62,6 +67,8 @@ def _run_pytest(args, overrides=None):
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=TIMEOUT_SECONDS,
     )
 

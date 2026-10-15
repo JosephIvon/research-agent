@@ -47,12 +47,19 @@ def _import_settings(env_overrides):
         **os.environ,
         "PYTHONPATH": str(PROJECT_ROOT),
         "PYTHON_DOTENV_DISABLED": "1",
+        # 强制子进程吐 UTF-8，父进程也按 UTF-8 解码。少了这对，父进程会拿
+        # 区域编码（Windows 上是 GBK）去解子进程的 UTF-8 输出，直接抛
+        # UnicodeDecodeError——那是测试的故障，会把红绿判反。
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1",
         **env_overrides,
     }
     return subprocess.run(
         [sys.executable, "-c", "import src.config.settings"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=env,
         cwd=str(PROJECT_ROOT),
         timeout=120,
@@ -86,10 +93,13 @@ def test_production_missing_jwt_secret_keeps_legacy_error():
         [sys.executable, "-c", "import src.config.settings"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         # 不屏蔽 .env 的话，本机开发用的 JWT_SECRET_KEY 会被 load_dotenv 补回来，
         # 于是"没设应当报错"的断言翻红——CI 无 .env 所以那边一直是绿的。
         env={**env, "PYTHONPATH": str(PROJECT_ROOT), "APP_ENV": "production",
-             "PYTHON_DOTENV_DISABLED": "1"},
+             "PYTHON_DOTENV_DISABLED": "1",
+             "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
         cwd=str(PROJECT_ROOT),
         timeout=120,
     )

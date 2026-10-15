@@ -47,11 +47,14 @@ assert not hasattr(search_module, "search_tool"), "仍导出模块级 search 实
 print("CLEAN_IMPORT")
 """
     root = str(Path(__file__).resolve().parents[1])
-    env = {**os.environ, "PYTHONPATH": root}
+    env = {**os.environ, "PYTHONPATH": root,
+           "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
     result = subprocess.run(
         [sys.executable, "-c", probe],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=env,
         cwd=root,
         timeout=120,
