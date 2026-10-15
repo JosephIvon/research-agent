@@ -925,6 +925,39 @@ class MVPWorkflow:
                         state["gap_refetch_result"]["grounding_before"] = grounding_before
                         state["gap_refetch_result"]["grounding_after"] = citation_result["grounding"]
 
+            # 维度缺口补抓（新分支）：报告**没写**的核心维度不产生违规、判定层
+            # 看不到——引用校验通过后核心维度仍 missing/unconfirmed 时，用维度
+            # 意图选页补抓，重生成让报告**新增**该维度断言。与数值补抓同轮，
+            # 一轮不循环；数值补抓已走过的站点也可能在此补齐缺失维度。
+            # 放在数值补抓块**外**：第一次校验就通过（无违规）也必须检查维度缺口。
+            dim_grounding_before = citation_result["grounding"]
+            dim_decision = await self._maybe_refetch_dimensions(state, evidence_store)
+            if dim_decision is not None:
+                evidence_store = EvidenceStore.from_extracted_data(state["extracted_data"])
+                state["evidence_store"] = evidence_store
+                state["status"] = "report_regenerating"
+                self._emit(
+                    "citation_check", "verify", "running",
+                    f"补抓 {len(dim_decision.candidates)} 个竞品的缺失维度后重新生成报告"
+                    f"（证据 {len(evidence_store)} 条）",
+                )
+                state["report_final"] = await self.copywriter.generate_report(
+                    user_query,
+                    state["extracted_data"],
+                    verification_result,
+                    competitors=state["competitors"],
+                    quality_report=quality_report,
+                    evidence_store=evidence_store,
+                )
+                state["citation_attempts"] = state.get("citation_attempts", 1) + 1
+                citation_result = await asyncio.to_thread(
+                    verify_report, state["report_final"], evidence_store
+                )
+                # 「缺口解决」同数值补抓：grounding 提升是裁决信号
+                state.setdefault("dimension_refetch_result", {})
+                state["dimension_refetch_result"]["grounding_before"] = dim_grounding_before
+                state["dimension_refetch_result"]["grounding_after"] = citation_result["grounding"]
+
             state["citation_report"] = {
                 k: v for k, v in citation_result.items() if k != "violations"
             }
@@ -1357,6 +1390,7 @@ class MVPWorkflow:
         custom_selectors: Optional[Dict[str, List[str]]] = None,
         crawler: Optional[WebCrawler] = None,
         max_pages: Optional[int] = None,
+        page_tiers: Optional[tuple] = None,
     ) -> Dict[str, Any]:
         """抓取单个竞品页面并提取信息。
 
@@ -1366,6 +1400,9 @@ class MVPWorkflow:
         max_pages：可选。透传给 `fetch_site_profile` 的站内页数上限。
         补抓路径用它把每站抓取量限制在判定层分到的额度（per_candidate_pages）内；
         None 时沿用爬虫默认（整站 profile）。
+
+        page_tiers：可选。透传给 `fetch_site_profile` 的站内发现排序（priority_tiers）。
+        维度补抓用它让 discover 优先命中缺口维度对应的页面（见 dimension_refetch）。
         """
         self._emit("crawl_progress", "crawl", "running", f"正在抓取 {url}", payload={"url": url, "name": "unknown"})
         try:
@@ -1384,6 +1421,8 @@ class MVPWorkflow:
                 )
                 if max_pages is not None:
                     profile_kwargs["max_pages"] = max_pages
+                if page_tiers is not None:
+                    profile_kwargs["priority_tiers"] = page_tiers
                 profile = await active_crawler.fetch_site_profile(url, **profile_kwargs)
 
                 # 信任边界：抓到的正文是攻击者可控内容，必须在进入任何提示词之前清洗。
@@ -1565,6 +1604,98 @@ class MVPWorkflow:
                 "new_items": len(new_evidence),
                 "evidence_after": len(state["extracted_data"]),
                 "refetchable_gap_count": refetchable_count,
+            },
+        )
+        return decision
+
+    async def _maybe_refetch_dimensions(
+        self,
+        state: Dict[str, Any],
+        evidence_store: EvidenceStore,
+    ) -> Optional[Any]:
+        """核心维度缺口 → 定向补抓（报告**没写**的维度，判定层看不到）。
+
+        与 `_maybe_refetch_for_gaps`（数值缺口）并列：引用校验通过但核心维度
+        missing/unconfirmed 时，报告没有该维度的断言。补抓用维度意图
+        （DIMENSION_PAGE_TIERS，注入 discover 的 priority_tiers）选页，新证据
+        进 evidence_block 重生成，让报告**新增**该维度断言。
+
+        闭环顺序同数值补抓：「补抓 → 带新证据重生成 → 校验」（后两步在调用方）。
+        预算：每站 1 页（一个维度缺口一页通常够，/pricing 一页搞定定价），
+        候选站数 ≤ max_pages——与数值补抓同一量级的成本刹车，单轮不递归。
+        """
+        from src.agent.dimension_refetch import plan_dimension_refetch
+
+        sites = [s for s in (state.get("target_sites") or []) if s.get("url")]
+        decision = plan_dimension_refetch(
+            evidence_store, sites, max_pages=GAP_REFETCH_MAX_PAGES,
+        )
+        state["dimension_refetch_decision"] = decision.to_dict()
+
+        if not decision.eligible:
+            return None
+
+        dims_needed = sorted({d for c in decision.candidates for d in c.dims})
+        self._emit(
+            "gap_refetch", "verify", "running",
+            f"检测到 {len(decision.candidates)} 个竞品存在核心维度缺口"
+            f"（{'、'.join(dims_needed)}），开始定向补抓",
+            payload=decision.to_dict(),
+        )
+
+        new_evidence: List[Dict[str, Any]] = []
+        refetched: List[Dict[str, Any]] = []
+        async with contextlib.AsyncExitStack() as stack:
+            crawler = await stack.enter_async_context(WebCrawler())
+            for cand in decision.candidates:
+                site_cfg = next(
+                    (s for s in sites if str(s.get("url") or "") == cand.competitor_url),
+                    None,
+                )
+                try:
+                    comp = await self._fetch_single_competitor(
+                        site_cfg.get("url") if site_cfg else cand.competitor_url,
+                        auth_credentials=(site_cfg or {}).get("auth_credentials"),
+                        login_url=(site_cfg or {}).get("login_url"),
+                        custom_selectors=state.get("custom_selectors"),
+                        max_pages=cand.pages,
+                        page_tiers=cand.page_tiers,
+                        crawler=crawler,
+                    )
+                except Exception as e:  # noqa: BLE001 —— 单站补抓失败不拖垮整批
+                    logger.warning(f"维度补抓失败 {cand.competitor_url}: {e}")
+                    refetched.append({
+                        "url": cand.competitor_url, "status": "failed", "error": str(e),
+                    })
+                    continue
+                refetched.append({
+                    "url": cand.competitor_url,
+                    "status": comp.get("status"),
+                    "items": len(comp.get("extracted_data") or []),
+                })
+                new_evidence.extend(comp.get("extracted_data") or [])
+
+        state.setdefault("extracted_data", [])
+        before = len(state["extracted_data"])
+        state["extracted_data"].extend(new_evidence)
+        state["refetched_evidence"] = (state.get("refetched_evidence") or []) + new_evidence
+        state["dimension_refetch_result"] = {
+            "candidates": len(decision.candidates),
+            "dims": dims_needed,
+            "refetched": refetched,
+            "new_items": len(new_evidence),
+            "evidence_before": before,
+            "evidence_after": len(state["extracted_data"]),
+        }
+
+        self._emit(
+            "gap_refetch", "verify", "completed",
+            f"维度补抓完成：{len(new_evidence)} 条新证据（累计 {len(state['extracted_data'])} 条）",
+            payload={
+                "candidates": len(decision.candidates),
+                "dims": dims_needed,
+                "new_items": len(new_evidence),
+                "evidence_after": len(state["extracted_data"]),
             },
         )
         return decision

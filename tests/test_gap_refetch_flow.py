@@ -162,6 +162,59 @@ def test_refetch_turns_third_draft_green(tmp_path, monkeypatch):
     assert "running" in statuses and "completed" in statuses, statuses
 
 
+def test_dimension_gap_triggers_refetch_and_adds_assertion(tmp_path, monkeypatch):
+    """报告**没写**的维度（missing）→ 维度补抓 → 重生成新增断言 → 通过。
+
+    v0 报告不含定价断言（引用通过、无 ungrounded）→ 数值判定层看不到 → readiness
+    判 pricing missing → 维度补抓（带维度意图选页）→ 补抓得定价 → 重生成 v1 含
+    定价断言 → 校验通过。这是「引用自洽 ≠ 研究完整」的闭环补抓路径。
+    """
+    crawler = _TwoPhaseCrawler(SITE_URL)
+    script = {
+        "decompose": ['[{"id": "1", "description": "分析目标网站内容", "priority": 1}]'],
+        "extract": [
+            json.dumps(INITIAL_ITEMS, ensure_ascii=False),
+            json.dumps([PRICING_ITEM], ensure_ascii=False),
+        ],
+        "report": [
+            f"## 功能\n\nAcme 支持日志检索 [e:{_FEATURES_ID}]。\n",
+            (
+                f"## 功能\n\nAcme 支持日志检索 [e:{_FEATURES_ID}]。\n"
+                f"## 定价\n\nAcme 专业版 79 元/月 [e:{_PRICING_ID}]。\n"
+            ),
+        ],
+    }
+    state, collector = _run_legacy(monkeypatch, tmp_path, script, lambda: crawler)
+
+    assert state["status"] == "completed", state.get("termination_reason")
+    # v0 引用通过（attempts=1）→ 维度补抓 → v1（attempts=2），未走数值补抓
+    assert state["citation_attempts"] == 2, state.get("citation_attempts")
+    assert state["citation_trusted"] is True, state.get("citation_violations")
+    assert state.get("gap_refetch_result") is None, "无数值缺口，不应触发数值补抓"
+
+    # 维度补抓决策：pricing 缺失 → 候选
+    dim = state["dimension_refetch_decision"]
+    assert dim["eligible"] is True, dim
+    assert dim["candidates"][0]["dims"] == ["pricing"]
+    assert dim["candidates"][0]["competitor_url"] == SITE_URL
+
+    # 维度补抓拿到定价证据，报告新增定价断言
+    result = state["dimension_refetch_result"]
+    assert result["new_items"] == 1, result
+    assert result["grounding_before"] <= result["grounding_after"], result
+    assert "79 元/月" in state["report_final"]
+
+    # readiness：补抓后 pricing completed → ready
+    readiness = state["delivery_readiness"]
+    assert readiness["verdict"] == "ready", readiness["reasons"]
+    assert "pricing" not in readiness["critical_gaps"], readiness["dimensions"]
+
+    # 事件流：维度补抓 running → completed
+    gap_events = [e for e in collector.events if e.event == "gap_refetch"]
+    statuses = [e.status for e in gap_events]
+    assert "running" in statuses and "completed" in statuses, statuses
+
+
 def test_refetch_runs_through_single_competitor_fetch(tmp_path, monkeypatch):
     """补抓复用 `_fetch_single_competitor`：注入防护与抽取链路天然复用。
 

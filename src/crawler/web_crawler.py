@@ -255,8 +255,14 @@ class WebCrawler:
         wait_for_content: bool = True,
         max_pages: int = 3,
         discovered_page_timeout: int = 15,
+        priority_tiers: Optional[tuple] = None,
     ) -> Dict[str, object]:
-        """Fetch homepage and high-value internal pages as one research profile."""
+        """Fetch homepage and high-value internal pages as one research profile.
+
+        priority_tiers：可选。透传给 `discover_research_links` 的站内发现排序。
+        默认是 SaaS 风格先验；维度补抓用它注入维度意图（见 dimension_refetch），
+        让 discover 优先命中该维度对应的页面。
+        """
         homepage = await self._fetch_page_snapshot(
             url,
             auth_credentials=auth_credentials,
@@ -265,7 +271,10 @@ class WebCrawler:
             wait_for_content=wait_for_content,
         )
         pages = [homepage]
-        discovered_urls = self.discover_research_links(url, homepage["html"], max_links=max(0, max_pages - 1))
+        discovered_urls = self.discover_research_links(
+            url, homepage["html"], max_links=max(0, max_pages - 1),
+            priority_tiers=priority_tiers,
+        )
 
         for discovered_url in discovered_urls:
             try:

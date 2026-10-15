@@ -1,0 +1,21 @@
+{
+  "extract_sequence": [
+    [
+      [
+        {"key": "features", "value": "日志检索", "confidence": 0.9},
+        {"key": "models", "value": "SaaS 多租户", "confidence": 0.9},
+        {"key": "target_users", "value": "中大型企业", "confidence": 0.9},
+        {"key": "integrations", "value": "支持 Prometheus 导出", "confidence": 0.9},
+        {"key": "limitations", "value": "私有化部署未公开", "confidence": 0.9},
+        {"key": "reviews", "value": "用户评价检索速度快", "confidence": 0.9}
+      ],
+      [
+        {"key": "pricing", "value": "79 元/月", "confidence": 0.9}
+      ]
+    ]
+  ],
+  "report": [
+    "## 功能\n\nAcme 提供日志检索 [e:{{cite:auditx:0}}]。\n",
+    "## 功能\n\nAcme 提供日志检索 [e:{{cite:auditx:0}}]。\n\n## 定价\n\nAcme 专业版 79 元/月 [e:{{cite:auditx:1:0}}]。\n"
+  ]
+}

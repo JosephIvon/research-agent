@@ -21,7 +21,7 @@ CASES_DIR = EVALS_DIR / "cases"
 RESULTS_DIR = EVALS_DIR / "results"
 BASELINE_DIR = EVALS_DIR / "baselines"
 # 基线与 manifest 版本同步：新增用例必须升版本并重算（不滚动覆盖历史）
-BASELINE_VERSION = "v1.5"
+BASELINE_VERSION = "v1.6"
 DEFAULT_BASELINE = BASELINE_DIR / f"{BASELINE_VERSION}.json"
 
 from evals.fixture_source import load_manifest, update_fixture_digests  # noqa: E402
@@ -455,6 +455,11 @@ def run_cases(manifest: Dict[str, Any], only: Optional[List[str]] = None) -> Lis
                     "derived_claims": (run_out["state"].get("citation_report", {}) or {}).get(
                         "derived_claims", []
                     )[:2],
+                    # 补抓/交付裁决观测：数值补抓与维度补抓各自是否发生、落地多少新证据，
+                    # 以及最终交付就绪裁决——「报告自洽 ≠ 研究完整」在此可事后测量。
+                    "gap_refetch_result": (run_out["state"].get("gap_refetch_result") or None),
+                    "dimension_refetch_result": (run_out["state"].get("dimension_refetch_result") or None),
+                    "delivery_readiness": (run_out["state"].get("delivery_readiness") or {}).get("verdict"),
                     "metrics": metrics,
                 })
             except Exception as exc:

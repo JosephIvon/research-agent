@@ -350,6 +350,44 @@ def test_gap_refetch_case_closes_the_loop(tmp_path):
     assert readiness.get("verdict") == "ready", readiness.get("reasons")
 
 
+def test_gap_dimension_missing_case_closes_dimension_gap(tmp_path):
+    """gap_dimension_missing 端到端：报告**没写**的维度 → 维度补抓 → 重生成新增断言。
+
+    与 gap_refetch（数值缺口）互补：v0 报告无定价断言（引用通过、无违规）→
+    数值判定层看不到 → readiness 判 pricing missing → 维度补抓 → 重生成含定价
+    断言 → 校验通过。attempts=2、dimension_refetch_result 存在是关键证据。
+    """
+    manifest = load_manifest(verify_digests=True)
+    entry = next(c for c in manifest["cases"] if c["id"] == "gap_dimension_missing")
+    llm_spec = json.loads(
+        (eval_runner.CASES_DIR / "gap_dimension_missing" / "llm.json").read_text(encoding="utf-8")
+    )
+    run_out = eval_runner.run_legacy_case(entry, llm_spec, tmp_path)
+    state = run_out["state"]
+
+    assert state["status"] == "completed", state.get("termination_reason")
+    # v0 引用通过（attempts=1）→ 维度补抓 → v1（attempts=2），未走数值补抓
+    assert state["citation_attempts"] == 2, state.get("citation_attempts")
+    assert state.get("gap_refetch_result") is None, "无数值缺口，不应触发数值补抓"
+    assert state["citation_trusted"] is True, state.get("citation_violations")
+
+    # 维度补抓决策：pricing 缺失 → 候选
+    dim = state.get("dimension_refetch_decision") or {}
+    assert dim.get("eligible") is True, dim
+    assert dim["candidates"][0]["dims"] == ["pricing"]
+
+    # 补抓落地 + 报告新增定价断言
+    result = state.get("dimension_refetch_result") or {}
+    assert result.get("new_items", 0) >= 1, result
+    assert result.get("grounding_before", 1) <= result.get("grounding_after", 1), result
+    assert "79 元/月" in state.get("report_final", ""), "维度补抓后报告必须新增定价断言"
+
+    # readiness：补抓后 pricing completed → ready
+    readiness = state.get("delivery_readiness") or {}
+    assert readiness.get("verdict") == "ready", readiness.get("reasons")
+    assert "pricing" not in readiness.get("critical_gaps", []), readiness.get("dimensions")
+
+
 def test_budget_override_reaches_both_budget_guards(monkeypatch):
     """预算覆写必须同时到达 TaskBudget 与 ReActRunner 两道守卫。
 
