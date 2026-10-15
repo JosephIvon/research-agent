@@ -894,6 +894,7 @@ class MVPWorkflow:
                 # 必然不过——补抓的产出必须进入报告模型可见的证据表才有意义。
                 if not citation_result["passed"]:
                     state["citation_violations"] = citation_result["violations"]
+                    grounding_before = citation_result["grounding"]
                     decision = await self._maybe_refetch_for_gaps(state, evidence_store)
                     if decision is not None:
                         evidence_store = EvidenceStore.from_extracted_data(state["extracted_data"])
@@ -916,12 +917,40 @@ class MVPWorkflow:
                         citation_result = await asyncio.to_thread(
                             verify_report, state["report_final"], evidence_store
                         )
+                        # 补抓前后的扎根率：「缺口解决」的裁决信号是 grounding 提升
+                        # （refetchable_gap_count 只观测数字是否进证据，不代表报告
+                        # 引用了它——gap_refetch 夹具证明：99 缺口、补抓带回 79、
+                        # 报告改用 79 才转绿，数字进证据 ≠ 缺口解决）。
+                        state.setdefault("gap_refetch_result", {})
+                        state["gap_refetch_result"]["grounding_before"] = grounding_before
+                        state["gap_refetch_result"]["grounding_after"] = citation_result["grounding"]
 
             state["citation_report"] = {
                 k: v for k, v in citation_result.items() if k != "violations"
             }
             state["citation_violations"] = citation_result["violations"]
             state["citation_trusted"] = citation_result["passed"]
+
+            # 交付就绪统一裁决：把三个散落闸门（verify/quality/引用校验）收敛成
+            # 可测试的四态裁决，落 state 供评测/日志/前端观测。
+            # refetch_eligible 只在「尚未补抓」时反映判定层缺口——补抓只做一轮，
+            # grounding 提升与否已由 gap_refetch_result 记录，不因同一缺口再裁决继续。
+            from src.agent.readiness import assess_delivery_readiness
+            refetch_done = state.get("gap_refetch_result") is not None
+            refetch_eligible = (
+                (state.get("gap_refetch_decision") or {}).get("eligible", False)
+                and not refetch_done
+            )
+            state["delivery_readiness"] = assess_delivery_readiness(
+                evidence_store=evidence_store,
+                citation_passed=citation_result["passed"],
+                violations=citation_result["violations"],
+                source_coverage=state.get("source_coverage"),
+                evidence_count=state.get("evidence_count"),
+                verification_passed=state.get("verification_passed"),
+                quality_usable=quality_report.is_usable if quality_report else None,
+                refetch_eligible=refetch_eligible,
+            ).to_dict()
 
             if citation_result["passed"]:
                 self._emit(

@@ -141,6 +141,17 @@ def test_refetch_turns_third_draft_green(tmp_path, monkeypatch):
     assert result["new_items"] == 1 and result["candidates"] == 1
     assert state["refetched_evidence"][0]["key"] == "pricing"
 
+    # 「缺口解决」双信号：数字进证据是观测、grounding 提升是裁决。
+    # gap_refetch 形态：缺口 99 从未进证据（refetchable 计数低），
+    # 但补抓带回 79、报告改用 79 → grounding 从不过变为通过。
+    assert result["grounding_before"] < result["grounding_after"], result
+    assert result["grounding_after"] == 1.0, result
+
+    # 交付就绪统一裁决：补抓闭环后引用通过且无核心缺口 → ready
+    readiness = state["delivery_readiness"]
+    assert readiness["verdict"] == "ready", readiness["reasons"]
+    assert "pricing" not in readiness["critical_gaps"], readiness["dimensions"]
+
     # 报告交付的是修正后的定价
     assert "79 元/月" in state["report_final"]
     assert "99 元/月" not in state["report_final"]

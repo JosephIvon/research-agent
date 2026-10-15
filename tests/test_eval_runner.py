@@ -339,6 +339,16 @@ def test_gap_refetch_case_closes_the_loop(tmp_path):
     assert state["citation_trusted"] is True, "补抓得定价后应通过"
     assert dbg.get("grounding") == 1.0, dbg
 
+    # 「缺口解决」双信号（评测口径）：grounding 提升是裁决、数字进证据只观测。
+    # 本 case 缺口 99 从不进证据（补抓带回 79），靠报告改用 79 转绿。
+    result = state.get("gap_refetch_result") or {}
+    assert result.get("grounding_before", 0) < result.get("grounding_after", 0), result
+    assert result.get("grounding_after") == 1.0, result
+
+    # 交付就绪统一裁决：补抓闭环后引用通过且无核心缺口 → ready
+    readiness = state.get("delivery_readiness") or {}
+    assert readiness.get("verdict") == "ready", readiness.get("reasons")
+
 
 def test_budget_override_reaches_both_budget_guards(monkeypatch):
     """预算覆写必须同时到达 TaskBudget 与 ReActRunner 两道守卫。
