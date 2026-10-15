@@ -221,14 +221,23 @@ class EventEmitter:
                 logger.warning("Subscriber queue still full after dropping oldest event")
 
     async def emit(self, event: TaskEvent):
-        if self._on_event:
-            try:
-                result = self._on_event(event)
-                if asyncio.iscoroutine(result):
-                    await result
-            except Exception as e:
-                logger.warning(f"Event callback error: {e}")
+        """串行化整个发布过程：回调（id 分配 + 持久化）→ 投递。
+
+        曾是两段式（回调完成后再拿锁投递）：两个并发 emit 的回调在 await 点
+        交错时，先调用的可能后投递——订阅者看到乱序帧，id 分配顺序（回调内）
+        与投递顺序脱钩，SSE 的 id 游标过滤还会把迟到的低 id 帧静默丢弃。
+        整体串行后，调用顺序 == id 顺序 == 投递顺序 == 本实例内的存储顺序。
+        慢回调（如 Redis 写）持锁挂起是预期语义：它只推迟后续事件——
+        `_emit` 是 fire-and-forget，工作流本身不会被阻塞。
+        """
         async with self._lock:
+            if self._on_event:
+                try:
+                    result = self._on_event(event)
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception as e:
+                    logger.warning(f"Event callback error: {e}")
             # 迭代快照：unsubscribe 不持锁，遍历快照可避免遍历期间列表被改
             for q in list(self._subscribers):
                 self._deliver(q, event)

@@ -119,6 +119,52 @@ class TestBackpressure:
         assert [e.id for e in _drain(queue)] == [2, 3]
 
 
+class TestOrdering:
+    @pytest.mark.asyncio
+    async def test_concurrent_emit_delivery_follows_call_order(self):
+        """并发 emit 时，投递顺序必须等于 emit 调用顺序。
+
+        这是 emit 整体串行化的回归测试。修复前是两段式（回调完成后再拿锁
+        投递）：第一个 emit 的回调在 await 处挂起时，第二个 emit 的回调
+        可以抢先完成并先投递——订阅者看到乱序帧，且回调里分配的 id 顺序
+        与投递顺序脱钩。测试刻意让先调用的事件回调更慢（模拟 Redis 写
+        延迟抖动），无串行化时第二个事件必然先入队。
+        """
+        emitter = EventEmitter()
+        queue = emitter.subscribe()
+
+        # 复刻 server.py _run_research_task.on_event 的闭包计数器模式：
+        # id 在回调内、await 之后才分配——这是最容易被交错打断的位置
+        event_counter = 0
+        delays = {"first": 0.05, "second": 0.0}
+
+        async def on_event(event: TaskEvent):
+            nonlocal event_counter
+            await asyncio.sleep(delays[event.message])
+            event_counter += 1
+            event.id = event_counter
+
+        emitter._on_event = on_event
+
+        first = _event(0)
+        first.message = "first"
+        second = _event(0)
+        second.message = "second"
+
+        t1 = asyncio.create_task(emitter.emit(first))
+        await asyncio.sleep(0)  # 确保 t1 先起步，固定"调用顺序"
+        t2 = asyncio.create_task(emitter.emit(second))
+        await asyncio.gather(t1, t2)
+
+        delivered = _drain(queue)
+        assert [e.message for e in delivered] == ["first", "second"], (
+            "并发 emit 下投递乱序：先调用的事件被后投递"
+        )
+        assert [e.id for e in delivered] == [1, 2], (
+            "id 分配顺序与投递顺序脱钩，SSE 游标去重会丢帧"
+        )
+
+
 class TestStoreUnsubscribe:
     @pytest.mark.parametrize(
         "backend",
