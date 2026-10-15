@@ -83,6 +83,17 @@ def assess_site_dimension_gaps(
     `readiness` 的维度状态是全局的，但补抓是 per-site 的——"站点 A 有定价、
     站点 B 没有"必须落到"补抓 B"。host 匹配与 `plan_gap_refetch` 的
     competitor_url 归属口径一致。
+
+    **刻意不接收 violations**：per-site 状态只可能是 completed/missing，
+    永远不会是 unconfirmed。这是职责划分，不是疏漏——
+
+    - `unconfirmed`（有证据但被 ungrounded/uncited 违规指向）的根因是
+      **报告引用错/没引**，不是**证据缺**——现有证据已在该维度；
+    - 修复路径是**重生成**（M2 带违规清单修引用）与**数值补抓**
+      （ungrounded → `plan_gap_refetch`）；
+    - 维度补抓的价值只在**证据缺**（missing）——补抓意图页带回新证据。
+    把 violations 传进来让 unconfirmed 参与补抓，等于对"引用错"重复补抓，
+    且 ambiguous（一句引多家）时站点归属不清，不猜。
     """
     store = evidence_store or EvidenceStore()
     dim_names = list(dimensions) if dimensions else list(DIMENSION_PAGE_TIERS)

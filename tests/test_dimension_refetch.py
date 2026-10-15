@@ -14,6 +14,8 @@ from src.agent.readiness import (
     DIM_COMPLETED,
     DIM_MISSING,
     DIM_UNCONFIRMED,
+    VERDICT_DEGRADED,
+    assess_delivery_readiness,
 )
 from src.crawler.web_crawler import WebCrawler
 
@@ -150,3 +152,40 @@ def test_plan_budget_caps_candidate_sites():
 def test_plan_no_sites():
     decision = plan_dimension_refetch(EvidenceStore(), [])
     assert decision.eligible is False
+
+
+def test_plan_sees_unconfirmed_as_completed_and_does_not_refetch():
+    """unconfirmed 维度在维度补抓里不可见（视为 completed）——职责分工：
+    readiness 暴露它（degraded），维度补抓不补它（引用错归数值补抓/重生成）。
+
+    钉住现状语义：`assess_site_dimension_gaps` 刻意不接收 violations，
+    防止将来误加后对"引用错"重复补抓（且 ambiguous 时站点归属不清）。
+    """
+    store = _store([
+        {"key": "pricing", "value": "专业版 79 元/月", "source_url": _URL_A},
+        {"key": "features", "value": "日志检索", "source_url": _URL_A},
+        {"key": "pricing", "value": "69 元/月", "source_url": _URL_B},
+        {"key": "features", "value": "审计日志", "source_url": _URL_B},
+    ])
+    fev = next(e for e in store.evidences if e.key == "features" and e.url.startswith(_URL_A))
+    violations = [{
+        "type": "ungrounded_claim",
+        "missing_numbers": ["99"],
+        "cited_ids": [fev.evidence_id],
+    }]
+
+    # 维度补抓：看不到违规 → 视为 completed → 不触发
+    decision = plan_dimension_refetch(store, _SITES)
+    assert decision.eligible is False
+    assert decision.reason == "no_core_dimension_gap"
+
+    # readiness：看得到违规 → features unconfirmed → 核心缺口 → degraded
+    r = assess_delivery_readiness(
+        evidence_store=store,
+        citation_passed=True,  # 引用自洽 ≠ 研究完整：无违规判定但维度被违规指向
+        violations=violations,
+        evidence_count=len(store.evidences),
+    )
+    assert r.dimensions["features"] == DIM_UNCONFIRMED
+    assert r.verdict == VERDICT_DEGRADED
+    assert "features" in r.critical_gaps
