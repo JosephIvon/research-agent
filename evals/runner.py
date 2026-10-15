@@ -21,7 +21,7 @@ CASES_DIR = EVALS_DIR / "cases"
 RESULTS_DIR = EVALS_DIR / "results"
 BASELINE_DIR = EVALS_DIR / "baselines"
 # 基线与 manifest 版本同步：新增用例必须升版本并重算（不滚动覆盖历史）
-BASELINE_VERSION = "v1.4"
+BASELINE_VERSION = "v1.5"
 DEFAULT_BASELINE = BASELINE_DIR / f"{BASELINE_VERSION}.json"
 
 from evals.fixture_source import load_manifest, update_fixture_digests  # noqa: E402
@@ -66,7 +66,7 @@ def _isolated_storage(tmp: Path):
 def _build_scripted_llm(case: Dict[str, Any], llm_spec: Dict[str, Any]):
     from src.llm import ScriptedLLMClient
 
-    from evals.fixture_source import resolve_citations
+    from evals.fixture_source import _site_versions, resolve_citations
 
     # report 可以是单条（字符串）或**按调用顺序的多条**（列表）。
     # 多条的用途：脚本化「首版报告有违规 → 重生成修正」。ScriptedLLMClient 在
@@ -76,8 +76,21 @@ def _build_scripted_llm(case: Dict[str, Any], llm_spec: Dict[str, Any]):
     if isinstance(reports, str):
         reports = [reports]
 
+    # extract 脚本按「版本优先、站点其次」平铺：初次抓取按站点序消费各站版本0，
+    # 补抓再按站点序消费版本1（缺口补抓 case 用多版本表达「初次缺 → 补抓得」）。
+    # 单版本站点条目由 _site_versions 包成 [版本0]，旧格式 case 平铺结果与
+    # 原 `[json.dumps(items) for items in extract_sequence]` 逐字一致。
+    versions = [_site_versions(sv) for sv in llm_spec["extract_sequence"]]
+    max_v = max(len(v) for v in versions)
+    extract_script = [
+        json.dumps(site_versions[v], ensure_ascii=False)
+        for v in range(max_v)
+        for site_versions in versions
+        if v < len(site_versions)
+    ]
+
     script: Dict[str, List[Any]] = {
-        "extract": [json.dumps(items, ensure_ascii=False) for items in llm_spec["extract_sequence"]],
+        "extract": extract_script,
         "report": [resolve_citations(r, case, llm_spec) for r in reports],
     }
     return ScriptedLLMClient(script=script)

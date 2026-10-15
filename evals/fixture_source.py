@@ -133,6 +133,19 @@ def update_fixture_digests() -> Dict[str, str]:
     return digests
 
 
+def _site_versions(entry: List[Any]) -> List[List[Dict[str, Any]]]:
+    """站点抽取条目 → 版本序列。
+
+    单版本（旧格式：条目元素是 dict，一次抽取的 item 数组）→ [条目]；
+    多版本（新格式：条目元素是 list，每个元素是一个抽取版本的 item 数组）→ 原样。
+    缺口补抓 case 用多版本表达「初次缺 → 补抓得」：初次 extract 返回版本0，
+    补抓 extract 返回版本1（见 runner._build_scripted_llm 的平铺顺序）。
+    """
+    if entry and isinstance(entry[0], list):
+        return entry
+    return [entry]
+
+
 def resolve_citations(text: str, case: Dict[str, Any], llm: Dict[str, Any],
                       url_overrides: Optional[Dict[str, str]] = None) -> str:
     """把报告模板里的 {{cite:<site_key>:<item_index>}} 解析为真实证据 id。
@@ -141,6 +154,10 @@ def resolve_citations(text: str, case: Dict[str, Any], llm: Dict[str, Any],
     构建的 EvidenceStore 完全一致——id 对得上，引用校验才测得出真问题。
     extract_sequence 按 sites 声明顺序一一对应（被 blocked 的站点不占用条目，
     其 llm.json 里本来就不该有抽取脚本）。
+
+    模板语法：
+    - `{{cite:site:idx}}`            → 版本0 的 item[idx]（旧格式，向后兼容）
+    - `{{cite:site:version:idx}}`    → 指定版本的 item[idx]（补抓 case 引用补抓新增证据用）
 
     url_overrides：legacy 抽取的 source_url 是站点 URL；react 的
     extract_facts 走逐页 map-reduce，source_url 是**页面** URL——react 模板
@@ -154,9 +171,13 @@ def resolve_citations(text: str, case: Dict[str, Any], llm: Dict[str, Any],
     order = [s["key"] for s in case["sites"]]
 
     def repl(match):
-        site_key, idx = match.group(1), int(match.group(2))
+        site_key = match.group(1)
+        first = int(match.group(2))
+        second = match.group(3)
+        # 两个数字段 → 第2段是版本、第3段是 item 下标；一个数字段 → 版本0
+        version, idx = (first, int(second)) if second is not None else (0, first)
         site = sites_by_key[site_key]
-        items = extract_seq[order.index(site_key)]
+        items = _site_versions(extract_seq[order.index(site_key)])[version]
         item = items[idx]
         url = (url_overrides or {}).get(site_key, site["url"])
         eid = make_evidence_id(
@@ -164,4 +185,4 @@ def resolve_citations(text: str, case: Dict[str, Any], llm: Dict[str, Any],
         )
         return f"[e:{eid}]"
 
-    return _re.sub(r"\{\{cite:([A-Za-z0-9_]+):(\d+)\}\}", repl, text)
+    return _re.sub(r"\{\{cite:([A-Za-z0-9_]+):(\d+)(?::(\d+))?\}\}", repl, text)

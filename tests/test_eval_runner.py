@@ -315,6 +315,31 @@ def test_violation_accounting_is_present_on_every_case_and_not_vacuous():
     )
 
 
+def test_gap_refetch_case_closes_the_loop(tmp_path):
+    """gap_refetch 端到端：初次缺定价 → 判定层补抓 → 带新证据重生成 → 第三次校验通过。
+
+    attempts=3 是关键证据：若补抓只重建证据库不重生成（评审问题 A 的坑），
+    报告仍引用旧证据、第三次校验必然不过——attempts 会停在 2 且 final_count>0。
+    """
+    manifest = load_manifest(verify_digests=True)
+    entry = next(c for c in manifest["cases"] if c["id"] == "gap_refetch")
+    llm_spec = json.loads(
+        (eval_runner.CASES_DIR / "gap_refetch" / "llm.json").read_text(encoding="utf-8")
+    )
+    run_out = eval_runner.run_legacy_case(entry, llm_spec, tmp_path)
+    state = run_out["state"]
+
+    assert state["status"] == "completed", state.get("termination_reason")
+    dbg = state.get("citation_report") or {}
+    assert state["citation_attempts"] == 3, (
+        "必须走补抓后的第三次校验（初次→重生成→补抓重生成）"
+    )
+    first = state.get("citation_first_attempt") or {}
+    assert first.get("violation_types") == ["ungrounded_claim"], first
+    assert state["citation_trusted"] is True, "补抓得定价后应通过"
+    assert dbg.get("grounding") == 1.0, dbg
+
+
 def test_budget_override_reaches_both_budget_guards(monkeypatch):
     """预算覆写必须同时到达 TaskBudget 与 ReActRunner 两道守卫。
 
@@ -359,3 +384,77 @@ def test_budget_override_reaches_both_budget_guards(monkeypatch):
         f"账本快照记的上限是 {limits.get('max_tokens')}，case 声明的是 {declared}"
         "——mvp_workflow 的 AGENT_TOKEN_BUDGET 没被覆写"
     )
+
+
+# --------------------------------------------------------------------------
+# 多版本抽取框架（缺口补抓 case 的地基）：向后兼容是硬约束
+# --------------------------------------------------------------------------
+
+def test_site_versions_adapts_single_and_multi():
+    """站点抽取条目：单版本（dict 元素）包成 [版本0]，多版本（list 元素）原样。"""
+    from evals.fixture_source import _site_versions
+
+    single = [{"key": "pricing", "value": "59 元/月"}]
+    assert _site_versions(single) == [single], "旧格式必须包成单版本"
+
+    multi = [
+        [{"key": "features", "value": "日志检索"}],
+        [{"key": "pricing", "value": "79 元/月"}],
+    ]
+    assert _site_versions(multi) == multi, "多版本原样透传"
+
+
+def test_resolve_citations_versioned_syntax_is_backward_compatible():
+    """报告模板版本索引：旧语法解析版本0、新语法解析指定版本，id 各自正确。"""
+    from evals.fixture_source import resolve_citations
+    from src.agent.citations import make_evidence_id
+
+    site_url = "https://auditx.test/"
+    case = {"sites": [{"key": "auditx", "url": site_url}]}
+    llm = {
+        "extract_sequence": [
+            [
+                [{"key": "features", "value": "日志检索"}],
+                [{"key": "pricing", "value": "79 元/月"}],
+            ]
+        ]
+    }
+    # 旧语法 → 版本0
+    old = resolve_citations("{{cite:auditx:0}}", case, llm)
+    assert old == f"[e:{make_evidence_id(site_url, 'features', '日志检索')}]"
+    # 新语法 → 版本1
+    new = resolve_citations("{{cite:auditx:1:0}}", case, llm)
+    assert new == f"[e:{make_evidence_id(site_url, 'pricing', '79 元/月')}]"
+    assert old != new, "两个版本引用必须指向不同证据"
+
+
+def test_build_scripted_llm_flattens_versions_version_major():
+    """extract 脚本按「版本优先、站点其次」平铺；旧格式平铺与旧行为逐字一致。"""
+    site_url = "https://auditx.test/"
+    case = {"sites": [{"key": "auditx", "url": site_url}]}
+
+    # 新格式（多版本）：[版本0, 版本1]
+    multi_llm = {
+        "extract_sequence": [
+            [
+                [{"key": "features", "value": "日志检索"}],
+                [{"key": "pricing", "value": "79 元/月"}],
+            ]
+        ],
+        "report": ["报告占位"],
+    }
+    client = eval_runner._build_scripted_llm(case, multi_llm)
+    assert len(client._script["extract"]) == 2, "两版必须各占一条脚本"
+    assert json.loads(client._script["extract"][0])[0]["key"] == "features"
+    assert json.loads(client._script["extract"][1])[0]["key"] == "pricing"
+
+    # 旧格式（单版本）：与「每站一条」的旧行为一致
+    single_llm = {
+        "extract_sequence": [
+            [{"key": "features", "value": "日志检索"}],
+        ],
+        "report": ["报告占位"],
+    }
+    client = eval_runner._build_scripted_llm(case, single_llm)
+    assert len(client._script["extract"]) == 1
+    assert json.loads(client._script["extract"][0])[0]["key"] == "features"
