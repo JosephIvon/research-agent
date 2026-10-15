@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import random
+import threading
 import time
 import logging
 import re
@@ -969,6 +970,10 @@ class RecordingLLMClient(LLMClient):
         self._inner = inner
         self._path = path
         self.script: Dict[str, List[Any]] = {}
+        # 每意图已落盘条数（增量 dump 依据）+ 进程内互斥：server 的
+        # achat_completion 走线程池，多意图并发时 dump 可能交错
+        self._dumped: Dict[str, int] = {}
+        self._dump_lock = threading.Lock()
 
     def __getattr__(self, name: str) -> Any:
         # default_model / api_key / base_url 等属性被调用方直接读，代理到被包装客户端
@@ -1016,13 +1021,42 @@ class RecordingLLMClient(LLMClient):
             self.dump(self._path)
 
     def dump(self, path: str) -> None:
-        """原子落盘：先写 .tmp 再 rename，读侧永远看到完整文件。"""
-        directory = os.path.dirname(os.path.abspath(path))
-        os.makedirs(directory, exist_ok=True)
-        tmp = f"{path}.tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(self.script, fh, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
+        """增量合并落盘（读-合并-原子写），不是整文件覆盖。
+
+        server 进程里每个 get_llm_client() 调用各持一个录制实例、共用同
+        一文件：workflow 实例录 decompose/extract/report，PRD 实例录 prd——
+        若各自整文件覆盖，最后 dump 的实例会抹掉前面全部（真跑实锤：文件
+        只剩 prd 一条）。每实例只写自己自上次 dump 以来的增量，不同意图
+        天然不冲突；同意图跨实例交错在此部署形态（单容器单 worker）不存在。
+
+        .tmp + rename 保证读侧永远看到完整文件；损坏文件从零重建而非崩溃。
+        """
+        with self._dump_lock:
+            existing: Dict[str, List[Any]] = {}
+            if os.path.exists(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as fh:
+                        loaded = json.load(fh)
+                    if isinstance(loaded, dict):
+                        existing = loaded
+                except (json.JSONDecodeError, OSError):
+                    logger.warning("[recording] 已有录制文件损坏，从零重建: %s", path)
+                    existing = {}
+            changed = False
+            for intent, entries in self.script.items():
+                already = self._dumped.get(intent, 0)
+                if already < len(entries):
+                    existing.setdefault(intent, []).extend(entries[already:])
+                    self._dumped[intent] = len(entries)
+                    changed = True
+            if not changed:
+                return
+            directory = os.path.dirname(os.path.abspath(path))
+            os.makedirs(directory, exist_ok=True)
+            tmp = f"{path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(existing, fh, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
 
     # ------------------------------------------------------------------
     # LLMClient 接口：透传 + 录制

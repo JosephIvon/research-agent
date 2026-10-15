@@ -146,6 +146,39 @@ class TestBestEffort:
         assert json.loads(target.read_text(encoding="utf-8")) == {"report": ["文本"]}
         assert not target.with_suffix(".json.tmp").exists()
 
+    def test_multiple_instances_merge_into_one_file(self, tmp_path):
+        """server 多个 get_llm_client() 实例共用同一文件：增量合并，不整文件覆盖。
+
+        真跑实锤的 bug 复现：workflow 实例录了 decompose/report，PRD 实例
+        随后 dump——旧实现把文件覆盖成只剩 prd，前者的录制全部丢失。
+        """
+        path = str(tmp_path / "rec.json")
+
+        workflow_rec = RecordingLLMClient(
+            ScriptedLLMClient(script={"decompose": ["维度A"], "report": ["报告一。"]}), path)
+        workflow_rec.chat_completion(_marker("decompose"))
+        workflow_rec.chat_completion(_marker("report"))
+
+        prd_rec = RecordingLLMClient(
+            ScriptedLLMClient(script={"prd": ["PRD 草稿。"]}), path)
+        prd_rec.chat_completion(_marker("prd"))
+
+        merged = json.loads((tmp_path / "rec.json").read_text(encoding="utf-8"))
+        assert merged == {"decompose": ["维度A"], "report": ["报告一。"], "prd": ["PRD 草稿。"]}
+
+    def test_same_instance_repeated_dump_writes_no_duplicates(self, tmp_path):
+        """同一实例多次 dump（每次调用后都落盘）不产生重复条目。"""
+        path = str(tmp_path / "rec.json")
+        rec = RecordingLLMClient(
+            ScriptedLLMClient(script={"report": ["一。", "二。"]}), path)
+
+        rec.chat_completion(MSG)
+        rec.chat_completion(MSG)
+        rec.dump(path)  # 无新条目的 dump：不应重复写
+
+        merged = json.loads((tmp_path / "rec.json").read_text(encoding="utf-8"))
+        assert merged == {"report": ["一。", "二。"]}
+
 
 class TestWiring:
     def test_get_llm_client_wraps_when_env_set(self, tmp_path, monkeypatch):

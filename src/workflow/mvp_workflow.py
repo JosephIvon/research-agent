@@ -1724,6 +1724,9 @@ class MVPWorkflow:
                 "new_items": len(new_evidence),
                 "evidence_after": len(state["extracted_data"]),
                 "refetchable_gap_count": refetchable_count,
+                # 事件进 Redis 持久化——真跑的分布样本从这里可查（evals 走
+                # state 口径，两侧同源 number_evidence_counts）
+                "refetchable_gap_evidence_spread": evidence_spread,
             },
         )
         return decision
