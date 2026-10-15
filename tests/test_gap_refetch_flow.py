@@ -226,3 +226,45 @@ def test_refetch_skipped_when_only_unknown_citations(tmp_path, monkeypatch):
         (e.event, e.status) for e in collector.events
     ]
 
+
+def test_gap_counter_is_observability_only_and_never_blocks(tmp_path, monkeypatch):
+    """`refetchable_gap_count = 0` **不阻止**重生成——这正是它该被钉住的行为。
+
+    这条用例是为了钉死一个被证伪的假设而存在：一度想让「缺口数字不在任何证据里」
+    直接拦住那次最贵的报告生成，理由是实测里 42% 的缺口在站点上压根不存在、
+    重生成只会让模型再编一个。
+
+    **那个理由是错的，而下面的夹具就是反证**：缺口数字 99 从未出现在任何证据里
+    （补抓带回的是 79），模型却在第三次生成时拿到新证据表、自己把数字换成 79，
+    校验转绿。也就是说 `absent` 类的缺口恰恰是重生成能修的那一类。
+
+    真实运行不可复现，拿不到修复率数据之前没有任何证据支持抑制规则，
+    所以 `refetchable_gap_count` 只做观测。将来若要用它当闸门，
+    必须先拿出「抑制 vs 不抑制」的对照数据，并同步改掉这条用例。
+    """
+    crawler = _TwoPhaseCrawler(SITE_URL)
+    wrong = f"## 定价\n\nAcme 专业版 99 元/月 [e:{_FEATURES_ID}]。\n"
+    script = {
+        "extract": [
+            json.dumps(INITIAL_ITEMS, ensure_ascii=False),
+            json.dumps([PRICING_ITEM], ensure_ascii=False),
+        ],
+        "report": [
+            wrong,
+            wrong,
+            f"## 定价\n\nAcme 专业版 79 元/月 [e:{_PRICING_ID}]。\n",
+        ],
+    }
+    state, _ = _run_legacy(monkeypatch, tmp_path, script, lambda: crawler)
+
+    # 计数口径正确：99 不在任何证据里（补抓带回的是 79）
+    result = state["gap_refetch_result"]
+    assert result["refetchable_gap_count"] == 0, result
+
+    # 但计数为 0 不影响闭环：仍然重生成，模型自己把数字改成有据可引的 79
+    assert state["citation_attempts"] == 3, (
+        f"计数为 0 不得拦下重生成：attempts={state.get('citation_attempts')}"
+    )
+    assert state["citation_trusted"] is True, state.get("citation_violations")
+    assert "79 元/月" in state["report_final"]
+

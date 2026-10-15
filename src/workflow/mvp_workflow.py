@@ -1,6 +1,6 @@
 """MVP工作流模块 - 2-agent简化版本：协调者 + 文案撰写员"""
 from pathlib import Path
-from typing import List, Dict, Optional, Any
+from typing import Any, Dict, List, Optional, Set
 from datetime import datetime
 from uuid import uuid4
 from src.llm import get_llm_client, strip_thinking, LLMClient, LLMError
@@ -1441,7 +1441,7 @@ class MVPWorkflow:
 
         返回判定层决策；`eligible=False` 时返回 None，调用方照旧走低可信交付。
         """
-        from src.agent.gap_refetch import plan_gap_refetch, site_of
+        from src.agent.gap_refetch import plan_gap_refetch, refetchable_gaps, site_of
 
         violations = state.get("citation_violations") or []
         target_sites = [
@@ -1506,12 +1506,26 @@ class MVPWorkflow:
         before = len(state["extracted_data"])
         state["extracted_data"].extend(new_evidence)
         state["refetched_evidence"] = new_evidence
+
+        # 「可补抓的缺口」计数：**只做观测，不做闸门**。
+        # 一度想用它拦住重生成，实测被现成夹具证伪——test_gap_refetch_flow 里
+        # 那条「第三版把 99 改成 79」的闭环，缺口数字 99 从未出现在任何证据里，
+        # 模型是靠重生成时拿到新证据表、自己把数字换成有据可引的那个。
+        # 也就是说「站点上没有这个数 → 重生成也修不好」是错的，重生成恰恰能修。
+        # 在拿到真实修复率数据之前，没有任何证据支持任何抑制规则，所以只记数。
+        refetchable = refetchable_gaps(
+            violations,
+            [str(it.get("value") or "") for it in state["extracted_data"]],
+        )
+        refetchable_count = sum(len(v) for v in refetchable.values())
+
         state["gap_refetch_result"] = {
             "candidates": len(decision.candidates),
             "refetched": refetched,
             "new_items": len(new_evidence),
             "evidence_before": before,
             "evidence_after": len(state["extracted_data"]),
+            "refetchable_gap_count": refetchable_count,
         }
 
         self._emit(
@@ -1521,6 +1535,7 @@ class MVPWorkflow:
                 "candidates": len(decision.candidates),
                 "new_items": len(new_evidence),
                 "evidence_after": len(state["extracted_data"]),
+                "refetchable_gap_count": refetchable_count,
             },
         )
         return decision
