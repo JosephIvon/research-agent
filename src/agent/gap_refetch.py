@@ -303,6 +303,21 @@ def plan_gap_refetch(
 # 什么是「可补抓的缺口」
 # --------------------------------------------------------------------------
 
+def number_evidence_counts(texts: Sequence[str]) -> Dict[str, int]:
+    """每个数字出现在几条证据里——「到处都是 vs 压根不存在」的分布观测。
+
+    这是 refetchable_gaps 那笔 shortcut 债的**还款数据采集**：阈值决策
+    需要真实运行的分布样本，而出现条数此前被 set 抹掉、无处可查。
+    每条证据内部去重（同一条 value 里出现 5 次算 1 条），口径与
+    「缺口数字是否进证据」的判定一致。
+    """
+    counts: Dict[str, int] = {}
+    for text in texts or []:
+        for num in set(extract_numbers(text)):
+            counts[num] = counts.get(num, 0) + 1
+    return counts
+
+
 def refetchable_gaps(
     violations: Sequence[Dict[str, Any]],
     texts: Sequence[str],
@@ -338,12 +353,13 @@ def refetchable_gaps(
     所以本函数**只用于观测**，`mvp_workflow` 里也只把它记成一个计数。
 
     shortcut: 本定义只挡「压根不存在」，**不挡「到处都是」**。像 `24` 这种在半数
-    以上页面都出现的数仍会通过第 2 条。要区分它们需要按出现页数设阈值，
-    而 page_budget 只有 3 页、n=12 的样本支撑不了任何阈值——先要更多真实运行。
+    以上页面都出现的数仍会通过第 2 条。要区分它们需要按出现条数设阈值，
+    而 page_budget 只有 3 页、n=12 的样本支撑不了任何阈值。
+    还款计划已启动：出现条数经 number_evidence_counts 落进观测
+    （mvp_workflow 的 refetchable_gap_evidence_spread），真跑/评测每跑一次
+    留一份分布样本——攒够后按分布定阈值，本注释随之删除。
     """
-    seen_numbers: set = set()
-    for text in texts or []:
-        seen_numbers.update(extract_numbers(text))
+    seen_numbers = set(number_evidence_counts(texts))
     if not seen_numbers:
         return {}
 

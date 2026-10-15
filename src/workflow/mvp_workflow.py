@@ -1616,7 +1616,12 @@ class MVPWorkflow:
 
         返回判定层决策；`eligible=False` 时返回 None，调用方照旧走低可信交付。
         """
-        from src.agent.gap_refetch import plan_gap_refetch, refetchable_gaps, site_of
+        from src.agent.gap_refetch import (
+            number_evidence_counts,
+            plan_gap_refetch,
+            refetchable_gaps,
+            site_of,
+        )
 
         violations = state.get("citation_violations") or []
         target_sites = [
@@ -1688,11 +1693,18 @@ class MVPWorkflow:
         # 模型是靠重生成时拿到新证据表、自己把数字换成有据可引的那个。
         # 也就是说「站点上没有这个数 → 重生成也修不好」是错的，重生成恰恰能修。
         # 在拿到真实修复率数据之前，没有任何证据支持任何抑制规则，所以只记数。
-        refetchable = refetchable_gaps(
-            violations,
-            [str(it.get("value") or "") for it in state["extracted_data"]],
-        )
+        evidence_texts = [str(it.get("value") or "") for it in state["extracted_data"]]
+        refetchable = refetchable_gaps(violations, evidence_texts)
         refetchable_count = sum(len(v) for v in refetchable.values())
+        # 出现条数分布：只记 refetchable 的缺口数字（决策对象），不是全量分布。
+        # 这是「到处都是 vs 压根不存在」阈值决策的数据采集——见 gap_refetch
+        # 里 refetchable_gaps 的 shortcut 注释，攒够真实运行样本后按分布定阈值。
+        gap_counts = number_evidence_counts(evidence_texts)
+        evidence_spread = {
+            token: gap_counts.get(token, 0)
+            for tokens in refetchable.values()
+            for token in tokens
+        }
 
         state["gap_refetch_result"] = {
             "candidates": len(decision.candidates),
@@ -1701,6 +1713,7 @@ class MVPWorkflow:
             "evidence_before": before,
             "evidence_after": len(state["extracted_data"]),
             "refetchable_gap_count": refetchable_count,
+            "refetchable_gap_evidence_spread": evidence_spread,
         }
 
         self._emit(

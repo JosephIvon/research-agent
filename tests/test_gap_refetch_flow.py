@@ -142,6 +142,10 @@ def test_refetch_turns_third_draft_green(tmp_path, monkeypatch):
     result = state["gap_refetch_result"]
     assert result["new_items"] == 1 and result["candidates"] == 1
     assert state["refetched_evidence"][0]["key"] == "pricing"
+    # 分布观测的口径钉死：只记**缺口数字**（99）的出现条数，补抓带回的 79
+    # 不是缺口数字，即便进了证据也不进分布——这条观测为阈值决策攒样本，
+    # 口径漂移会让攒出的分布失去可比性（见 refetchable_gaps 的 shortcut 注释）。
+    assert result["refetchable_gap_evidence_spread"] == {}, result
 
     # 「缺口解决」双信号：数字进证据是观测、grounding 提升是裁决。
     # gap_refetch 形态：缺口 99 从未进证据（refetchable 计数低），

@@ -17,6 +17,7 @@ from src.agent.gap_refetch import (
     REASON_VIOLATION_NOT_STRUCTURED,
     plan_gap_refetch,
     refetchable_gaps,
+    number_evidence_counts,
     site_of,
 )
 
@@ -390,6 +391,31 @@ def test_gap_found_in_refetched_page_is_refetchable():
     got = refetchable_gaps(violations, ["Acme 企业版年付 89 美元/席位。"])
 
     assert got == {0: ["89"]}
+
+
+# --------------------------------------------------------------------------
+# number_evidence_counts：「到处都是 vs 压根不存在」的分布观测
+# （refetchable_gaps shortcut 债的还款数据采集，判定逻辑本身不消费它）
+# --------------------------------------------------------------------------
+
+def test_evidence_counts_accumulate_across_items_dedupe_within():
+    """跨证据累计、证据内部去重：同一条 value 里出现两次算 1 条。"""
+    counts = number_evidence_counts([
+        "Acme 89 元/月，年付也是 89。",
+        "另一个页面的 89。",
+        "没有目标数字。",
+    ])
+    assert counts["89"] == 2
+
+
+def test_evidence_counts_track_numbers_separately():
+    counts = number_evidence_counts(["89 和 59 都在。", "59 又在。"])
+    assert counts == {"89": 1, "59": 2}
+
+
+def test_evidence_counts_empty_inputs():
+    assert number_evidence_counts([]) == {}
+    assert number_evidence_counts(None) == {}
 
 
 def test_gap_absent_from_every_page_is_not_refetchable():
