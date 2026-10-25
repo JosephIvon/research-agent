@@ -317,7 +317,7 @@ jobs:
         run: uv run --extra dev python -m evals.runner --gate
 
   book:
-    name: Book gates (coordinates + structure)
+    name: Book gates (coords + structure + crops + numbers)
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
