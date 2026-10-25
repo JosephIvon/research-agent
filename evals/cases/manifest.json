@@ -283,7 +283,8 @@
           "url": "https://kbb.test/",
           "pages": [
             "index.html"
-          ]
+          ],
+          "blocked": true
         }
       ],
       "expected": {

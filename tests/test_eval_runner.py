@@ -5,6 +5,8 @@
 """
 import json
 
+import pytest
+
 from evals import runner as eval_runner
 from evals.fixture_source import load_manifest
 
@@ -520,12 +522,24 @@ def test_resolve_citations_versioned_syntax_is_backward_compatible():
     assert old != new, "两个版本引用必须指向不同证据"
 
 
-def test_build_scripted_llm_flattens_versions_version_major():
-    """extract 脚本按「版本优先、站点其次」平铺；旧格式平铺与旧行为逐字一致。"""
+def test_build_scripted_llm_按站点登记多版本():
+    """extract 脚本按**站点**登记各版本；同一站点的第 n 次调用取第 n 版。
+
+    旧实现把各站的版本平铺成一条全局有序列表（版本优先、站点其次），靠
+    「调用顺序恰等于声明顺序」成立——那在并发抓取下不成立（见
+    `test_extract_响应按站点主机分派而不是按调用顺序`）。
+    """
     site_url = "https://auditx.test/"
     case = {"sites": [{"key": "auditx", "url": site_url}]}
 
-    # 新格式（多版本）：[版本0, 版本1]
+    def ask(client, url):
+        msgs = [
+            {"role": "system", "content": "<!--intent:extract--> 抽取事实"},
+            {"role": "user", "content": f"### Source URL: {url}index.html\n正文"},
+        ]
+        return json.loads(client.chat_completion(msgs))
+
+    # 多版本：同一站点第 1 次给版本0，第 2 次给版本1
     multi_llm = {
         "extract_sequence": [
             [
@@ -536,11 +550,11 @@ def test_build_scripted_llm_flattens_versions_version_major():
         "report": ["报告占位"],
     }
     client = eval_runner._build_scripted_llm(case, multi_llm)
-    assert len(client._script["extract"]) == 2, "两版必须各占一条脚本"
-    assert json.loads(client._script["extract"][0])[0]["key"] == "features"
-    assert json.loads(client._script["extract"][1])[0]["key"] == "pricing"
+    assert ask(client, site_url)[0]["key"] == "features", "第 1 次应取版本0"
+    assert ask(client, site_url)[0]["key"] == "pricing", "第 2 次应取版本1"
+    assert ask(client, site_url)[0]["key"] == "pricing", "脚本耗尽后重复最后一版"
 
-    # 旧格式（单版本）：与「每站一条」的旧行为一致
+    # 单版本：每次都是那一条
     single_llm = {
         "extract_sequence": [
             [{"key": "features", "value": "日志检索"}],
@@ -548,5 +562,65 @@ def test_build_scripted_llm_flattens_versions_version_major():
         "report": ["报告占位"],
     }
     client = eval_runner._build_scripted_llm(case, single_llm)
-    assert len(client._script["extract"]) == 1
-    assert json.loads(client._script["extract"][0])[0]["key"] == "features"
+    assert ask(client, site_url)[0]["key"] == "features"
+    assert ask(client, site_url)[0]["key"] == "features"
+
+
+def test_extract_响应按站点主机分派而不是按调用顺序():
+    """并发抓取的完成顺序不定，抽取响应必须**跟着站点走**。
+
+    这是 CI 上实测到的假红根因：同一提交本地全绿，CI 上
+    `citation_coverage=1.0` 但 `validity=0.333`、`grounding=0.0`——
+    按调用顺序分派时，A 站的抽取条目被配给了 B 站的 URL，
+    `make_evidence_id` 于是对不上，引用校验把"错配"报成了"引用不实"。
+    """
+    manifest = load_manifest(verify_digests=True)
+    case = next(c for c in manifest["cases"] if c["id"] == "reg_doccollab")
+    llm_spec = json.loads(
+        (eval_runner.CASES_DIR / case["id"] / "llm.json").read_text(encoding="utf-8")
+    )
+    client = eval_runner._build_scripted_llm(case, llm_spec)
+
+    def ask(site):
+        msgs = [
+            {"role": "system", "content": "<!--intent:extract--> 抽取事实"},
+            {"role": "user", "content": f"### Source URL: {site['url']}index.html\n正文"},
+        ]
+        return json.loads(client.chat_completion(msgs))
+
+    # **反序**喂：按调用顺序取脚本的旧实现会在这里把条目错配给别的站点
+    got = {s["key"]: ask(s) for s in reversed(case["sites"])}
+    for idx, site in enumerate(case["sites"]):
+        assert got[site["key"]] == llm_spec["extract_sequence"][idx], (
+            f"{site['key']} 拿到的不是它自己的抽取条目——按调用顺序分派就会这样错配"
+        )
+
+
+def test_extract_认不出站点时必须判错而不是猜():
+    """认不出站点却按顺序猜，等于把"夹具错配"伪装成"引用不实"。"""
+    manifest = load_manifest(verify_digests=True)
+    case = next(c for c in manifest["cases"] if c["id"] == "reg_doccollab")
+    llm_spec = json.loads(
+        (eval_runner.CASES_DIR / case["id"] / "llm.json").read_text(encoding="utf-8")
+    )
+    client = eval_runner._build_scripted_llm(case, llm_spec)
+    msgs = [
+        {"role": "system", "content": "<!--intent:extract--> 抽取事实"},
+        {"role": "user", "content": "### Source URL: https://unknown.test/x.html\n正文"},
+    ]
+    with pytest.raises(ValueError, match="无法唯一确定站点"):
+        client.chat_completion(msgs)
+
+
+def test_每个case的抽取条目数等于非blocked站点数():
+    """结构不变量：被整页丢弃的站点不占条目，多一条少一条都是错配的前兆。"""
+    manifest = load_manifest(verify_digests=True)
+    for case in manifest["cases"]:
+        llm_spec = json.loads(
+            (eval_runner.CASES_DIR / case["id"] / "llm.json").read_text(encoding="utf-8")
+        )
+        live = [s for s in case["sites"] if not s.get("blocked")]
+        assert len(llm_spec["extract_sequence"]) == len(live), (
+            f"{case['id']}: 抽取条目 {len(llm_spec['extract_sequence'])} 条，"
+            f"非 blocked 站点 {len(live)} 个——条目与站点会错配"
+        )

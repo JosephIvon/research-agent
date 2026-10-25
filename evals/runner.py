@@ -27,6 +27,10 @@ DEFAULT_BASELINE = BASELINE_DIR / f"{BASELINE_VERSION}.json"
 from evals.fixture_source import load_manifest, update_fixture_digests  # noqa: E402
 from evals.metrics import DELIVERED_STATUSES  # noqa: E402
 
+# 模块级导入：`_SiteKeyedScriptedLLM` 要拿它当基类，类定义时就得可见。
+# （原先只在函数里惰性导入，改成模块级后 §extract 分派才有地方挂。）
+from src.llm import ScriptedLLMClient, detect_llm_intent  # noqa: E402
+
 
 # --------------------------------------------------------------------------
 # 打补丁/恢复：评测不改产品代码，运行期替换网络边界与确定性注入点
@@ -63,9 +67,30 @@ def _isolated_storage(tmp: Path):
 # 单 case 执行
 # --------------------------------------------------------------------------
 
-def _build_scripted_llm(case: Dict[str, Any], llm_spec: Dict[str, Any]):
-    from src.llm import ScriptedLLMClient
+def _site_host(url: str) -> str:
+    from urllib.parse import urlparse
 
+    return (urlparse(url or "").netloc or "").lower()
+
+
+def _host_in_messages(messages: Any, by_host: Dict[str, Any]) -> str:
+    """从提示词里认出这次抽取是哪个站点，认不出就**判错而不是猜**。"""
+    parts: List[str] = []
+    for m in messages or []:
+        if isinstance(m, dict) and isinstance(m.get("content"), str):
+            parts.append(m["content"])
+    text = "\n".join(parts)
+    hits = [h for h in by_host if h and h in text]
+    if len(hits) != 1:
+        raise ValueError(
+            f"[fake] extract 意图无法唯一确定站点（命中 {hits or '无'}；已知 "
+            f"{sorted(by_host)}）。按调用顺序取响应会在并发抓取下把 A 站的条目"
+            "配给 B 站，证据 id 对不上——所以这里必须判错，不能退回按序取。"
+        )
+    return hits[0]
+
+
+def _build_scripted_llm(case: Dict[str, Any], llm_spec: Dict[str, Any]):
     from evals.fixture_source import _site_versions, resolve_citations
 
     # report 可以是单条（字符串）或**按调用顺序的多条**（列表）。
@@ -76,24 +101,60 @@ def _build_scripted_llm(case: Dict[str, Any], llm_spec: Dict[str, Any]):
     if isinstance(reports, str):
         reports = [reports]
 
-    # extract 脚本按「版本优先、站点其次」平铺：初次抓取按站点序消费各站版本0，
-    # 补抓再按站点序消费版本1（缺口补抓 case 用多版本表达「初次缺 → 补抓得」）。
-    # 单版本站点条目由 _site_versions 包成 [版本0]，旧格式 case 平铺结果与
-    # 原 `[json.dumps(items) for items in extract_sequence]` 逐字一致。
+    # extract 响应**按站点主机**分派，不按调用顺序：`extract_key_info` 跑在并发
+    # 抓取分支里（`mvp_workflow` 用 `asyncio.gather` 抓多站），完成顺序不定；
+    # 按序取会把 A 站的抽取结果配给 B 站的 URL，`make_evidence_id` 于是对不上，
+    # 引用校验的 validity/grounding 假红。CI 上实测过一次
+    # `citation_coverage=1.0 / validity=0.333 / grounding=0.0` 而同一提交本地全绿，
+    # 正是并发顺序翻车的签名——这不是抖动，是**脚本夹具的语义错**。
     versions = [_site_versions(sv) for sv in llm_spec["extract_sequence"]]
-    max_v = max(len(v) for v in versions)
-    extract_script = [
-        json.dumps(site_versions[v], ensure_ascii=False)
-        for v in range(max_v)
-        for site_versions in versions
-        if v < len(site_versions)
-    ]
+    sites = case.get("sites") or []
+    blocked = {i for i, s in enumerate(sites) if s.get("blocked")}
+    # 约定：被整页丢弃的站点（manifest 里标 `blocked: true`）**不占用**抽取条目，
+    # 所以条目按「非 blocked 站点」的声明顺序一一对应。
+    live_sites = [s for i, s in enumerate(sites) if i not in blocked]
+    extract_by_host: Dict[str, List[str]] = {}
+    for idx, site in enumerate(live_sites):
+        if idx >= len(versions):
+            break
+        extract_by_host[_site_host(site.get("url", ""))] = [
+            json.dumps(v, ensure_ascii=False) for v in versions[idx]
+        ]
 
     script: Dict[str, List[Any]] = {
-        "extract": extract_script,
         "report": [resolve_citations(r, case, llm_spec) for r in reports],
     }
-    return ScriptedLLMClient(script=script)
+    return _SiteKeyedScriptedLLM(script=script, extract_by_host=extract_by_host)
+
+
+class _SiteKeyedScriptedLLM(ScriptedLLMClient):
+    """`extract` 意图按站点主机取脚本条目；其余意图沿用父类的按序语义。
+
+    父类 `_next_entry` 用「同意图第几次调用」定位条目（`src/llm/__init__.py:841`），
+    那要求调用顺序稳定——而真实工作流的抓取是**并发**的。评测夹具不能靠
+    "线程调度恰好按声明顺序"来保证正确性。
+    """
+
+    def __init__(self, script: Dict[str, List[Any]], extract_by_host: Dict[str, List[str]]):
+        super().__init__(script=script)
+        self._extract_by_host = {
+            str(h).lower(): list(v) for h, v in extract_by_host.items()
+        }
+        self._extract_step: Dict[str, int] = {}
+
+    def _next_entry(self, messages, tools):
+        intent = detect_llm_intent(messages)
+        if intent != "extract":
+            return super()._next_entry(messages, tools)
+        host = _host_in_messages(messages, self._extract_by_host)
+        step = self._extract_step.get(host, 0)
+        self._extract_step[host] = step + 1
+        entries = self._extract_by_host[host]
+        entry = entries[min(step, len(entries) - 1)]
+        self.calls.append(
+            {"intent": intent, "step": step, "messages": messages, "tools": tools}
+        )
+        return entry
 
 
 def _make_fixture_crawler_class(case: Dict[str, Any]):
