@@ -340,6 +340,11 @@ jobs:
 
       - name: Book structure (three sections per chapter, counts match OUTLINE)
         run: python book/tools/check_book_structure.py
+      - name: Crops are verbatim excerpts, not a second draft
+        run: python book/tools/verify_crops_verbatim.py
+
+      - name: ASSETS numbers match reality (rows, total, coverage)
+        run: python book/tools/verify_book_numbers.py
 
   docker-build:
     name: Docker build

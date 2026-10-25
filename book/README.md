@@ -22,6 +22,8 @@ python book/tools/audit_coords.py
 |---|---|
 | `book/tools/audit_coords.py` | 每条坐标都能在锚点提交里读到那一行（越界、文件不存在都算失败） |
 | `book/tools/check_book_structure.py` | 每章三节齐全（能回答什么 / 可验证主张 / 证据与坐标），章数与 OUTLINE 一致 |
+| `book/tools/verify_crops_verbatim.py` | 裁剪件是逐字摘录，能回溯到对应章节 |
+| `book/tools/verify_book_numbers.py` | ASSETS 的行数、合计、覆盖率与实际文件一致 |
 
 两道门在 CI 里是**两个独立步骤**，任一步失败整条红——不是「最后一条绿就算过」
 （那种写法在别的仓里曾让五个脚本的失败被吞掉）。
