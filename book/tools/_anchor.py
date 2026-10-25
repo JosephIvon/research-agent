@@ -59,6 +59,38 @@ def commit_exists(commit: str) -> bool:
     return proc.returncode == 0 and proc.stdout.decode().strip() == "commit"
 
 
+_TREE_CACHE: dict[str, list[str]] = {}
+
+
+def tree_files(commit: str) -> list[str]:
+    """某个提交里的全部文件路径（缓存：一次审计会反复用）。"""
+    if commit not in _TREE_CACHE:
+        out = git("-c", "core.quotepath=false", "ls-tree", "-r", "--name-only", commit)
+        _TREE_CACHE[commit] = [ln for ln in out.splitlines() if ln]
+    return _TREE_CACHE[commit]
+
+
+def resolve_path(commit: str, rel: str) -> tuple[str | None, list[str]]:
+    """把书里写的路径解析成提交里真实存在的路径。
+
+    书正文里常写短路径（`injection.py:22`），读者能懂，机器不该猜。
+    规则：**后缀唯一匹配**才算解析成功；重名就当错——猜一个等于给"指错了"开门。
+
+    返回 (真实路径 或 None, 候选列表)。
+    """
+    rel = rel.replace("\\", "/")
+    if rel.startswith("./"):
+        # 只剥**前缀** `./`，不能写 lstrip("./")——那会把 `.github/` 的点也吃掉
+        rel = rel[2:]
+    files = tree_files(commit)
+    if rel in files:
+        return rel, [rel]
+    candidates = [f for f in files if f.endswith("/" + rel)]
+    if len(candidates) == 1:
+        return candidates[0], candidates
+    return None, candidates
+
+
 if __name__ == "__main__":
     print(f"锚点: {ANCHOR_LABEL}")
     print(f"仓:   {REPO_ROOT}")

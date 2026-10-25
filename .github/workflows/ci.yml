@@ -316,6 +316,31 @@ jobs:
       - name: Run evals with gate
         run: uv run --extra dev python -m evals.runner --gate
 
+  book:
+    name: Book gates (coordinates + structure)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # **fetch-depth: 0 是硬要求**：坐标审计按锚点提交读文件
+          # （git show <anchor>:<path>）。浅克隆里没有那个提交，
+          # 审计会读不到文件——而"读不到"必须判失败，不能当"通过"。
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # 两道门都是纯标准库，不需要装依赖。
+      - name: Coordinate audit (every claim resolves at the anchor)
+        run: python book/tools/audit_coords.py
+
+      - name: Book structure (three sections per chapter, counts match OUTLINE)
+        run: python book/tools/check_book_structure.py
+
   docker-build:
     name: Docker build
     needs: test

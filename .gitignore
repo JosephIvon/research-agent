@@ -169,3 +169,6 @@ docs/prelaunch-review.md
 docs/agent-upgrade-plan-*.md
 docs/consolidated-plan-*.md
 docs/implementation-draft-*.md
+
+# 简历匹配 agent 的个人材料（含真实简历与能力画像，绝不入库）
+resume-agent/
