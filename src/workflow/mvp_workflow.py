@@ -973,6 +973,7 @@ class MVPWorkflow:
                             f"（证据 {len(evidence_store)} 条）",
                         )
                         quality_report = self._refresh_quality_report(state)
+                        verification_result = await self._refresh_verification(state)
                         state["report_final"] = await self.copywriter.generate_report(
                             user_query,
                             state["extracted_data"],
@@ -1031,6 +1032,7 @@ class MVPWorkflow:
                     f"（证据 {len(evidence_store)} 条）",
                 )
                 quality_report = self._refresh_quality_report(state)
+                verification_result = await self._refresh_verification(state)
                 state["report_final"] = await self.copywriter.generate_report(
                     user_query,
                     state["extracted_data"],
@@ -1609,12 +1611,18 @@ class MVPWorkflow:
         补抓的产出只进了 state["extracted_data"]（报告正文读它），没进
         state["competitors"][i]["extracted_data"]（评分器按竞品统计维度读它）——
         两边不一致，附录自评表就会说「定价缺失」而正文里正写着定价。
+
+        归属按**站点**（site_of，小写 netloc）判定：competitor_url 是站点标识，
+        竞品条目里存的是整 URL，拿整串比永远比不上。
         """
         if not items:
             return
-        target = str(competitor_url or "").rstrip("/")
+        from src.agent.gap_refetch import site_of
+        target = site_of(str(competitor_url or ""))
+        if not target:
+            return
         for comp in state.get("competitors", []):
-            if str(comp.get("url") or "").rstrip("/") == target:
+            if site_of(str(comp.get("url") or "")) == target:
                 comp.setdefault("extracted_data", []).extend(items)
                 return
 
@@ -1629,6 +1637,21 @@ class MVPWorkflow:
         state["quality_grade"] = quality_report.grade
         state["missing_dimensions"] = quality_report.missing_dimensions
         return quality_report
+
+    async def _refresh_verification(self, state: Dict[str, Any]):
+        """补抓后重算可追溯性校验（补抓前算的结果已经过期）。
+
+        报告开头的「数据质量提示」用的就是它：补抓带回的数字不进旧结果，
+        报告就会自称「没有任何一条数据包含数值」却给出了价格——同样是自相矛盾。
+        """
+        verification_result = await self.coordinator.assess_extracted_data(state["extracted_data"])
+        state["verification_score"] = verification_result["score"]
+        state["verification_passed"] = verification_result["passed"]
+        state["verification_warnings"] = verification_result["warnings"]
+        state["source_coverage"] = verification_result["source_coverage"]
+        state["evidence_count"] = verification_result["evidence_count"]
+        state["numeric_evidence_count"] = verification_result["numeric_evidence_count"]
+        return verification_result
 
     async def _maybe_refetch_for_gaps(
         self,
