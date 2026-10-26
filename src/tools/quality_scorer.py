@@ -2,6 +2,8 @@
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 
+from src.agent.citations import EvidenceStore
+
 
 @dataclass
 class DimensionScore:
@@ -214,11 +216,18 @@ class QualityScorer:
             for reason in report.abandonment_reasons:
                 section += f"- {reason}\n"
 
-        section += f"\n#### 📚 数据来源\n\n共抓取 {len(report.data_sources)} 个来源，完整数据如下：\n\n"
-        for source in report.data_sources[:10]:
-            section += f"- {source}\n"
-        if len(report.data_sources) > 10:
-            section += f"- ... 以及其他 {len(report.data_sources) - 10} 个来源\n"
+        # 证据对照表：正文每个 [e:标记] 都能在这里查到 id → 原文（key/url/value），
+        # judge（或人）据此核对「数字在不在它自己引用的那条证据里」，而不是只能查
+        # 标记格式 —— 这是 citation 校验从「格式合规」升级为「扎根可核」的前提
+        # （llm-judge-kit 校准裁决 2026-10-26：选项 A）。全量列出、不截断：截断会让
+        # 部分标记查不到，反而被误读成「无来源」。
+        store = EvidenceStore.from_extracted_data(
+            item for comp in self.competitors for item in comp.get("extracted_data", []))
+        section += (f"\n#### 📚 数据来源（[e:标记] → 原文）\n\n"
+                    f"共 {len(store.evidences)} 条证据，与正文 [e:xxxx] 标记一一对应：\n\n")
+        for ev in store.evidences:
+            origin = f" @ {ev.url}" if ev.url else ""
+            section += f"- [e:{ev.evidence_id}] {ev.key}{origin}：{ev.value.replace(chr(10), ' ')}\n"
 
         # 机器附录标记：本节由确定性代码生成，引用校验（agent.citations）会
         # 跳过标记内内容——这里的数字来自程序计算，不是模型的事实主张。
