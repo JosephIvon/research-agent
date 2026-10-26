@@ -972,6 +972,7 @@ class MVPWorkflow:
                             f"补抓 {len(decision.candidates)} 个竞品后重新生成报告"
                             f"（证据 {len(evidence_store)} 条）",
                         )
+                        quality_report = self._refresh_quality_report(state)
                         state["report_final"] = await self.copywriter.generate_report(
                             user_query,
                             state["extracted_data"],
@@ -1029,6 +1030,7 @@ class MVPWorkflow:
                     f"补抓 {len(dim_decision.candidates)} 个竞品的缺失维度后重新生成报告"
                     f"（证据 {len(evidence_store)} 条）",
                 )
+                quality_report = self._refresh_quality_report(state)
                 state["report_final"] = await self.copywriter.generate_report(
                     user_query,
                     state["extracted_data"],
@@ -1599,6 +1601,35 @@ class MVPWorkflow:
                 "error_message": str(e)
             }
 
+    def _merge_refetched_into_competitors(
+        self, state: Dict[str, Any], competitor_url: str, items: List[Dict[str, Any]]
+    ) -> None:
+        """把补抓到的数据回填到对应竞品。
+
+        补抓的产出只进了 state["extracted_data"]（报告正文读它），没进
+        state["competitors"][i]["extracted_data"]（评分器按竞品统计维度读它）——
+        两边不一致，附录自评表就会说「定价缺失」而正文里正写着定价。
+        """
+        if not items:
+            return
+        target = str(competitor_url or "").rstrip("/")
+        for comp in state.get("competitors", []):
+            if str(comp.get("url") or "").rstrip("/") == target:
+                comp.setdefault("extracted_data", []).extend(items)
+                return
+
+    def _refresh_quality_report(self, state: Dict[str, Any]):
+        """按当前竞品数据重算数据完整度（补抓后必须重算）。
+
+        附录自评表必须与报告正文看到的数据一致，否则报告会出现
+        「正文有定价、附录说定价缺失」的自相矛盾——下游 judge 只能照着错账扣分。
+        """
+        quality_report = QualityScorer(state.get("competitors", [])).evaluate()
+        state["quality_score"] = quality_report.overall_score
+        state["quality_grade"] = quality_report.grade
+        state["missing_dimensions"] = quality_report.missing_dimensions
+        return quality_report
+
     async def _maybe_refetch_for_gaps(
         self,
         state: Dict[str, Any],
@@ -1681,6 +1712,8 @@ class MVPWorkflow:
                     "items": len(comp.get("extracted_data") or []),
                 })
                 new_evidence.extend(comp.get("extracted_data") or [])
+                self._merge_refetched_into_competitors(
+                    state, cand.competitor_url, comp.get("extracted_data") or [])
 
         state.setdefault("extracted_data", [])
         before = len(state["extracted_data"])
@@ -1820,6 +1853,8 @@ class MVPWorkflow:
                     "items": len(comp.get("extracted_data") or []),
                 })
                 new_evidence.extend(comp.get("extracted_data") or [])
+                self._merge_refetched_into_competitors(
+                    state, cand.competitor_url, comp.get("extracted_data") or [])
 
         state.setdefault("extracted_data", [])
         before = len(state["extracted_data"])

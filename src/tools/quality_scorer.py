@@ -108,7 +108,12 @@ class QualityScorer:
                 value = str(item.get("value", ""))
                 value_lower = value.lower()
 
-                if any(kw.lower() in key or kw.lower() in value_lower for kw in keywords):
+                # 维度自带规范数据 key：key 命中即属于该维度，不靠关键词子串撞。
+                # 关键词表写 "price"、数据 key 是 "pricing" —— "price" 不是 "pricing"
+                # 的子串，值（"标准版 $10/月"）也不含关键词 → 定价被误判成缺失
+                # （实测 16/20 个 case 受影响，附录自评表批量造假）。
+                if dim["key"].lower() in key or any(
+                        kw.lower() in key or kw.lower() in value_lower for kw in keywords):
                     if value and len(value) > 2:
                         extracted_data.append(value[:100])
 
