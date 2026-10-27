@@ -159,6 +159,10 @@ def resolve_citations(text: str, case: Dict[str, Any], llm: Dict[str, Any],
     - `{{cite:site:idx}}`            → 版本0 的 item[idx]（旧格式，向后兼容）
     - `{{cite:site:version:idx}}`    → 指定版本的 item[idx]（补抓 case 引用补抓新增证据用）
 
+    约定：解析结果自带 `[e:]` 壳，模板**不得**再包一层——曾有两个 gap case 写成
+    `[e:{{cite:…}}]`，产出 `[e:[e:…]]` 双层损坏标记（正文反查断链）。
+    兜底收敛在末尾做一次，历史模板不再复发。
+
     url_overrides：legacy 抽取的 source_url 是站点 URL；react 的
     extract_facts 走逐页 map-reduce，source_url 是**页面** URL——react 模板
     解析必须传页面级 URL 覆盖，否则 id 对不上会全军覆没。
@@ -185,4 +189,7 @@ def resolve_citations(text: str, case: Dict[str, Any], llm: Dict[str, Any],
         )
         return f"[e:{eid}]"
 
-    return _re.sub(r"\{\{cite:([A-Za-z0-9_]+):(\d+)(?::(\d+))?\}\}", repl, text)
+    text = _re.sub(r"\{\{cite:([A-Za-z0-9_]+):(\d+)(?::(\d+))?\}\}", repl, text)
+    # 兜底收敛：模板若误包 `[e: ]` 壳（历史 gap case 干过），产出会嵌套成
+    # `[e:[e:…]]` 损坏标记——这里把双层剥成单层，让正文反查保持闭环。
+    return _re.sub(r"\[e:(\[e:[0-9a-f]{12}\])\]", r"\1", text)

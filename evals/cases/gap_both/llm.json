@@ -28,9 +28,9 @@
     ]
   ],
   "report": [
-    "## 定价\n\nAcme 专业版 99 元/月 [e:{{cite:acme:0:0}}]。\n",
-    "## 定价\n\nAcme 专业版 99 元/月 [e:{{cite:acme:0:0}}]。\n",
-    "## 定价\n\nAcme 专业版 79 元/月 [e:{{cite:acme:1:0}}]。\n",
-    "## 定价\n\nAcme 专业版 79 元/月 [e:{{cite:acme:1:0}}]。\n\nBeta 专业版 69 元/月 [e:{{cite:beta:1:0}}]。\n"
+    "## 定价\n\nAcme 专业版 99 元/月 {{cite:acme:0:0}}。\n",
+    "## 定价\n\nAcme 专业版 99 元/月 {{cite:acme:0:0}}。\n",
+    "## 定价\n\nAcme 专业版 79 元/月 {{cite:acme:1:0}}。\n",
+    "## 定价\n\nAcme 专业版 79 元/月 {{cite:acme:1:0}}。\n\nBeta 专业版 69 元/月 {{cite:beta:1:0}}。\n"
   ]
 }

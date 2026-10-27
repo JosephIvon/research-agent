@@ -15,7 +15,7 @@
     ]
   ],
   "report": [
-    "## 功能\n\nAcme 提供日志检索 [e:{{cite:auditx:0}}]。\n",
-    "## 功能\n\nAcme 提供日志检索 [e:{{cite:auditx:0}}]。\n\n## 定价\n\nAcme 专业版 79 元/月 [e:{{cite:auditx:1:0}}]。\n"
+    "## 功能\n\nAcme 提供日志检索 {{cite:auditx:0}}。\n",
+    "## 功能\n\nAcme 提供日志检索 {{cite:auditx:0}}。\n\n## 定价\n\nAcme 专业版 79 元/月 {{cite:auditx:1:0}}。\n"
   ]
 }
