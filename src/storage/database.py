@@ -228,6 +228,29 @@ class ReportDB:
         finally:
             conn.close()
 
+    def update_report_content(self, report_id: str, report_content: str) -> bool:
+        """只更新报告正文，不动其它列。
+
+        save_report 的 ON CONFLICT 会连带覆盖 metadata_json / quality_score /
+        quality_grade，追加追问这类"只改正文"的写入必须走这里，
+        否则一次追加就把这份报告的完整度评估与分数冲没了。
+        """
+        conn = self._conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE reports SET report_content = ?, updated_at = ? WHERE id = ?",
+                (report_content, datetime.now().isoformat(timespec="seconds"), report_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to update report content: {e}")
+            return False
+        finally:
+            conn.close()
+
     def get_report(self, report_id: str) -> Optional[Dict[str, Any]]:
         """Get a single report by ID."""
         conn = self._conn()

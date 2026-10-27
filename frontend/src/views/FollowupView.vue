@@ -2,7 +2,7 @@
   <div class="layout">
     <header class="layout-header">
       <div class="header-left">
-        <el-button text @click="$router.push(`/report/${taskId}`)">← 返回报告</el-button>
+        <el-button text @click="$router.push(`/report/${reportId}`)">← 返回报告</el-button>
         <span class="page-title">追问: {{ reportTitle }}</span>
       </div>
     </header>
@@ -26,7 +26,7 @@
                 <span class="value">{{ reportSummary.missing_dims?.join(', ') || '无' }}</span>
               </div>
             </div>
-            <el-button text type="primary" @click="$router.push(`/report/${taskId}`)">
+            <el-button text type="primary" @click="$router.push(`/report/${reportId}`)">
               查看完整报告 →
             </el-button>
           </div>
@@ -70,8 +70,8 @@
               </el-button>
             </div>
 
-            <div v-if="chatHistory.length > 0" class="add-to-report">
-              <el-button @click="addLastAnswerToReport">添加到报告</el-button>
+            <div v-if="lastAnswer" class="add-to-report">
+              <el-button @click="addLastAnswerToReport" :loading="appending">添加到报告</el-button>
             </div>
           </div>
         </div>
@@ -89,7 +89,9 @@ import { useResearchStore } from '../stores/research'
 import { resolveGrade } from '../utils/reportGrade'
 
 const route = useRoute()
-const taskId = route.params.id
+// 路由参数是**报告 id**（/report/:id 与 /followup/:id 用的是同一个），
+// 不是任务 id——按任务 id 去读报告必然 404。
+const reportId = route.params.id
 const store = useResearchStore()
 
 const reportTitle = ref('加载中...')
@@ -99,6 +101,9 @@ const suggestedQuestions = ref([])
 const chatHistory = ref([])
 const userQuestion = ref('')
 const chatListRef = ref(null)
+// 最近一次**成功**的问答：只有它能被追加进报告
+const lastAnswer = ref(null)
+const appending = ref(false)
 
 function dimensionIcon(dimension) {
   const icons = {
@@ -156,11 +161,13 @@ async function sendCustomQuestion() {
       report_content: reportContent.value,
       question: question
     })
+    const answer = data.answer || data.response || '抱歉，暂时无法回答这个问题。'
     chatHistory.value.push({
       role: 'assistant',
-      content: data.answer || data.response || '抱歉，暂时无法回答这个问题。',
+      content: answer,
       time: new Date().toLocaleTimeString()
     })
+    lastAnswer.value = { question, answer }
   } catch (e) {
     chatHistory.value.push({
       role: 'assistant',
@@ -172,10 +179,22 @@ async function sendCustomQuestion() {
   await scrollToBottom()
 }
 
-function addLastAnswerToReport() {
-  const lastAnswer = chatHistory.value.filter(m => m.role === 'assistant').pop()
-  if (lastAnswer) {
+async function addLastAnswerToReport() {
+  if (!lastAnswer.value || appending.value) return
+  appending.value = true
+  try {
+    const data = await researchApi.appendFollowupToReport(reportId, {
+      question: lastAnswer.value.question,
+      answer: lastAnswer.value.answer
+    })
+    // 本地缓存里还是追加前的正文，不更新的话回到报告页看到的仍是旧内容
+    store.updateReport(reportId, { markdown: data.markdown })
+    reportContent.value = data.markdown
     ElMessage.success('已添加到报告')
+  } catch (e) {
+    // 请求失败由 axios 拦截器统一提示，这里不重复弹
+  } finally {
+    appending.value = false
   }
 }
 
@@ -188,7 +207,7 @@ async function scrollToBottom() {
 
 onMounted(async () => {
   try {
-    const report = await store.getReport(taskId)
+    const report = await store.getReport(reportId)
     reportTitle.value = report.title || route.query.title || '竞品分析'
     reportContent.value = report.markdown || ''
     reportSummary.value = report

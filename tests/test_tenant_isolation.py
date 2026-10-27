@@ -212,9 +212,13 @@ class TestSyncIsolation:
     """
 
     @pytest.fixture(autouse=True)
-    def _feishu_configured(self, monkeypatch):
-        monkeypatch.setattr(server, "FEISHU_APP_ID", "cli_test")
-        monkeypatch.setattr(server, "FEISHU_APP_SECRET", "secret")
+    def _feishu_configured(self, monkeypatch, tmp_path):
+        # 凭据改为**调用时**解析（src/config/credentials.py），server 上的模块级
+        # 常量已被移除，这里改设环境变量；凭据文件指向不存在的路径，
+        # 免得本机已存凭据（或别处的环境变量）干扰这条用例。
+        monkeypatch.setenv("DOC_SYNC_CREDENTIALS_FILE", str(tmp_path / "absent_credentials.json"))
+        monkeypatch.setenv("FEISHU_APP_ID", "cli_test")
+        monkeypatch.setenv("FEISHU_APP_SECRET", "secret")
 
     def test_sync_without_report_id_does_not_pick_other_users_report(self, storage, client, other_user_headers):
         _register_report(storage, REPORT_ID, TEST_USER_ID)
@@ -227,15 +231,15 @@ class TestSyncIsolation:
         assert r.status_code == 404, f"同步端点泄露了他人报告，实际 {r.status_code}"
 
     def test_sync_tencent_same_guards(self, storage, client, other_user_headers, monkeypatch):
-        monkeypatch.setattr(server, "TENCENT_APP_ID", "cli_test")
-        monkeypatch.setattr(server, "TENCENT_APP_SECRET", "secret")
+        monkeypatch.setenv("TENCENT_APP_ID", "cli_test")
+        monkeypatch.setenv("TENCENT_APP_SECRET", "secret")
         _register_report(storage, REPORT_ID, TEST_USER_ID)
         r = client.post("/sync/tencent", json={"report_id": REPORT_ID}, headers=other_user_headers)
         assert r.status_code == 404
 
     def test_tencent_sync_without_report_id_does_not_leak(self, storage, client, other_user_headers, monkeypatch):
-        monkeypatch.setattr(server, "TENCENT_APP_ID", "cli_test")
-        monkeypatch.setattr(server, "TENCENT_APP_SECRET", "secret")
+        monkeypatch.setenv("TENCENT_APP_ID", "cli_test")
+        monkeypatch.setenv("TENCENT_APP_SECRET", "secret")
         _register_report(storage, REPORT_ID, TEST_USER_ID)
         assert client.post("/sync/tencent", json={}, headers=other_user_headers).status_code == 404
 

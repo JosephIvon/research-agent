@@ -63,6 +63,12 @@ export const researchApi = {
 
   getReportFeedback: (reportId) => api.get(`/research/reports/${encodeURIComponent(reportId)}/feedback`),
 
+  // 追问答案写回报告：追加进报告正文
+  appendFollowupToReport: (reportId, payload) => api.post(
+    `/research/reports/${encodeURIComponent(reportId)}/followup`,
+    payload
+  ),
+
   // Async task queue API
   createTask: (params) => api.post('/research/tasks', params),
 

@@ -379,6 +379,17 @@ class ReportFeedbackRequest(StrictModel):
         return rating
 
 
+class FollowupAppendRequest(StrictModel):
+    """追问答案写回报告的请求体。
+
+    answer 由前端回传，服务端不重新生成——两次调模型可能给出不同答案，
+    报告里记的必须是用户刚看到的那一份。
+    """
+
+    question: str = Field(..., min_length=1, max_length=2000)
+    answer: str = Field(..., min_length=1, max_length=50_000)
+
+
 class UserRegister(BaseModel):
     username: str = Field(..., min_length=3, max_length=64)
     email: str = Field(..., min_length=5, max_length=256)
@@ -454,6 +465,15 @@ def _read_report(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="报告不存在") from exc
+
+
+def _followup_section(question: str, answer: str) -> str:
+    """追问补充段，追加在报告末尾（机器附录之外）。"""
+    return (
+        "\n\n---\n\n## 追问补充\n\n"
+        f"**问：** {question}\n\n"
+        f"**答：**\n\n{answer}\n"
+    )
 
 
 def _extract_title(markdown: str, fallback: str) -> str:
@@ -696,6 +716,32 @@ def followup(request: Request, req: FollowUpRequest):
         return {"status": "success", "answer": answer}
     except Exception as e:
         raise _internal_error("追问优化", e)
+
+
+@limiter.limit(RATE_LIMIT_PER_TOKEN)
+@app.post("/research/reports/{report_id}/followup", response_model=Dict[str, Any])
+def append_followup_to_report(request: Request, report_id: str, req: FollowupAppendRequest):
+    """把追问与答案追加进报告正文。
+
+    就地追加、不另存新版本：另存一份会让任务—报告的关联断在新报告上（成本卡、
+    Trace 链接都挂在任务上，新报告没有归属任务就都不显示），页面上的「返回报告」
+    也会退回没追加过的旧报告。就地追加保住全部既有链路。
+    """
+    _require_report_access(request, report_id)
+    path = _report_path(report_id)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="报告不存在")
+
+    content = _read_report(path)
+    new_content = content.rstrip() + _followup_section(req.question, req.answer)
+    path.write_text(new_content, encoding="utf-8")
+
+    # 正文以磁盘为准；数据库只是快照，同步更新即可——但不能用 save_report，
+    # 它的 ON CONFLICT 会把 metadata_json / quality_score 一并冲掉。
+    if not get_report_db().update_report_content(report_id, new_content):
+        logger.warning("报告正文已落盘但数据库快照未更新: %s", report_id)
+
+    return {"status": "success", "report_id": report_id, "markdown": new_content}
 
 
 @limiter.limit(RATE_LIMIT_PER_TOKEN)
@@ -1694,6 +1740,7 @@ def index():
         "endpoints": [
             "POST /research/competitive - 竞品分析",
             "POST /research/followup - 追问优化",
+            "POST /research/reports/{report_id}/followup - 追问答案写回报告",
             "POST /research/suggest-followup - 推荐追问方向",
             "POST /research/multi-role-review - 多角色审查",
             "POST /research/prd - 生成PRD文档",
