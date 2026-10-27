@@ -33,8 +33,6 @@ from src.config.settings import (
     APP_PORT,
     DEEPSEEK_API_KEY,
     DOUBAO_API_KEY,
-    FEISHU_APP_ID,
-    FEISHU_APP_SECRET,
     GLM_API_KEY,
     JWT_EXPIRE_MINUTES,
     JWT_SECRET_KEY,
@@ -53,8 +51,6 @@ from src.config.settings import (
     SEARXNG_URL,
     SSE_KEEPALIVE_SECONDS,
     TASK_STORE_BACKEND,
-    TENCENT_APP_ID,
-    TENCENT_APP_SECRET,
     TIMEOUT_SECONDS,
 )
 from src.agent.config import (
@@ -354,6 +350,16 @@ class SyncRequest(StrictModel):
     full_report: bool = True
 
 
+class CredentialRequest(BaseModel):
+    """文档同步平台的 App 凭据。
+
+    只允许管理员写——凭据是本机级资产，不是普通用户的数据。
+    """
+    platform: str = Field(..., pattern="^(feishu|tencent)$")
+    app_id: str = Field(..., min_length=1, max_length=200)
+    app_secret: str = Field(..., min_length=1, max_length=500)
+
+
 class ExportRequest(BaseModel):
     report_id: str = Field(..., pattern=REPORT_ID_RE.pattern)
     format: str = Field(..., pattern="^(pdf|word|html)$")
@@ -559,6 +565,23 @@ def _require_admin(request: Request) -> None:
         raise HTTPException(status_code=403, detail="需要管理员权限")
 
 
+def _doc_sync_credential_flags() -> Dict[str, Any]:
+    """文档平台凭据的对外状态：是否可用 + 掩码后的 app_id。
+
+    secret 永不出服务端——这个函数是公开端点 `/settings` 用的。
+    """
+    from src.config.credentials import credential_status
+
+    feishu = credential_status("feishu")
+    tencent = credential_status("tencent")
+    return {
+        "feishu_configured": feishu["configured"],
+        "tencent_configured": tencent["configured"],
+        "feishu_app_id_masked": feishu["app_id_masked"],
+        "tencent_app_id_masked": tencent["app_id_masked"],
+    }
+
+
 def _safe_settings_payload() -> Dict[str, Any]:
     llm_keys = {
         "minimax": MINIMAX_API_KEY,
@@ -581,8 +604,9 @@ def _safe_settings_payload() -> Dict[str, Any]:
         "searxng_url": SEARXNG_URL,
         "search_timeout": SEARCH_TIMEOUT,
         "search_max_results": SEARCH_MAX_RESULTS,
-        "feishu_configured": bool(FEISHU_APP_ID and FEISHU_APP_SECRET),
-        "tencent_configured": bool(TENCENT_APP_ID and TENCENT_APP_SECRET),
+        # 文档平台凭据状态：环境变量**或**管理员在界面上存的都算数。
+        # 此前只看 import 时的模块常量，于是界面上存了凭据仍显示「未配置」。
+        **_doc_sync_credential_flags(),
         # Agent 四道预算闸门的当前默认值。前端要把它们当占位提示回显，
         # 否则用户面对一个空输入框，不知道「提高预算」是提高到多少。
         # 权威来源是 src/agent/config.py，这里只透出数字，不透出实现。
@@ -1404,14 +1428,56 @@ def get_hot_reloadable_keys(request: Request):
 
 @app.get("/sync/status", response_model=Dict[str, Any])
 def sync_status():
-    """文档同步平台连接状态。"""
+    """文档同步平台连接状态。
+
+    凭据可能在环境变量里，也可能是管理员在界面上存的——两处都算数，
+    所以这里不再只看 import 时的模块常量（那正是此前「界面显示已配置、
+    实际同步却失败」的来源）。
+    """
+    from src.config.credentials import credential_status
+
+    feishu = credential_status("feishu")
+    tencent = credential_status("tencent")
     return {
         "status": "success",
         "platforms": {
-            "feishu": {"configured": bool(FEISHU_APP_ID and FEISHU_APP_SECRET)},
-            "tencent": {"configured": bool(TENCENT_APP_ID and TENCENT_APP_SECRET), "experimental": True},
+            "feishu": {
+                "configured": feishu["configured"],
+                "app_id_masked": feishu["app_id_masked"],
+            },
+            "tencent": {
+                "configured": tencent["configured"],
+                "app_id_masked": tencent["app_id_masked"],
+                "experimental": True,
+            },
         },
     }
+
+
+@app.get("/sync/credentials", response_model=Dict[str, Any])
+def get_sync_credentials(request: Request):
+    """各平台的凭据状态。**不回传 secret**，只回显掩码后的 app_id。"""
+    _require_admin(request)
+    from src.config.credentials import PLATFORMS, credential_status
+
+    return {platform: credential_status(platform) for platform in PLATFORMS}
+
+
+@app.post("/sync/credentials", response_model=Dict[str, Any])
+def update_sync_credentials(request: Request, req: CredentialRequest):
+    """写入某个平台的凭据（仅管理员）。落盘后同步立即生效，无需重启。"""
+    _require_admin(request)
+    from src.config.credentials import save_credentials
+
+    save_credentials(req.platform, req.app_id, req.app_secret)
+    user_id = getattr(request.state, "user_id", None)
+    get_audit_logger().log(AuditEvent.SETTINGS_UPDATE, user_id, {
+        "platform": req.platform,
+        "action": "sync_credentials_write",
+        # secret 不进审计日志——日志通常比配置文件更容易被收集
+        "app_id_masked": req.app_id[:4] + "…" if len(req.app_id) > 6 else "***",
+    })
+    return {"status": "success", "platform": req.platform}
 
 
 @app.get("/llm/status", response_model=Dict[str, Any])
@@ -1449,7 +1515,10 @@ def llm_circuit_reset(provider: Optional[str] = None):
 @app.post("/sync/feishu", response_model=Dict[str, Any])
 def sync_feishu(request: Request, req: SyncRequest):
     """同步报告到飞书文档。"""
-    if not (FEISHU_APP_ID and FEISHU_APP_SECRET):
+    from src.config.credentials import resolve_credentials
+
+    app_id, app_secret = resolve_credentials("feishu")
+    if not (app_id and app_secret):
         raise HTTPException(status_code=400, detail="飞书文档未配置")
     content, title = _sync_content(req, request)
     from src.sync import doc_sync_manager
@@ -1470,7 +1539,10 @@ def sync_feishu(request: Request, req: SyncRequest):
 @app.post("/sync/tencent", response_model=Dict[str, Any])
 def sync_tencent(request: Request, req: SyncRequest):
     """同步报告到腾讯文档。"""
-    if not (TENCENT_APP_ID and TENCENT_APP_SECRET):
+    from src.config.credentials import resolve_credentials
+
+    app_id, app_secret = resolve_credentials("tencent")
+    if not (app_id and app_secret):
         raise HTTPException(status_code=400, detail="腾讯文档未配置")
     content, title = _sync_content(req, request)
     from src.sync import doc_sync_manager

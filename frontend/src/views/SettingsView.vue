@@ -69,6 +69,32 @@
               </el-tag>
             </div>
           </div>
+          <div class="form-hint">
+            未配置时同步功能不可用。此前这里只有状态标签、没有输入框，
+            「连接」按钮把人指向一个**无法完成配置**的页面。
+          </div>
+          <div class="form-group">
+            <label>飞书 App ID / App Secret</label>
+            <div class="credential-row">
+              <el-input v-model="feishuAppId" placeholder="App ID" />
+              <el-input v-model="feishuAppSecret" type="password" show-password placeholder="App Secret" />
+              <el-button type="primary" @click="saveCredential('feishu')">保存</el-button>
+            </div>
+            <div class="form-hint">
+              {{ credentialHint('feishu') }}
+            </div>
+          </div>
+          <div class="form-group">
+            <label>腾讯文档 App ID / App Secret</label>
+            <div class="credential-row">
+              <el-input v-model="tencentAppId" placeholder="App ID" />
+              <el-input v-model="tencentAppSecret" type="password" show-password placeholder="App Secret" />
+              <el-button type="primary" @click="saveCredential('tencent')">保存</el-button>
+            </div>
+            <div class="form-hint">
+              {{ credentialHint('tencent') }}
+            </div>
+          </div>
         </div>
 
         <div class="settings-section card">
@@ -117,7 +143,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { settingsApi } from '../api'
+import { settingsApi, syncApi } from '../api'
 
 const settings = ref({
   app_env: 'development',
@@ -138,6 +164,45 @@ const settings = ref({
 })
 
 const authToken = ref(sessionStorage.getItem('auth_token') || '')
+
+// 文档平台凭据：只有管理员能写。secret 不回显——服务端只给掩码后的 app_id。
+// 状态走公开的 GET /settings（同样是掩码），这样非管理员打开设置页不会撞 403。
+const feishuAppId = ref('')
+const feishuAppSecret = ref('')
+const tencentAppId = ref('')
+const tencentAppSecret = ref('')
+
+function credentialHint(platform) {
+  const configured = platform === 'feishu'
+    ? settings.value.feishu_configured
+    : settings.value.tencent_configured
+  const masked = platform === 'feishu'
+    ? settings.value.feishu_app_id_masked
+    : settings.value.tencent_app_id_masked
+  if (!configured) return '未配置。未配置时同步功能不可用。'
+  return `已配置（${masked || '凭据已就绪'}）。填写新的值即可覆盖。`
+}
+
+async function saveCredential(platform) {
+  const appId = platform === 'feishu' ? feishuAppId.value.trim() : tencentAppId.value.trim()
+  const appSecret = platform === 'feishu' ? feishuAppSecret.value.trim() : tencentAppSecret.value.trim()
+  if (!appId || !appSecret) {
+    ElMessage.warning('App ID 与 App Secret 都要填')
+    return
+  }
+  try {
+    await syncApi.saveCredentials({ platform, app_id: appId, app_secret: appSecret })
+    if (platform === 'feishu') {
+      feishuAppSecret.value = ''
+    } else {
+      tencentAppSecret.value = ''
+    }
+    ElMessage.success('凭据已保存，同步立即生效')
+    await loadSettings()
+  } catch (e) {
+    // 错误提示由 axios 拦截器统一给出（403 会显示「需要管理员权限」）
+  }
+}
 
 async function loadSettings() {
   try {
@@ -222,6 +287,18 @@ onMounted(loadSettings)
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* 凭据一行：App ID + Secret + 保存，窄屏折行 */
+.credential-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+
+  .el-input {
+    flex: 1 1 180px;
+  }
 }
 
 .status-row {

@@ -79,7 +79,12 @@ export const syncApi = {
 
   tencent: (params) => api.post('/sync/tencent', params),
 
-  status: () => api.get('/sync/status')
+  status: () => api.get('/sync/status'),
+
+  // 凭据：写入仅管理员；读取只回显掩码后的 app_id，secret 不出服务端
+  getCredentials: () => api.get('/sync/credentials'),
+
+  saveCredentials: (params) => api.post('/sync/credentials', params)
 }
 
 export const settingsApi = {
