@@ -731,7 +731,7 @@ class MVPWorkflow:
         event = TaskEvent(
             id=0,
             event=event_type,
-            task_id=self.state.get("task_id", ""),
+            task_id=self._state().get("task_id", ""),
             stage=stage,
             status=status,
             message=message,
@@ -1545,6 +1545,25 @@ class MVPWorkflow:
                     profile_kwargs["priority_tiers"] = page_tiers
                 profile = await active_crawler.fetch_site_profile(url, **profile_kwargs)
 
+                # 页级失败必须外发。爬虫已经把「发现出来但没抓到」的页面记在
+                # profile["failed_pages"] 里，但这个字段此前只停在爬虫的返回值中，
+                # 报告「来源」页看不到——少了几页却无从查证。现在两处都带上：
+                # 事件流让用户实时看到，竞品条目让报告页能复盘。
+                failed_pages = profile.get("failed_pages") or []
+                for fp in failed_pages:
+                    self._emit(
+                        "crawl_progress", "crawl", "failed",
+                        f"页面未抓到：{fp.get('url')}（{fp.get('error')}，"
+                        f"耗时 {fp.get('elapsed_seconds')}s）",
+                        payload={
+                            "url": fp.get("url"),
+                            "site": url,
+                            "error": fp.get("error"),
+                            "elapsed_seconds": fp.get("elapsed_seconds"),
+                            "recoverable": True,
+                        },
+                    )
+
                 # 信任边界：抓到的正文是攻击者可控内容，必须在进入任何提示词之前清洗。
                 # 探针取自**清洗前**原文，存进本次 run 的 state，留给报告出口做独立回声校验。
                 raw_content = profile["content"]
@@ -1573,6 +1592,7 @@ class MVPWorkflow:
                         "status": "blocked",
                         "error_message": "页面包含多条注入指令，已整页丢弃",
                         "injection_findings": len(page_findings),
+                        "failed_pages": failed_pages,
                     }
 
                 extracted = await self.coordinator.extract_key_info(cleaned_content, url)
@@ -1595,7 +1615,8 @@ class MVPWorkflow:
                 "raw_pages": page_summaries,
                 "discovered_urls": profile.get("discovered_urls", []),
                 "status": "success",
-                "error_message": None
+                "error_message": None,
+                "failed_pages": failed_pages
             }
         except Exception as e:
             logger.warning(f"抓取竞品失败 {url}: {e}")
@@ -1609,7 +1630,9 @@ class MVPWorkflow:
                 "url": url,
                 "extracted_data": [],
                 "status": "failed",
-                "error_message": str(e)
+                "error_message": str(e),
+                # 整站级失败：连首页都没拿到，没有页级明细可报
+                "failed_pages": []
             }
 
     def _merge_refetched_into_competitors(

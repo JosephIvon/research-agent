@@ -6,6 +6,7 @@ import {
   buildSourceRows,
   buildTaskTimeline,
   getEventType,
+  getCompetitorFailedPages,
   getReportCompetitorCount,
   getRunHeadline,
   getRunStatusKicker,
@@ -173,6 +174,73 @@ test('events without a timeline step resolve to null rather than throwing', () =
   assert.equal(resolveFrontendStage('verify', 'verify'), null)
   assert.equal(resolveFrontendStage('artifact_ready', 'report_generate'), null)
   assert.equal(resolveFrontendStage('never_heard_of_it'), null)
+})
+
+// ---------------------------------------------------------------------------
+// 失败落在它实际发生的阶段
+//
+// 后端发 error 时自带 stage（crawl / verify / agent / workflow）。此前这里
+// 硬编码成 'finish'，于是「抓取失败 acme.com」被记到时间轴最后一步上——
+// 用户看到的是「完成」那一步红了，而不是「登录和抓取网站」红了。
+// ---------------------------------------------------------------------------
+
+test('a crawl failure lands on the crawl step, not on finish', () => {
+  assert.equal(resolveFrontendStage('error', 'crawl'), 'crawl')
+})
+
+test('a verify failure lands on the report step', () => {
+  // 引用校验发生在「生成竞品报告」期间，与 citation_check 同落一步
+  assert.equal(resolveFrontendStage('error', 'verify'), 'report')
+})
+
+test('an error with an unknown stage still falls back to finish', () => {
+  // 认不出阶段也不能丢事件——宁可落在 finish，也不能让失败从时间轴上消失
+  assert.equal(resolveFrontendStage('error', 'workflow'), 'finish')
+  assert.equal(resolveFrontendStage('error', undefined), 'finish')
+})
+
+// ---------------------------------------------------------------------------
+// 页级失败可见性
+//
+// 爬虫把「发现出来但没抓到」的页面记在 failed_pages 里，此前它只停在爬虫的
+// 返回值中，报告的「来源」页看不到——少了几页却无从查证。
+// ---------------------------------------------------------------------------
+
+test('failed pages are read from the competitor entry', () => {
+  const failed = [
+    { url: 'https://api000.com/pricing', error: 'TimeoutError', elapsed_seconds: 15.2 }
+  ]
+  assert.deepEqual(getCompetitorFailedPages({ failed_pages: failed }), failed)
+})
+
+test('a competitor without failed pages yields an empty list, never undefined', () => {
+  assert.deepEqual(getCompetitorFailedPages({}), [])
+  assert.deepEqual(getCompetitorFailedPages(), [])
+  assert.deepEqual(getCompetitorFailedPages({ failed_pages: null }), [])
+})
+
+test('source rows carry the pages that were not fetched', () => {
+  const failed = [
+    { url: 'https://api000.com/pricing', error: 'TimeoutError', elapsed_seconds: 15.2 }
+  ]
+  const rows = buildSourceRows({
+    raw: {
+      competitors: [
+        {
+          name: 'api000.com',
+          url: 'https://api000.com',
+          status: 'success',
+          extracted_data: [{ key: 'price', value: '99' }],
+          raw_pages: [{ url: 'https://api000.com' }],
+          failed_pages: failed
+        }
+      ]
+    }
+  })
+
+  assert.equal(rows.length, 1)
+  assert.deepEqual(rows[0].failedPages, failed)
+  assert.equal(rows[0].pageCount, 1, '失败页不计入已读取页数')
 })
 
 test('partial terminal event is reported as a delivered result, not an error', () => {

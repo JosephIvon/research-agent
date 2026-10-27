@@ -144,6 +144,17 @@ export function getReportCompetitorCount(report = {}) {
   return Number.isFinite(Number(report?.competitors)) ? Number(report.competitors) : 0
 }
 
+/**
+ * 某个竞品「发现出来但没抓到」的站内页。
+ *
+ * 爬虫一直把这份留痕记在 `failed_pages`（url / 异常类型 / 耗时），但它此前
+ * 只停在爬虫的返回值里，报告页看不到——少了几页却无从查证。
+ */
+export function getCompetitorFailedPages(competitor = {}) {
+  const list = competitor?.failed_pages
+  return Array.isArray(list) ? list : []
+}
+
 export function buildSourceRows(report = {}) {
   return getReportCompetitors(report)
     .map((item, index) => {
@@ -157,6 +168,7 @@ export function buildSourceRows(report = {}) {
         pageCount: rawPages.length || (item.page_count || 0),
         pageUrls: rawPages.map(page => page.url).filter(Boolean),
         discoveredUrls,
+        failedPages: getCompetitorFailedPages(item),
         error: item.error_message || item.error || ''
       }
     })
@@ -333,6 +345,10 @@ export const BACKEND_STAGE_MAP = Object.freeze({
   crawl_complete: 'extract',
   extract: 'extract',
   report_generate: 'report',
+  // 引用校验发生在「生成竞品报告」期间，与 citation_check 同落在 report 这一步
+  verify: 'report',
+  // ReAct 的工具调用阶段与 crawl 同段
+  agent: 'crawl',
   completed: 'finish'
 })
 
@@ -343,11 +359,20 @@ export function mapBackendStageField(backendStage) {
 /**
  * 解析事件该落在时间轴的哪一步。
  *
- * injection_detected 特判：它在爬取和成文两个阶段都会发，阶段得看事件自己带的
- * stage，而不是硬编码成一个值——否则成文阶段发现的注入会被记到"抓取"那一步上。
+ * error 特判：失败要落在它**实际发生**的阶段。后端发 error 时自带 stage
+ * （crawl / verify / agent / workflow），此前这里硬编码成 'finish'——于是
+ * 「抓取失败 acme.com」被记到时间轴最后一步上，用户看到的是「完成」那一步
+ * 红了，而不是「登录和抓取网站」红了。stage 认不出来时才回落到 'finish'。
+ *
+ * injection_detected 同样特判：它在爬取和成文两个阶段都会发，阶段得看事件
+ * 自己带的 stage，而不是硬编码成一个值——否则成文阶段发现的注入会被记到
+ * "抓取"那一步上。
  * 返回 null 表示这条事件不进时间轴（调用方仍应先处理它的 payload）。
  */
 export function resolveFrontendStage(backendEvent, eventStage) {
+  if (backendEvent === 'error') {
+    return mapBackendStageField(eventStage) || 'finish'
+  }
   const mapped = mapBackendStage(backendEvent)
   if (mapped) return mapped
   if (backendEvent === 'injection_detected') return mapBackendStageField(eventStage)

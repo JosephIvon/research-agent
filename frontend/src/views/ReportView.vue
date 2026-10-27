@@ -260,6 +260,13 @@
                     {{ url }}
                   </a>
                 </div>
+                <div v-if="source.failedPages.length" class="source-pages failed">
+                  <span>未抓到的页面</span>
+                  <div v-for="page in source.failedPages" :key="page.url" class="failed-page">
+                    <a :href="page.url" target="_blank" rel="noreferrer">{{ page.url }}</a>
+                    <span class="failed-reason">{{ page.error }}<template v-if="page.elapsed_seconds != null"> · {{ page.elapsed_seconds }}s</template></span>
+                  </div>
+                </div>
                 <p v-if="source.error">{{ source.error }}</p>
               </article>
             </div>
@@ -395,7 +402,10 @@ const activeArtifactContent = computed(() => {
       const discovered = item.discoveredUrls.length
         ? `\n发现入口:\n${item.discoveredUrls.map(url => `- ${url}`).join('\n')}`
         : ''
-      return `${item.name}\n${item.url}\n状态: ${item.status}\n信息数量: ${item.dataCount}\n站内页: ${item.pageCount}${pages}${discovered}${item.error ? `\n错误: ${item.error}` : ''}`
+      const failed = item.failedPages.length
+        ? `\n未抓到的页面:\n${item.failedPages.map(page => `- ${page.url}（${page.error}${page.elapsed_seconds != null ? `，${page.elapsed_seconds}s` : ''}）`).join('\n')}`
+        : ''
+      return `${item.name}\n${item.url}\n状态: ${item.status}\n信息数量: ${item.dataCount}\n站内页: ${item.pageCount}${pages}${discovered}${failed}${item.error ? `\n错误: ${item.error}` : ''}`
     }).join('\n\n')
   }
   return report.value?.markdown || ''
@@ -1028,6 +1038,20 @@ onUnmounted(() => {
     margin-top: 0;
     color: #2563eb;
   }
+}
+
+/* 未抓到的页面：说明「少了几页」而不是只报成功 */
+.source-pages.failed .failed-page {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.source-pages.failed .failed-reason {
+  color: #b45309;
+  font-weight: 500;
+  font-size: 12px;
 }
 
 .radar-chart {
