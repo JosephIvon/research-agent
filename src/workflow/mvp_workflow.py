@@ -1254,6 +1254,15 @@ class MVPWorkflow:
                     if not citation_result["passed"]:
                         # 与 legacy 同一原则：未过校验的报告不静默交付，顶部挂低可信标记
                         state["report_final"] = self._mark_low_trust(state["report_final"], citation_result)
+                    # 证据对照表进附录：legacy 在报告装配时拼，react 此前直接把终答
+                    # 交付——正文的 [e:标记] 在报告里无处反查，budget 耗尽的 partial
+                    # 报告尤其如此（judge 反查断链，citation 被结构性压档）。
+                    # 校验已做完才拼：本节是确定性代码产出，挂机器附录标记免重复计数。
+                    state["report_final"] += (
+                        "\n\n<!--machine-appendix-->\n"
+                        + store.appendix_table()
+                        + "\n<!--/machine-appendix-->"
+                    )
 
                 self._enforce_report_output(state)
                 state["sync_results"]["local_file"] = self._save_report(state["report_final"], state.get("task_id"))

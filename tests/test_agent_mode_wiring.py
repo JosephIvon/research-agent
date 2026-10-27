@@ -6,7 +6,8 @@
 react 工具链的触网点在 `src.agent.tool_specs` / `src.agent.tools`，单独打补丁。
 
 react 全流程的语义锚点：
-- 终答原样成为 report_final（react 路径不经过 CopywriterAgent，无附录/警告前缀）
+- 终答原样成为 report_final 主体（react 路径不经过 CopywriterAgent，无警告前缀），
+  但带事实时尾部拼证据对照表机器附录；无事实时不拼
 - cost_report 来自 TaskBudget.snapshot()，fake provider 无 usage → 走估算并打标
 - 事件流必须有 agent_step（on_step 回调 → _emit → 事件桩收集）
 """
@@ -200,7 +201,9 @@ def test_react_flow_with_citation_trusted(tmp_path, monkeypatch):
 
     assert state["status"] == "completed", state.get("termination_reason")
     assert state["citation_trusted"] is True, state.get("citation_violations")
-    assert state["report_final"] == report_md, "校验通过的报告不应被挂低可信前缀"
+    assert state["report_final"].startswith(report_md), "校验通过的报告不应被挂低可信前缀"
+    assert "数据来源（[e:标记] → 原文）" in state["report_final"], \
+        "react 终答带事实时必须在交付里拼证据对照表（partial/完成同理）"
 
 
 def test_react_without_final_answer_fails_with_max_steps(tmp_path, monkeypatch):

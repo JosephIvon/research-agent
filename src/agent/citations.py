@@ -246,6 +246,24 @@ class EvidenceStore:
             )
         return "\n".join(lines)
 
+    def appendix_table(self) -> str:
+        """附录「[e:标记] → 原文」全量对照表。
+
+        与 `table()`（喂提示词的紧凑摘要）相对：这里给完整 value，全量不截断——
+        截断会让部分标记查不到，反而被误读成「无来源」。judge（或人）据此核对
+        「数字在不在它自己引用的那条证据里」，citation 校验从格式合规升级为扎根可核。
+        """
+        lines = [
+            "#### 📚 数据来源（[e:标记] → 原文）\n",
+            f"共 {len(self.evidences)} 条证据，与正文 [e:xxxx] 标记一一对应：\n",
+        ]
+        for ev in self.evidences:
+            origin = f" @ {ev.url}" if ev.url else ""
+            lines.append(
+                f"- [e:{ev.evidence_id}] {ev.key}{origin}：{ev.value.replace(chr(10), ' ')}"
+            )
+        return "\n".join(lines)
+
     def to_dict(self) -> Dict[str, Any]:
         return {"count": len(self.evidences), "evidences": [e.to_dict() for e in self.evidences]}
 

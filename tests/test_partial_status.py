@@ -179,7 +179,9 @@ def test_budget_exceeded_with_answer_is_partial(tmp_path, monkeypatch):
 
     # 交付链照常：引用校验 passed 落库、报告落盘
     assert state["citation_trusted"] is True, state.get("citation_violations")
-    assert state["report_final"] == PARTIAL_ANSWER, "passed 时不应挂低可信前缀"
+    assert state["report_final"].startswith(PARTIAL_ANSWER), "passed 时不应挂低可信前缀"
+    assert "数据来源（[e:标记] → 原文）" in state["report_final"], \
+        "react 交付必须带证据对照表——正文 [e:标记] 无处反查就是断链"
     files = list((tmp_path / "output").glob("research_report_*.md"))
     assert len(files) == 1, "partial 仍必须落报告"
 

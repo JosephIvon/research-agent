@@ -1,6 +1,6 @@
 """报告质量评分模块 - 评估数据完整度，提示缺失维度"""
 from typing import List, Dict, Any, Optional, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from src.agent.citations import EvidenceStore
 
@@ -28,6 +28,10 @@ class QualityReport:
     data_sources: List[str]
     is_usable: bool
     abandonment_reasons: List[str]
+    # 原始竞品数据（含 extracted_data 的 source_url/key/value）：证据对照表需要
+    # 它们重建 [e:id] → 原文映射。此前报告不携带 competitors，工作流里
+    # `quality_report.competitors if hasattr(...)` 恒为 False，评分器一直空转。
+    competitors: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class QualityScorer:
@@ -96,7 +100,8 @@ class QualityScorer:
             recommendations=recommendations,
             data_sources=list(set(all_sources)),
             is_usable=is_usable,
-            abandonment_reasons=abandonment_reasons
+            abandonment_reasons=abandonment_reasons,
+            competitors=self.competitors
         )
 
     def _evaluate_dimension(self, dim: Dict) -> DimensionScore:
@@ -216,18 +221,12 @@ class QualityScorer:
             for reason in report.abandonment_reasons:
                 section += f"- {reason}\n"
 
-        # 证据对照表：正文每个 [e:标记] 都能在这里查到 id → 原文（key/url/value），
-        # judge（或人）据此核对「数字在不在它自己引用的那条证据里」，而不是只能查
-        # 标记格式 —— 这是 citation 校验从「格式合规」升级为「扎根可核」的前提
-        # （llm-judge-kit 校准裁决 2026-10-26：选项 A）。全量列出、不截断：截断会让
-        # 部分标记查不到，反而被误读成「无来源」。
+        # 证据对照表：正文每个 [e:标记] 都能在这里查到 id → 原文（key/url/value）
+        # （llm-judge-kit 校准裁决 2026-10-26：选项 A）。渲染收在 EvidenceStore，
+        # ReAct 路径的降级交付走同一张表，口径不分叉。
         store = EvidenceStore.from_extracted_data(
             item for comp in self.competitors for item in comp.get("extracted_data", []))
-        section += (f"\n#### 📚 数据来源（[e:标记] → 原文）\n\n"
-                    f"共 {len(store.evidences)} 条证据，与正文 [e:xxxx] 标记一一对应：\n\n")
-        for ev in store.evidences:
-            origin = f" @ {ev.url}" if ev.url else ""
-            section += f"- [e:{ev.evidence_id}] {ev.key}{origin}：{ev.value.replace(chr(10), ' ')}\n"
+        section += "\n" + store.appendix_table() + "\n"
 
         # 机器附录标记：本节由确定性代码生成，引用校验（agent.citations）会
         # 跳过标记内内容——这里的数字来自程序计算，不是模型的事实主张。
