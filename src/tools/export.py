@@ -1,16 +1,38 @@
 """多格式导出工具"""
+import re
+
+# 机器附录标记是内部元数据（引用校验靠它划豁免区），导出时不该以文本形式露出来
+_MACHINE_APPENDIX_MARKERS = re.compile(r"<!--/?machine-appendix-->")
+
+
+def _markdown_to_html(markdown_content: str, extensions=None) -> str:
+    """Markdown → HTML，**裸 HTML 一律当文本处理**。
+
+    Python-Markdown 默认把源文里的裸 HTML 原样放行（它的文档化特性）。但报告正文
+    含有抓取来的网页内容与模型产出，属于不可信输入——原样渲染等于让提示注入升级成
+    导出文件里的活标记（实测 `<script>` 与 `<img onerror=...>` 都会原样进入导出文件）。
+
+    注销 html_block 预处理器与 html 内联处理器，它们就变成转义文本；不引新依赖，
+    也不用自己写净化器。报告正文本来就不需要裸 HTML（表格、代码块、引用都有
+    Markdown 写法），代价接近零。
+    """
+    import markdown
+
+    md = markdown.Markdown(extensions=extensions or ["tables", "fenced_code"])
+    md.preprocessors.deregister("html_block")
+    md.inlinePatterns.deregister("html")
+    return md.convert(_MACHINE_APPENDIX_MARKERS.sub("", markdown_content))
 
 
 def export_to_pdf(markdown_content: str, output_path: str) -> bool:
     """将 Markdown 导出为 PDF"""
     try:
-        import markdown
         from weasyprint import HTML, CSS
     except ImportError as e:
         raise ImportError(f"PDF export requires weasyprint: {e}")
 
     # Convert markdown to HTML
-    html_content = markdown.markdown(
+    html_content = _markdown_to_html(
         markdown_content,
         extensions=['tables', 'fenced_code']
     )
@@ -94,9 +116,7 @@ def export_to_word(markdown_content: str, output_path: str) -> bool:
 
 def export_to_html(markdown_content: str, output_path: str) -> bool:
     """将 Markdown 导出为 HTML"""
-    import markdown
-
-    html_content = markdown.markdown(
+    html_content = _markdown_to_html(
         markdown_content,
         extensions=['tables', 'fenced_code', 'toc']
     )

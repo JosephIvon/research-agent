@@ -149,3 +149,13 @@ def test_append_requires_both_question_and_answer(storage, client, auth_headers)
     assert _append(client, auth_headers, answer="").status_code == 422
     assert "原始正文" in _file_text()
     assert "追问补充" not in _file_text(), "被拒的请求不该写进报告"
+
+
+def test_appended_section_declares_it_is_not_citation_checked(storage, client, auth_headers):
+    """这一节必须自己声明"未参与引用校验"——否则读者会以为整篇都验过。"""
+    _register_report(storage, REPORT_ID, TEST_USER_ID)
+
+    assert _append(client, auth_headers).status_code == 200
+
+    text = _file_text()
+    assert "未参与引用校验" in text, "追问补充段必须声明自己的校验状态"
