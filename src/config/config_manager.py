@@ -5,6 +5,8 @@ import threading
 from typing import Any, Dict, Optional, Callable
 from datetime import datetime
 
+from src.config.settings import LLM_READ_TIMEOUT
+
 
 class ConfigManager:
     """
@@ -50,7 +52,7 @@ class ConfigManager:
         # LLM settings
         self._config["LLM_PROVIDER"] = os.getenv("LLM_PROVIDER", "minimax")
         self._config["LLM_FALLBACK_PROVIDER"] = os.getenv("LLM_FALLBACK_PROVIDER", "")
-        self._config["LLM_READ_TIMEOUT"] = int(os.getenv("LLM_READ_TIMEOUT", "120"))
+        self._config["LLM_READ_TIMEOUT"] = LLM_READ_TIMEOUT  # 默认值只认 settings 一处
         self._config["LLM_CIRCUIT_BREAKER_THRESHOLD"] = int(os.getenv("LLM_CIRCUIT_BREAKER_THRESHOLD", "5"))
 
         # Search settings

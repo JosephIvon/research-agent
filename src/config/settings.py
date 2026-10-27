@@ -230,7 +230,9 @@ ALLOW_PRIVATE_NETWORK_URLS = _get_bool("ALLOW_PRIVATE_NETWORK_URLS", False)
 
 # LLM 超时与熔断配置
 LLM_CONNECT_TIMEOUT = _get_int("LLM_CONNECT_TIMEOUT", 10)  # 连接超时（秒）
-LLM_READ_TIMEOUT = _get_int("LLM_READ_TIMEOUT", 120)  # 读取超时（秒）
+# 读取超时（秒）。默认 300：推理模型（M3）写长报告时思考块 + 正文会占满几分钟，
+# 120 秒会在报告写完之前就把连接掐断（实测 APITimeoutError → status=failed）。
+LLM_READ_TIMEOUT = _get_int("LLM_READ_TIMEOUT", 300)  # 读取超时（秒）
 LLM_RETRY_BACKOFF_MAX = _get_int("LLM_RETRY_BACKOFF_MAX", 30)  # 最大退避时间（秒）
 LLM_CIRCUIT_BREAKER_THRESHOLD = _get_int("LLM_CIRCUIT_BREAKER_THRESHOLD", 5)  # 熔断阈值（连续失败次数）
 LLM_CIRCUIT_BREAKER_TIMEOUT = _get_int("LLM_CIRCUIT_BREAKER_TIMEOUT", 60)  # 熔断恢复超时（秒）

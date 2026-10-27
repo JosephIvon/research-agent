@@ -230,13 +230,42 @@ class ComparisonAnalyzer:
         return "\n".join(results)
 
 
-def infer_competitor_name(url: str, extracted_data: List[Dict] = None) -> str:
-    """从提取数据或URL推断竞品名称"""
+# 标题里的品牌名分隔符：破折号、竖线、下划线、中点
+_TITLE_SEPARATORS = re.compile(r"\s*[-–—|_·]\s*")
+
+
+def _brand_from_title(title: str) -> str:
+    """从 <title> 里取品牌名：'美菜 - 智能餐饮 SaaS' → '美菜'。"""
+    cleaned = re.sub(r"\s+", " ", title or "").strip()
+    if not cleaned:
+        return ""
+    head = _TITLE_SEPARATORS.split(cleaned)[0].strip()
+    return head or cleaned
+
+
+def infer_competitor_name(
+    url: str,
+    extracted_data: List[Dict] = None,
+    page_title: str = None,
+) -> str:
+    """推断竞品名称。
+
+    优先级：抽取出的品牌名 → 站点标题 → 已知站点映射 → 域名。
+    域名是**最后**的兜底：报告里出现 "Chuanweidp / Meicai / 123 / Cloud" 这种条目，
+    读者根本无法把它对回真实品牌（实测）。
+    """
     if extracted_data:
         for item in extracted_data:
             key = str(item.get("key", "")).lower()
-            if any(kw in key for kw in ["名称", "名字", "品牌", "产品名"]):
-                return str(item.get("value", ""))[:50]
+            if any(kw in key for kw in ["名称", "名字", "品牌", "产品名", "name"]):
+                name = str(item.get("value", "")).strip()
+                if name:
+                    return name[:50]
+
+    if page_title:
+        brand = _brand_from_title(page_title)
+        if brand:
+            return brand[:50]
 
     parsed = urlparse(url)
     netloc = parsed.netloc

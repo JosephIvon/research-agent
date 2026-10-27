@@ -151,6 +151,23 @@ def _decode_json_segments(text: str):
     return _merge_values(values)
 
 
+def _site_title(pages) -> str:
+    """站点名：首页 <title>。
+
+    域名当名字的备选品是"读起来像域名"的名字（Chuanweidp / Meicai / 123 / Cloud），
+    读者没法把它对回真实品牌。标题一直在抓取结果里，只是此前没人取。
+    """
+    for page in pages or []:
+        match = re.search(
+            r"<title[^>]*>(.*?)</title>", page.get("html") or "", re.IGNORECASE | re.DOTALL
+        )
+        if match:
+            title = re.sub(r"\s+", " ", match.group(1)).strip()
+            if title:
+                return title
+    return ""
+
+
 class CoordinatorAgent:
     """协调者Agent - 负责任务分解、工具调用、结果整合"""
 
@@ -223,7 +240,7 @@ class CoordinatorAgent:
                 schema: {schema}
 
                 请优先使用以下标准 key，便于后续质量评分和报告对比：
-                pricing、features、models、target_users、integrations、api_flow、workflow、limitations、reviews。
+                name（站点/产品品牌名）、pricing、features、models、target_users、integrations、api_flow、workflow、limitations、reviews。
                 value 中要保留可核验的事实、数字、页面来源线索；不要只写概括性形容词。
 
                 {UNTRUSTED_NOTICE}"""
@@ -234,11 +251,37 @@ class CoordinatorAgent:
             }
         ]
 
-        response = await self.llm_client.achat_completion(prompt, temperature=0.1)
+        data = None
+        last_error: Optional[Exception] = None
+        for attempt in (0, 1):
+            call_prompt = prompt
+            temperature = 0.1
+            if attempt == 1:
+                # 收紧要求重试一次：第一次失败的常见成因是"思考吃光预算、正文一个字没剩"。
+                # 重试比放弃便宜——放弃意味着这家竞品整份数据退化成无结构原文，
+                # 报告里只能写"无法确认"，竞品名也跟着退化成域名。
+                call_prompt = prompt + [{
+                    "role": "user",
+                    "content": "上一次输出无法解析为 JSON。请只输出一个 JSON 数组"
+                               "（以 [ 开头、] 结尾），不要任何解释文字、不要 Markdown 围栏、"
+                               "不要输出思考过程。",
+                }]
+                temperature = 0.0
+            response = await self.llm_client.achat_completion(
+                call_prompt, temperature=temperature, max_tokens=EXTRACTION_MAX_TOKENS
+            )
+            try:
+                data = _parse_json_response(response)
+                break
+            except Exception as e:
+                last_error = e
+                logger.warning(f"信息提取JSON解析失败（第 {attempt + 1} 次）: {e}")
+
+        if data is None:
+            logger.warning(f"信息提取失败，改用原文兜底: {last_error}")
+            return self._extraction_fallback(raw_content, url)
+
         try:
-            data = _parse_json_response(response)
-            for item in data:
-                item["source_url"] = url
             normalized = []
             for item in data:
                 if isinstance(item, str):
@@ -253,16 +296,26 @@ class CoordinatorAgent:
                     normalized.append({"key": "content", "value": str(item), "source_url": url, "confidence": 0.5})
             return normalized
         except Exception as e:
-            logger.warning(f"信息提取JSON解析失败: {e}")
-            # 兜底路径直接把原文塞进 extracted_data，之后会流入报告提示词。
-            # 必须在这里再洗一次：这是唯一绕过 extract_key_info 清洗的路径。
-            summary, _ = sanitize(raw_content[:2000])
-            return [{
-                "key": "content_summary",
-                "value": summary,
-                "source_url": url,
-                "confidence": 0.7
-            }]
+            logger.warning(f"抽取结果归一化失败: {e}")
+            return self._extraction_fallback(raw_content, url)
+
+    def _extraction_fallback(self, raw_content: str, url: str) -> List[Dict[str, Any]]:
+        """抽取失败后的兜底：原文摘要 + **失败标记**。
+
+        失败标记是给下游看的：这段不是结构化事实，只是原文。评分器必须据此把它
+        排除在维度数据之外——否则整页原文里的"定价"两个字，就能让一家没抽出任何
+        数据的竞品在维度覆盖表里显示为 ✅（实测 4 家全失败 → 9.3 分 A 级）。
+        """
+        # 兜底路径直接把原文塞进 extracted_data，之后会流入报告提示词。
+        # 必须在这里再洗一次：这是唯一绕过 extract_key_info 清洗的路径。
+        summary, _ = sanitize(raw_content[:2000])
+        return [{
+            "key": "content_summary",
+            "value": summary,
+            "source_url": url,
+            "confidence": 0.7,
+            "extraction_failed": True,
+        }]
 
     async def assess_extracted_data(self, extracted_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """抽取质量评估——只测**可确定性验证**的属性。
@@ -354,6 +407,11 @@ class CoordinatorAgent:
 # 但 `finish_reason="length"` 是服务端给出的硬信号，不是推断出来的。
 # 真正确认失败模式的是 smoke4 那次「正文为空」，频率低于本次 12 次采样的检出下限。
 REPORT_MAX_TOKENS = 16384
+
+# 抽取专用的 token 预算：抽取本身输出很短，但推理模型（M3）会先把同一份预算花在
+# 思考上——沿用客户端默认的 4096 时，思考就能吃光，正文一个字都不剩
+# （实测 Empty response ×2 → 抽取失败 → 报告只能写"无法确认"、竞品名退化成域名）。
+EXTRACTION_MAX_TOKENS = 8192
 
 
 class CopywriterAgent:
@@ -487,6 +545,9 @@ class CopywriterAgent:
             ]
 
         call_kwargs = {"temperature": 0.1, "max_tokens": max_tokens or REPORT_MAX_TOKENS}
+        # 报告生成走流式：非流式下 httpx 的读超时约束的是「整段生成必须落在 timeout 内」，
+        # 长报告必然被掐断（实测 APITimeoutError@120s）；流式下超时只约束「两个 chunk 的间隔」，
+        # 生成总时长不再受它限制。同步实现丢进线程池，与 achat_completion 同一套路。
         response = await self.llm_client.achat_completion(prompt, **call_kwargs)
 
         if not response or not str(response).strip():
@@ -868,6 +929,9 @@ class MVPWorkflow:
                 )
                 state["status"] = "failed"
                 state["termination_reason"] = "抽取数据不足或缺来源"
+                # 中止出口不给质量分：门禁没过却挂着 10/10 A 级，是自相矛盾。
+                state["quality_score"] = None
+                state["quality_grade"] = None
                 # blocked 快照：门禁失败即中止（闭环末到不了 readiness），
                 # 在此落统一裁决观测，让前端/日志/评测看到一致的 blocked 出口
                 state["delivery_readiness"] = {
@@ -1153,6 +1217,10 @@ class MVPWorkflow:
             logger.error(f"工作流执行失败: {e}", exc_info=True)
             state["status"] = "failed"
             state["termination_reason"] = f"执行失败: {str(e)}"
+            # 失败了就别留着报告生成前算出的分数：那不是这次交付的质量，是上一次
+            # 成功路径的残留（实测 failed 的任务仍显示 10/10 A 级）。
+            state["quality_score"] = None
+            state["quality_grade"] = None
             self._update_task_status_in_sqlite(state)
             state["errors"].append({
                 "timestamp": datetime.now(),
@@ -1317,6 +1385,8 @@ class MVPWorkflow:
             logger.error(f"ReAct 工作流执行失败: {e}", exc_info=True)
             state["status"] = "failed"
             state["termination_reason"] = f"执行失败: {str(e)}"
+            state["quality_score"] = None
+            state["quality_grade"] = None
             state["errors"].append({
                 "timestamp": datetime.now(),
                 "stage": "workflow",
@@ -1599,7 +1669,7 @@ class MVPWorkflow:
                         },
                     )
                     return {
-                        "name": infer_competitor_name(url),
+                        "name": infer_competitor_name(url, None, _site_title(profile.get("pages"))),
                         "url": url,
                         "extracted_data": [],
                         "status": "blocked",
@@ -1610,7 +1680,7 @@ class MVPWorkflow:
 
                 extracted = await self.coordinator.extract_key_info(cleaned_content, url)
 
-            name = infer_competitor_name(url, extracted)
+            name = infer_competitor_name(url, extracted, _site_title(profile.get("pages")))
             page_count = len(profile.get("pages", []))
             self._emit("crawl_progress", "crawl", "running", f"抓取成功 {url}，覆盖 {page_count} 个站内页", payload={"url": url, "name": name, "status": "success", "page_count": page_count})
             page_summaries = [

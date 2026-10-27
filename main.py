@@ -147,7 +147,9 @@ def main():
                 print(f"  {icon} {comp['name']} ({url_display})")
 
         if result.get("verification_score") is not None:
-            print(f"可信度评分: {result['verification_score']}/10")
+            # 名字要说实话：这个数是**来源覆盖率 × 10**，不是可信度
+            # （mvp_workflow 早就注明"绝不能再称作可信度"）。
+            print(f"来源覆盖率: {result['verification_score']}/10")
 
         if result.get("quality_score") is not None:
             grade_display = result.get('quality_grade', 'N/A')

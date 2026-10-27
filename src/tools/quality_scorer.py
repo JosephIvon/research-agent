@@ -77,7 +77,12 @@ class QualityScorer:
             all_sources.extend([s for s in dim_score.sample_data if s])
 
         successful_competitors = [c for c in self.competitors if c.get("status") == "success"]
-        overall_score = self._calculate_overall_score(dimension_scores, len(successful_competitors))
+        # 抓到了却没抽出数据的竞品必须计进来：只数"家数"的话，一份"4 家里 2 家是空壳"
+        # 的报告照样打 10/10 A 级（实测）。
+        data_competitors = self._count_competitors_with_data()
+        overall_score = self._calculate_overall_score(
+            dimension_scores, len(successful_competitors), data_competitors
+        )
 
         if len(successful_competitors) == 0:
             abandonment_reasons.append("所有竞品抓取失败，无法生成报告")
@@ -111,6 +116,11 @@ class QualityScorer:
 
         for comp in self.competitors:
             for item in comp.get("extracted_data", []):
+                # 抽取失败后的兜底原文不是结构化事实：它的 value 是整页原文，
+                # 里面出现"定价""功能"等词就会被关键词匹配当成有数据（实测：
+                # 4 家竞品全部抽取失败 → 6 个维度被判 ✅ → 9.3 分 A 级）。
+                if isinstance(item, dict) and item.get("extraction_failed"):
+                    continue
                 key = str(item.get("key", "")).lower()
                 value = str(item.get("value", ""))
                 value_lower = value.lower()
@@ -148,8 +158,30 @@ class QualityScorer:
             sample_data=extracted_data[:3]
         )
 
-    def _calculate_overall_score(self, dimension_scores: List[DimensionScore], competitor_count: int) -> float:
-        """计算整体评分"""
+    def _count_competitors_with_data(self) -> int:
+        """有**结构化**数据的竞品数。抽取失败后的兜底原文不算。"""
+        count = 0
+        for comp in self.competitors:
+            items = [
+                item for item in comp.get("extracted_data", [])
+                if isinstance(item, dict) and not item.get("extraction_failed")
+            ]
+            if items:
+                count += 1
+        return count
+
+    def _calculate_overall_score(
+        self,
+        dimension_scores: List[DimensionScore],
+        competitor_count: int,
+        data_competitor_count: int = None,
+    ) -> float:
+        """计算整体评分。
+
+        data_competitor_count：有结构化数据的竞品数；None 表示"全部都有"（旧调用点语义）。
+        有数据竞品占比会把总分按比例打折——抓到了却抽不出数据的竞品必须扣分，
+        否则半份报告照样满分（实测 4 家里 2 家没数据 → 10.0 分 A 级）。
+        """
         if not dimension_scores:
             return 0.0
 
@@ -164,6 +196,9 @@ class QualityScorer:
             competitor_bonus = 1.0
 
         total_score = base_score + coverage_bonus + competitor_bonus
+        if competitor_count:
+            with_data = competitor_count if data_competitor_count is None else data_competitor_count
+            total_score *= min(1.0, with_data / competitor_count)
         return min(10.0, max(0.0, total_score))
 
     def _score_to_grade(self, score: float) -> str:

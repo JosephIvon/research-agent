@@ -160,7 +160,7 @@ Switch: `LLM_PROVIDER=deepseek`
 | `CORS_ALLOWED_ORIGINS` | Allowed frontend origins |
 | `API_AUTH_TOKEN` | Optional API Bearer token, recommended for public deployments |
 | `LLM_CONNECT_TIMEOUT` | LLM connection timeout (default: 10s) |
-| `LLM_READ_TIMEOUT` | LLM read timeout (default: 120s) |
+| `LLM_READ_TIMEOUT` | LLM read timeout (default: 300s) |
 
 ## Common Commands
 
