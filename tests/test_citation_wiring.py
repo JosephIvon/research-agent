@@ -34,6 +34,11 @@ class RecordingLLM:
         self.calls.append(prompt)
         return self.responses[min(len(self.calls) - 1, len(self.responses) - 1)]
 
+    def stream_completion(self, prompt, **kwargs):
+        """报告生成走流式（见 mvp_workflow.generate_report），记录方式保持一致。"""
+        self.calls.append(prompt)
+        return self.responses[min(len(self.calls) - 1, len(self.responses) - 1)]
+
 
 def make_writer(responses):
     writer = CopywriterAgent.__new__(CopywriterAgent)

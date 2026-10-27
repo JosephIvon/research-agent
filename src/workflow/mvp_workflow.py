@@ -548,7 +548,9 @@ class CopywriterAgent:
         # 报告生成走流式：非流式下 httpx 的读超时约束的是「整段生成必须落在 timeout 内」，
         # 长报告必然被掐断（实测 APITimeoutError@120s）；流式下超时只约束「两个 chunk 的间隔」，
         # 生成总时长不再受它限制。同步实现丢进线程池，与 achat_completion 同一套路。
-        response = await self.llm_client.achat_completion(prompt, **call_kwargs)
+        response = await asyncio.to_thread(
+            self.llm_client.stream_completion, prompt, **call_kwargs
+        )
 
         if not response or not str(response).strip():
             # 推理模型可能把 max_tokens 全花在 <think> 上，正文一个字都没输出，

@@ -239,7 +239,88 @@ def test_cli_label_matches_the_metric_it_prints():
 
 
 # --------------------------------------------------------------------------
-# 5. 超时默认值
+# 5. 报告生成走流式（长报告不再被整段读超时掐断）
+#
+# 实测：非流式下 httpx 的读超时约束的是「整段生成必须落在 timeout 内」，
+# 4 家竞品的长报告在 120s 处以 APITimeoutError 收场。流式下超时只约束
+# 「两个 chunk 的间隔」，生成总时长不再受它限制。
+# --------------------------------------------------------------------------
+
+_EXTRACTED_ONE = [
+    {"key": "pricing", "value": "标准版 49 美元/席位/月", "source_url": "https://acme.test"},
+]
+
+
+def _writer(llm):
+    from src.workflow.mvp_workflow import CopywriterAgent
+
+    writer = CopywriterAgent.__new__(CopywriterAgent)
+    writer.llm_client = llm
+    return writer
+
+
+def test_report_generation_goes_through_streaming():
+    """报告生成必须走流式——退回非流式就等于把长报告重新交给整段读超时。"""
+    llm = _RecordingLLM(["## 结论\n定价 49 美元"])
+
+    report = asyncio.run(
+        _writer(llm).generate_report("竞品对比", _EXTRACTED_ONE, {"score": 8, "warnings": []})
+    )
+
+    assert [c["method"] for c in llm.calls] == ["stream_completion"], \
+        f"报告生成没有走流式：{[c['method'] for c in llm.calls]}"
+    assert "49 美元" in report
+
+
+def test_real_client_streaming_feeds_the_report():
+    """真实客户端 + chunked 传输：正文必须能穿过流式路径，推理块不得混进报告。"""
+    from types import SimpleNamespace
+
+    from src.llm import OpenAICompatibleClient
+
+    class _Completions:
+        def __init__(self):
+            self.calls = []
+
+        def create(self, **params):
+            self.calls.append(params)
+            assert params.get("stream") is True, "报告路径必须发流式请求"
+            return [
+                SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="<think>分析</think>"))]),
+                SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="## 结论\n定价 49 美元"))]),
+            ]
+
+    client = OpenAICompatibleClient(
+        api_key="stub-key",
+        base_url="http://127.0.0.1:1/v1",
+        default_model="stub-model",
+        provider_name="stub-report",
+    )
+    client.client = SimpleNamespace(chat=SimpleNamespace(completions=_Completions()))
+
+    report = asyncio.run(
+        _writer(client).generate_report("竞品对比", _EXTRACTED_ONE, {"score": 8, "warnings": []})
+    )
+
+    assert "定价 49 美元" in report
+    assert "<think>" not in report, "推理块被当成正文交付了"
+
+
+def test_scripted_client_stream_strips_thinking():
+    """脚本客户端要与真实客户端对齐：推理块在客户端边界剥离。"""
+    from src.llm import ScriptedLLMClient
+
+    client = ScriptedLLMClient(script={"report": ["<think>推理</think>正文"]})
+    text = client.stream_completion([
+        {"role": "system", "content": "你是一名专业的市场调研分析师"},
+        {"role": "user", "content": "写报告"},
+    ])
+
+    assert text == "正文", text
+
+
+# --------------------------------------------------------------------------
+# 6. 超时默认值
 # --------------------------------------------------------------------------
 
 def test_llm_read_timeout_default_is_300s():

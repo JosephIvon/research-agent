@@ -34,6 +34,14 @@ EXTRACTED = [
 _counter = 0
 
 
+def _as_chunks(response):
+    """把桩响应变成流式 chunk 序列（真实客户端按 delta.content 逐片拼接）。"""
+    if isinstance(response, list):
+        return response
+    content = response.choices[0].message.content or ""
+    return [SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=content))])]
+
+
 def _make_client(response):
     """构造一个传输层被桩替换的 OpenAICompatibleClient。"""
     global _counter
@@ -45,6 +53,9 @@ def _make_client(response):
 
         def create(self, **params):
             self.calls.append(params)
+            if params.get("stream"):
+                # 报告生成走流式：桩必须给出可迭代的 chunk 序列
+                return _as_chunks(response)
             return response
 
     client = OpenAICompatibleClient(

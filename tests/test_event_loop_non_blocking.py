@@ -59,7 +59,11 @@ class SlowLLM(LLMClient):
         time.sleep(self.latency)
         return self.response
 
-    def stream_completion(self, messages, **kwargs):  # pragma: no cover - 未使用
+    def stream_completion(self, messages, **kwargs):
+        # 报告生成走流式（见 mvp_workflow.generate_report）：必须同样阻塞+计数，
+        # 否则"生成报告不阻塞事件循环"这条断言会退化成"根本没调用"
+        self.calls += 1
+        time.sleep(self.latency)
         return self.response
 
     def extract_structured_data(self, content, schema):  # pragma: no cover - 未使用

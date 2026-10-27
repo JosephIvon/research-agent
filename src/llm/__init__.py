@@ -908,7 +908,9 @@ class ScriptedLLMClient(LLMClient):
             messages, model=model, temperature=temperature, max_tokens=max_tokens,
             usage_sink=usage_sink,
         )
-        return result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+        text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+        # 与真实客户端对齐：推理块在客户端边界剥离，下游拿到的永远是纯正文
+        return strip_thinking(text)
 
     def extract_structured_data(self, content: str, schema: Dict[str, Any]) -> Dict[str, Any]:
         if "extract_structured" in self._script:
