@@ -59,19 +59,25 @@ class ComparisonAnalyzer:
         self.competitors = competitors
 
     def align_dimensions(self) -> List[Dict[str, Any]]:
-        """将不同竞品的数据对齐到同一维度"""
+        """将不同竞品的数据对齐到同一维度
+
+        关键词表必须**同时认英文标准 key 和中文**：抽取提示词发给模型的标准 key 是
+        pricing/features/models/target_users/...（英文），这里的关键词表却只有中文——
+        两边对不上时对比表整列是"未知"、完整性是"0 个维度有数据"，报告正文只能写
+        "无法确认"（实测：真实抽取产出的英文 key → 对比表全空）。
+        """
         aligned = []
         for comp in self.competitors:
             item = {
                 "name": comp["name"],
                 "url": comp["url"],
                 "status": comp["status"],
-                "pricing": self._extract_field(comp["extracted_data"], "定价", "价格", "月费", "年费", "收费"),
-                "features": self._extract_list(comp["extracted_data"], "功能", "特性", "优势"),
-                "models": self._extract_list(comp["extracted_data"], "模型", "支持", "引擎"),
-                "target_users": self._extract_field(comp["extracted_data"], "目标用户", "用户", "适用"),
-                "limitations": self._extract_list(comp["extracted_data"], "限制", "劣势", "不足"),
-                "integrations": self._extract_list(comp["extracted_data"], "集成", "对接", "生态"),
+                "pricing": self._extract_field(comp["extracted_data"], "pricing", "定价", "价格", "月费", "年费", "收费"),
+                "features": self._extract_list(comp["extracted_data"], "features", "功能", "特性", "优势"),
+                "models": self._extract_list(comp["extracted_data"], "models", "模型", "支持", "引擎"),
+                "target_users": self._extract_field(comp["extracted_data"], "target_users", "目标用户", "用户", "适用"),
+                "limitations": self._extract_list(comp["extracted_data"], "limitations", "限制", "劣势", "不足"),
+                "integrations": self._extract_list(comp["extracted_data"], "integrations", "集成", "对接", "生态"),
             }
             aligned.append(item)
         return aligned

@@ -336,3 +336,59 @@ def test_config_manager_shares_the_same_timeout_default():
     from src.config.settings import LLM_READ_TIMEOUT
 
     assert ConfigManager().get("LLM_READ_TIMEOUT") == LLM_READ_TIMEOUT
+
+
+# --------------------------------------------------------------------------
+# 7. 对比表必须读得到抽取产出的标准 key
+#
+# 真实抽取产出的 key 是英文标准 key（实测：name/pricing/models/features/source），
+# 而对比分析器只按中文关键词匹配 → 对比表整列"未知"、完整性"0 个维度有数据"，
+# 报告正文只能写"无法确认"（用户实测：对比表在，但大量"无法确认"）。
+# --------------------------------------------------------------------------
+
+_STANDARD_KEY_DATA = [
+    {"key": "pricing", "value": "标准版 49 美元/席位/月"},
+    {"key": "features", "value": "多模型路由、审计日志"},
+    {"key": "models", "value": "chat-pro、chat-lite"},
+    {"key": "target_users", "value": "中大型餐饮连锁"},
+]
+
+
+def _competitor_with_keys(items):
+    return {
+        "name": "Acme", "url": "https://acme.test", "status": "success",
+        "extracted_data": items,
+    }
+
+
+def test_comparison_table_reads_the_english_standard_keys():
+    """对比分析器必须认抽取提示词发的标准 key。"""
+    from src.tools.comparison_tool import ComparisonAnalyzer
+
+    analyzer = ComparisonAnalyzer([_competitor_with_keys(_STANDARD_KEY_DATA)])
+    aligned = analyzer.align_dimensions()[0]
+
+    assert aligned["pricing"], "定价没读到：标准 key 没被匹配"
+    assert aligned["features"], "功能没读到"
+    assert aligned["models"], "支持模型没读到"
+    assert aligned["target_users"], "目标用户没读到"
+
+    table = analyzer.generate_comparison_table()
+    assert "未知" not in table, table
+    assert "49 美元" in table, table
+
+
+def test_comparison_table_still_reads_chinese_keys():
+    """阴性对照：中文 key 的旧数据形态不能被这次修复打死。"""
+    from src.tools.comparison_tool import ComparisonAnalyzer
+
+    zh = [
+        {"key": "定价", "value": "标准版 49 美元/席位/月"},
+        {"key": "功能", "value": "多模型路由、审计日志"},
+        {"key": "模型", "value": "chat-pro、chat-lite"},
+        {"key": "目标用户", "value": "中大型餐饮连锁"},
+    ]
+    analyzer = ComparisonAnalyzer([_competitor_with_keys(zh)])
+
+    assert analyzer.align_dimensions()[0]["pricing"], "中文 key 的定价被读空了"
+    assert "未知" not in analyzer.generate_comparison_table()
