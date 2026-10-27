@@ -57,6 +57,12 @@ from src.config.settings import (
     TENCENT_APP_SECRET,
     TIMEOUT_SECONDS,
 )
+from src.agent.config import (
+    AGENT_MAX_STEPS,
+    AGENT_TOKEN_BUDGET,
+    AGENT_USD_BUDGET,
+    AGENT_WALL_CLOCK_BUDGET,
+)
 from src.auth.jwt_auth import create_access_token, decode_access_token
 from src.auth.user_db import get_user_db
 from src.security.url_validation import validate_fetch_url, validate_fetch_urls
@@ -577,6 +583,13 @@ def _safe_settings_payload() -> Dict[str, Any]:
         "search_max_results": SEARCH_MAX_RESULTS,
         "feishu_configured": bool(FEISHU_APP_ID and FEISHU_APP_SECRET),
         "tencent_configured": bool(TENCENT_APP_ID and TENCENT_APP_SECRET),
+        # Agent 四道预算闸门的当前默认值。前端要把它们当占位提示回显，
+        # 否则用户面对一个空输入框，不知道「提高预算」是提高到多少。
+        # 权威来源是 src/agent/config.py，这里只透出数字，不透出实现。
+        "agent_max_steps": AGENT_MAX_STEPS,
+        "agent_token_budget": AGENT_TOKEN_BUDGET,
+        "agent_wall_clock_budget": AGENT_WALL_CLOCK_BUDGET,
+        "agent_usd_budget": AGENT_USD_BUDGET,
     }
 
 
@@ -779,6 +792,13 @@ class TaskRequest(BaseModel):
     auth_credentials: Optional[AuthCredentials] = None
     login_url: Optional[str] = Field(default=None, min_length=1, max_length=2048)
     enable_search: bool = True
+    # 预算覆盖。此前四道闸门只有环境变量一个入口，而界面在 partial 时会提示
+    # 「建议提高预算后重跑」——用户无处可调，文案指着一个不存在的入口。
+    # 不传 = 用服务端默认值。
+    max_steps: Optional[int] = Field(default=None, ge=1, le=100)
+    token_budget: Optional[int] = Field(default=None, ge=1000, le=2_000_000)
+    wall_clock_budget: Optional[int] = Field(default=None, ge=10, le=3600)
+    usd_budget: Optional[float] = Field(default=None, ge=0.01, le=100)
     custom_selectors: Optional[Dict[str, List[str]]] = None
     deliverables: Dict[str, bool] = Field(
         default_factory=lambda: {"report": True, "prd": True}
@@ -870,7 +890,13 @@ async def _run_research_task(task_id: str, req: TaskRequest, user_id: Optional[s
 
     emitter._on_event = on_event
 
-    workflow = MVPWorkflow(event_emitter=emitter)
+    workflow = MVPWorkflow(
+        event_emitter=emitter,
+        max_steps=req.max_steps,
+        token_budget=req.token_budget,
+        wall_clock_budget=req.wall_clock_budget,
+        usd_budget=req.usd_budget,
+    )
 
     target_sites_dict = _target_sites(req)
     auth_creds = _auth_dict(req.auth_credentials)

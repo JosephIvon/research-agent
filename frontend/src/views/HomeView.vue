@@ -140,6 +140,30 @@
                 </div>
                 <el-switch v-model="enableAutoSearch" />
               </div>
+              <div class="advanced-row budget-row">
+                <div>
+                  <strong>{{ t('message.budget_options') }}</strong>
+                  <p>{{ t('message.budget_hint') }}</p>
+                </div>
+                <div class="budget-inputs">
+                  <label>
+                    <span>{{ t('message.budget_steps') }}</span>
+                    <el-input v-model="budgetMaxSteps" type="number" :placeholder="budgetDefaults.maxSteps" />
+                  </label>
+                  <label>
+                    <span>{{ t('message.budget_tokens') }}</span>
+                    <el-input v-model="budgetTokens" type="number" :placeholder="budgetDefaults.tokens" />
+                  </label>
+                  <label>
+                    <span>{{ t('message.budget_wall_clock') }}</span>
+                    <el-input v-model="budgetWallClock" type="number" :placeholder="budgetDefaults.wallClock" />
+                  </label>
+                  <label>
+                    <span>{{ t('message.budget_usd') }}</span>
+                    <el-input v-model="budgetUsd" type="number" :placeholder="budgetDefaults.usd" />
+                  </label>
+                </div>
+              </div>
             </div>
           </section>
         </div>
@@ -229,6 +253,7 @@ import {
 import LanguageSwitcher from '../i18n/LanguageSwitcher.vue'
 import ThemeToggle from '../components/ThemeToggle.vue'
 import { useResearchStore } from '../stores/research'
+import { settingsApi } from '../api'
 
 const { t } = useI18n()
 
@@ -247,6 +272,35 @@ const deliverables = ref({
   prd: true
 })
 const isSubmitting = ref(false)
+
+// 预算覆盖：此前界面在 partial 时提示「建议提高预算后重跑」，却没有任何地方
+// 能调预算——文案指着一个不存在的入口。留空 = 用服务端默认值。
+const budgetMaxSteps = ref('')
+const budgetTokens = ref('')
+const budgetWallClock = ref('')
+const budgetUsd = ref('')
+const budgetDefaults = ref({ maxSteps: '', tokens: '', wallClock: '', usd: '' })
+
+function optionalBudget(raw) {
+  if (raw === '' || raw === null || raw === undefined) return undefined
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? n : undefined
+}
+
+async function loadBudgetDefaults() {
+  try {
+    const d = await settingsApi.get()
+    if (!d) return
+    budgetDefaults.value = {
+      maxSteps: d.agent_max_steps != null ? String(d.agent_max_steps) : '',
+      tokens: d.agent_token_budget != null ? String(d.agent_token_budget) : '',
+      wallClock: d.agent_wall_clock_budget != null ? String(d.agent_wall_clock_budget) : '',
+      usd: d.agent_usd_budget != null ? String(d.agent_usd_budget) : ''
+    }
+  } catch (e) {
+    // 读不到默认值只是没有占位提示，不该拦住提交
+  }
+}
 
 const filledSiteCount = computed(() => competitorSites.value.filter(site => site.url.trim()).length)
 const loginSiteCount = computed(() => competitorSites.value.filter(site => site.url.trim() && site.authEnabled).length)
@@ -327,7 +381,11 @@ async function startResearch() {
       query: query.value.trim(),
       urls: normalizedSites.map(site => site.url),
       target_sites: normalizedSites,
-      enable_search: enableAutoSearch.value
+      enable_search: enableAutoSearch.value,
+      max_steps: optionalBudget(budgetMaxSteps.value),
+      token_budget: optionalBudget(budgetTokens.value),
+      wall_clock_budget: optionalBudget(budgetWallClock.value),
+      usd_budget: optionalBudget(budgetUsd.value)
     }
 
     const run = await store.createAsyncTask(params, {
@@ -345,6 +403,11 @@ onMounted(() => {
   if (route.query.query) {
     query.value = String(route.query.query)
   }
+  // 从「结果不完整」提示跳回来时，直接把高级选项展开——用户正是为了调预算来的
+  if (route.query.budget) {
+    showAdvanced.value = true
+  }
+  loadBudgetDefaults()
 })
 </script>
 
@@ -613,6 +676,30 @@ h2 {
   p {
     color: #64748b;
     margin: 4px 0 0;
+  }
+}
+
+/* 预算覆盖：四道闸门并排，窄屏折行 */
+.budget-row {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.budget-inputs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  gap: 10px 12px;
+  flex: 1 1 320px;
+
+  label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  span {
+    color: #64748b;
+    font-size: 12px;
   }
 }
 

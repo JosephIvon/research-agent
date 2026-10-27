@@ -547,6 +547,9 @@ class MVPWorkflow:
                  search_factory=None,
                  url_validator=None,
                  token_budget: Optional[int] = None,
+                 max_steps: Optional[int] = None,
+                 wall_clock_budget: Optional[float] = None,
+                 usd_budget: Optional[float] = None,
                  agent_mode: Optional[str] = None):
         """依赖注入口：全部可选，None 时走生产默认。
 
@@ -569,6 +572,11 @@ class MVPWorkflow:
         self._crawler_factory = crawler_factory
         self._search_factory = search_factory
         self._token_budget = token_budget  # None → 使用点运行时读 AGENT_TOKEN_BUDGET
+        # 其余三道预算闸门同样支持注入。此前只有 token 能调，用户在界面说
+        # 「预算不够」却无处可调——文案指着一个不存在的入口。
+        self._max_steps = max_steps            # None → Runner 用 config.AGENT_MAX_STEPS
+        self._wall_clock_budget = wall_clock_budget  # None → config.AGENT_WALL_CLOCK_BUDGET
+        self._usd_budget = usd_budget          # None → AGENT_USD_BUDGET
         self._agent_mode = agent_mode      # None → 使用点运行时读 AGENT_MODE 环境变量
         self._validate_url = url_validator if url_validator is not None else validate_fetch_url
         self._url_validator_injected = url_validator is not None
@@ -1182,7 +1190,7 @@ class MVPWorkflow:
             budget = TaskBudget(
                 state["task_id"],
                 max_tokens=self._token_budget if self._token_budget is not None else AGENT_TOKEN_BUDGET,
-                max_usd=AGENT_USD_BUDGET,
+                max_usd=self._usd_budget if self._usd_budget is not None else AGENT_USD_BUDGET,
             )
             workspace: Dict[str, Any] = {}
 
@@ -1225,8 +1233,13 @@ class MVPWorkflow:
                 workspace=workspace,
                 budget=budget,
                 # token_budget 与 TaskBudget 同源（M6 双口径），None 时 Runner
-                # 落 config 默认——生产二者本就同值
+                # 落 config 默认——生产二者本就同值。
+                # 步数与墙钟此前**永远取默认**：用户界面说「预算不够」，
+                # 而这两道闸门根本没有入口。三个一起注入，TaskBudget 与
+                # Runner 也就不再各读各的（同一 token 预算两个真值源）。
                 token_budget=self._token_budget,
+                max_steps=self._max_steps,
+                wall_clock_budget=self._wall_clock_budget,
                 on_step=_on_step,
             )
             result = await runner.run(user_query, target_urls=target_urls)

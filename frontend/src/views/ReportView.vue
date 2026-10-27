@@ -160,7 +160,11 @@
             :closable="false"
             title="本次结果不完整：任务触发了预算上限并提前收束"
             description="下方报告由预算耗尽前已采集的证据生成，可能没有覆盖全部竞品或调研维度。请勿把它当作完整结论；如需完整报告，请提高预算后重跑。"
-          />
+          >
+            <el-button type="primary" size="small" @click="rerunWithHigherBudget">
+              调整预算后重跑
+            </el-button>
+          </el-alert>
 
           <el-alert
             v-if="injectionFindingsCount > 0"
@@ -293,7 +297,7 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   ArrowDown,
@@ -320,6 +324,7 @@ import { gradeClassName, resolveGrade } from '../utils/reportGrade'
 import { researchApi } from '../api'
 
 const route = useRoute()
+const router = useRouter()
 const store = useResearchStore()
 use([RadarChart, RadarComponent, TooltipComponent, LegendComponent, GridComponent, CanvasRenderer])
 
@@ -442,6 +447,13 @@ function formatCostUsd(report) {
 
 function openTrace() {
   if (traceUrl.value) window.open(traceUrl.value, '_blank')
+}
+
+// 「结果不完整」提示要能落地：跳回首页并把原问题带上，预算面板展开。
+// 此前只有一句「请提高预算后重跑」，而界面里没有任何地方能调预算——
+// 用户被指到一个不存在的入口，只能干等。
+function rerunWithHigherBudget() {
+  router.push({ path: '/', query: { query: report.value?.query || '', budget: '1' } })
 }
 
 function applyFeedbackSummary(summary) {
