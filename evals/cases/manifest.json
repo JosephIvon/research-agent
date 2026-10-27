@@ -1,6 +1,6 @@
 {
-  "version": "v1.7",
-  "description": "M4 评测集 v1.7：v1.6 加入 gap_dimension_missing（报告没写的维度）；v1.7 加入 gap_both——数值缺口（Acme 写错定价）与维度缺口（Beta 无定价证据）**同任务组合**：两站各走数值/维度补抓路径，顺带实证预算合并（数值 1 页 + 维度 2 页 = 3 页上限）。共 20 条，样本仍不足 40。",
+  "version": "v1.8",
+  "description": "M4 评测集 v1.8：v1.7 的 gap_both 之后加入 3 条 coverage 判别 case（cov_gap_undeclared / cov_gap_declared / cov_gap_partial_declared）——期望维度真缺失且未标注→1、缺口全标注→3、只标注一部分→1，为下游 judge 的 coverage 三分支提供非恒定样本（v1.7 集上三分支 0 命中）。共 23 条，样本仍不足 40。",
   "cases": [
     {
       "id": "reg_doccollab",
@@ -647,6 +647,70 @@
           "pricing"
         ]
       }
+    },
+    {
+      "id": "cov_gap_undeclared",
+      "category": "coverage",
+      "mode": "legacy",
+      "query": "调研 LogProbe 日志审计 SaaS 的定价与支持模型",
+      "sites": [
+        {
+          "key": "probe",
+          "url": "https://cov-undeclared.test/",
+          "pages": [
+            "index.html"
+          ]
+        }
+      ],
+      "expected": {
+        "dimensions": [
+          "pricing",
+          "models"
+        ]
+      }
+    },
+    {
+      "id": "cov_gap_declared",
+      "category": "coverage",
+      "mode": "legacy",
+      "query": "调研 LogProbe 日志审计 SaaS 的定价与支持模型",
+      "sites": [
+        {
+          "key": "probe",
+          "url": "https://cov-declared.test/",
+          "pages": [
+            "index.html"
+          ]
+        }
+      ],
+      "expected": {
+        "dimensions": [
+          "pricing",
+          "models"
+        ]
+      }
+    },
+    {
+      "id": "cov_gap_partial_declared",
+      "category": "coverage",
+      "mode": "legacy",
+      "query": "调研 LogProbe 日志审计 SaaS 的定价、支持模型与功能",
+      "sites": [
+        {
+          "key": "probe",
+          "url": "https://cov-partial.test/",
+          "pages": [
+            "index.html"
+          ]
+        }
+      ],
+      "expected": {
+        "dimensions": [
+          "pricing",
+          "models",
+          "features"
+        ]
+      }
     }
   ],
   "fixture_digests": {
@@ -658,6 +722,12 @@
     "conf_specs/llm.json": "6c2aa4b6bda34c280f76b98bc660c74cd484d0224a6e8fa89e353dbeafe4fa6b",
     "conf_specs/sites/docsA/specs.html": "ccd910e8455108713040e2b2f5593640601d3fbe3b6765958cf3db2469ccb39e",
     "conf_specs/sites/forumB/thread.html": "7c541d8f54f5ee7f2df55a465de751587b10e4cf084984d4da061fdf0344be86",
+    "cov_gap_declared/llm.json": "e2894a573befea6f5e15f75ff6e5016513c2d735ea82275019c994af55b45fda",
+    "cov_gap_declared/sites/probe/index.html": "33c9603bea07fe30ebebf188cf864d4c83bcfd0bd468345cda32e4b9535bf5cc",
+    "cov_gap_partial_declared/llm.json": "e2894a573befea6f5e15f75ff6e5016513c2d735ea82275019c994af55b45fda",
+    "cov_gap_partial_declared/sites/probe/index.html": "33c9603bea07fe30ebebf188cf864d4c83bcfd0bd468345cda32e4b9535bf5cc",
+    "cov_gap_undeclared/llm.json": "6d94ff1c1b55c443cc89e162422931bf20b7cb31a703cbb4ccf1682f22272b59",
+    "cov_gap_undeclared/sites/probe/index.html": "33c9603bea07fe30ebebf188cf864d4c83bcfd0bd468345cda32e4b9535bf5cc",
     "cross_cloudprice/llm.json": "ebc24edb0dc30d1489caaaf5666aef6d31d0720e98e8688dc255c3691f3609e6",
     "cross_cloudprice/sites/cloud_a/index.html": "c72fd0493f01876f242884d87d42d3f2afe6ba4567804a95e6f791dbb8297c9a",
     "cross_cloudprice/sites/cloud_b/index.html": "b85ed359eeb06cd87770235ad4107a90e093962157d07f2455fdc9931a0bd080",

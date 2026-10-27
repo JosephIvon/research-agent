@@ -1,0 +1,21 @@
+{
+  "extract_sequence": [
+    [
+      [
+        {"key": "pricing", "value": "入门版 59 元/月", "confidence": 0.9},
+        {"key": "pricing", "value": "专业版 199 元/月", "confidence": 0.9},
+        {"key": "pricing", "value": "企业版 599 元/月", "confidence": 0.9},
+        {"key": "features", "value": "日志检索", "confidence": 0.9},
+        {"key": "features", "value": "实时告警", "confidence": 0.9},
+        {"key": "target_users", "value": "中小团队", "confidence": 0.9},
+        {"key": "integrations", "value": "支持 Prometheus 导出", "confidence": 0.9},
+        {"key": "limitations", "value": "私有化部署未公开", "confidence": 0.9},
+        {"key": "reviews", "value": "用户评价检索速度快", "confidence": 0.9},
+        {"key": "models", "value": "SaaS 多租户", "confidence": 0.9}
+      ]
+    ]
+  ],
+  "report": [
+    "## 定价\n\nLogProbe 入门版 59 元/月 {{cite:probe:0}}。\n\nLogProbe 专业版 199 元/月 {{cite:probe:1}}。\n\nLogProbe 企业版 599 元/月 {{cite:probe:2}}。\n\n数据缺失维度：支持模型\n"
+  ]
+}
