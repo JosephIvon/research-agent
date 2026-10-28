@@ -96,7 +96,7 @@
     "disambiguation_candidates": ["百度搭子独立App（…）（置信度 0.62）", "…"],
     "resolved_confidence": 0.72
   },
-  "criteria": {
+  "competitor_criteria": {
     "layers": ["direct", "alternative", "adjacent"],
     "must_include": [], "must_exclude": [],
     "min_count": 3, "max_count": 5, "candidate_pool": 10,
@@ -112,6 +112,11 @@
   "error": ""
 }
 ```
+
+> **更正（2026-10-29 执行时）**：本节原写作 `"criteria"`，后端 `ResearchPlan.to_dict()`
+> 实际吐的是 **`competitor_criteria`**（`src/workflow/research_plan.py:335`）。
+> 前端两个名字都认，但**契约以 `to_dict()` 为准**——按文档取值而文档写错，
+> 表现是"字段全空"而不是报错。
 
 ### 4.2 `discovery`（后端 `DiscoveryResult.to_dict()`）
 
