@@ -38,14 +38,34 @@ _MEDIA_HOST_HINTS = (
     "36kr.", "tmtpost.", "huxiu.", "ifeng.", "sina.com", "thepaper.",
     "leiphone.", "eefocus.", "ithome.", "pconline.", "zol.", "cnbeta.",
     "geekpark.", "pingwest.", "cyzone.", "ebrun.", "iyiou.", "analysys.",
-    "sspai.", "geekbang.", "infoq.", "tmtpost.com", "donews.",
+    "sspai.", "geekbang.", "infoq.", "donews.",
+    # 实测（2026-10-28）补的：这些域名不带"媒体"字样，但全是内容站
+    "woshipm.", "aitntnews.", "aigc.cn", "ai-bot.cn", "hub.baai.",
+    "10100.com", "dfcfw.", "gamer.com.tw", "pdf.dfcfw.", "assets.kpmg.",
+    "iopn.library.", "dfcfw.com", "eeo.", "nbd.", "stcn.", "yicai.",
+    "jiemian.", "huxiu.", "tmtpost.", "chinaventure.", "iyiou.", "donews.",
 )
 
-# 产品收录 / 比价 / 电商目录
+# 论坛 / 社区（不是产品官网）
+_FORUM_HOST_HINTS = (
+    "forum.", "bbs.", "tieba.", "community.", "gamer.com.tw", "guokr.",
+    "v2ex.", "zhihu.com/question", "xda.",
+)
+
+# 收录 / 目录 / 工具聚合
 _DIRECTORY_HOST_HINTS = (
     "watcha.", "gwdang.", "manmanbuy.", "duitang.", "smzdm.", "coolbuy.",
     "taobao.", "jd.com", "amazon.", "wenxuecity.", "xueshu.", "docin.",
     "doc88.", "pan.baidu.", "aliyundrive.",
+    # 实测补的：工具收录/榜单/评测目录
+    "aitoollab.", "aitop100.", "boardmix.", "hub.baai.ac.cn", "similaritylabs.",
+    "similarlabs.", "fly63.", "ai-bot.cn",
+)
+
+# 文件直链：不是网站（实测：pdf.dfcfw.com 的研报 PDF 被当成了竞品官网）
+_FILE_SUFFIXES = (
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip", ".rar",
+    ".csv", ".mp4", ".mp3", ".apk",
 )
 
 # 路径段：内容站/聚合页的常见路径
@@ -54,6 +74,11 @@ _MEDIA_PATH_HINTS = (
     "/encyclopedia", "/zhuanti", "/rank", "/list", "/roundup", "/collection",
     "/tag/", "/category", "/review", "/guide", "/tutorial", "/how-to",
     "/product/", "/products/", "/posts/",
+    # 论坛/社区路径（实测：forum.gamer.com.tw 的帖子页）
+    "/forum", "/bbs/", "/tieba", "/community/", "/c.php", "/thread",
+    # 分类/筛选聚合页（实测：ai.fly63.com/cate/31-1、aigc.cn/favorites/…）
+    "/cate/", "/cate", "/favorites/", "/favorites", "/tag", "/label/",
+    "/use-cases/", "/solutions/", "/case-studies/",
 )
 
 # 标题里的**文章味**：中文搜索结果里，盘点/对比/评测类标题几乎必然是文章页
@@ -64,6 +89,11 @@ _ARTICLE_TITLE_HINTS = (
     "前十", "哪家", "区别", "选型", "体验", "测评", "分析报告",
     "还有哪些", "怎么样", "吗", "？", "?",
     "top", " vs ", "vs.",
+    # 实测补的（2026-10-28 真实候选池）：月报/前瞻/格局/心得/竞品分析 等
+    "报告", "分析", "月报", "年报", "季报", "白皮书", "前瞻", "格局",
+    "心得", "分享", "记录", "复盘", "观察", "洞察", "综述", "趋势",
+    "浅谈", "探索", "必备", "竞品", "同行", "演进", "闭环",
+    "多款", "款免费", "入选", "亮相", "上新",
 )
 
 SITE_PRODUCT = "product_site"
@@ -100,15 +130,21 @@ def classify_site(url: str, title: str = "") -> str:
     host = host_of(url)
     if not host:
         return SITE_MEDIA
+    path = (urlparse(url).path or "").lower()
+    # 文件直链不是网站（实测：pdf.dfcfw.com 的研报 PDF 被当成了"竞品官网"，
+    # 还被真去抓了，抓回来是"Download is starting"）
+    if path.endswith(_FILE_SUFFIXES):
+        return SITE_MEDIA
     if any(hint in host for hint in _APP_STORE_HOST_HINTS):
         return SITE_APP_STORE
     if any(hint in host for hint in _UGC_PLATFORM_HOST_HINTS):
+        return SITE_UGC
+    if any(hint in host for hint in _FORUM_HOST_HINTS):
         return SITE_UGC
     if any(hint in host for hint in _MEDIA_HOST_HINTS):
         return SITE_MEDIA
     if any(hint in host for hint in _DIRECTORY_HOST_HINTS):
         return SITE_DIRECTORY
-    path = (urlparse(url).path or "").lower()
     if any(hint in path for hint in _MEDIA_PATH_HINTS):
         return SITE_MEDIA
     text = (title or "").lower()

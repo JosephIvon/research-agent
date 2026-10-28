@@ -9,6 +9,8 @@ from src.workflow import site_types as st
 from src.workflow import search_stages as ss
 from src.workflow import research_plan as rp
 
+import pytest
+
 
 class _StubSearch:
     """按查询词里的关键词返回固定结果（不联网）。"""
@@ -68,6 +70,40 @@ def test_article_title_makes_a_product_site_a_media_page():
 
 def test_empty_url_is_not_a_product_site():
     assert st.classify_site("", "某产品") != st.SITE_PRODUCT
+
+
+# ---- 真实轮次里出现过的"不是竞品官网"的页面（2026-10-28 实测）----------
+
+@pytest.mark.parametrize("url,title", [
+    ("https://pdf.dfcfw.com/pdf/H3_AP202605261822873336_1.pdf",
+     "2026年4月中国头部AI 用户行为月报"),
+    ("https://assets.kpmg.com/content/dam/kpmgsites/cn/pdf/zh/2025/06/x.pdf",
+     "人工智能就绪度白皮书"),
+    ("https://www.woshipm.com/ai/6333818.html",
+     "老板说“分析一下竞品的Deep Research”，我交出了这份报告"),
+    ("https://forum.gamer.com.tw/C.php?bsn=85831&snA=40", "【心得】BabeChat 使用心得"),
+    ("https://ai.fly63.com/cate/31-1", "AI角色扮演"),
+    ("https://www.aigc.cn/favorites/ai-role-play-chatbot", "AI角色扮演聊天机器人"),
+    ("https://cloud.google.com/use-cases/free-ai-tools?hl=zh-CN", "2026 年必备的10 多款免费AI 工具"),
+    ("https://ai-bot.cn/ai-virtual-companion-social-app/",
+     "15个AI虚拟女友/男友社交软件，专属恋爱聊天和情感陪伴"),
+    ("https://www.aitoollab.cn/tools/dumate/", "DuMate（百度搭子）"),
+    ("https://www.aitop100.cn/tools/dumate-cn", "百度搭子DuMate：百度通用桌面AI智能体"),
+])
+def test_real_pages_that_are_not_product_sites(url, title):
+    assert st.classify_site(url, title) != st.SITE_PRODUCT, url
+
+
+@pytest.mark.parametrize("url,title", [
+    ("https://www.lumichat.ink/zh", "LumiChat云梦伴聊"),
+    ("https://miyu-ai.com.cn/", "miyuai聊天"),
+    ("https://www.aijuqingapp.com/", "AI剧情: AI 角色聊天与多角色互动剧本"),
+    ("https://lianyu.chat/", "予念 YuNian"),
+    ("https://www.sayloai.com/zh-Hans", "免费AI 角色故事聊天"),
+    ("https://www.tofaipro.cn/", "Tofai"),
+])
+def test_real_product_sites_stay_product_sites(url, title):
+    assert st.classify_site(url, title) == st.SITE_PRODUCT, url
 
 
 def test_looks_like_aggregator_accepts_title():

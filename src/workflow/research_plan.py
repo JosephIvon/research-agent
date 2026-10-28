@@ -121,6 +121,39 @@ DEFAULT_LAYERS = ("direct",)
 
 # ---- 搜索四段式 ------------------------------------------------------
 SEARCH_STAGES = ("entity_anchor", "competitor_discovery", "per_competitor_verify", "counter_evidence")
+
+# 阶段名的同义改写（实测：模型会写 "discovery"/"competitor_search"/"verify"）。
+# 与角度同义折叠一个道理：**改写不是错误**，为它把整份计划扔掉最亏；
+# 但阶段名错了是真错——认不出来就查不到东西（实测：阶段名不匹配 → 0 条查询 →
+# 候选池 0 家，整轮空转且看不出来）。
+_STAGE_SYNONYMS = {
+    "entity_anchor": ("anchor", "entity", "subject", "entity_resolution", "identity",
+                      "主体锚定", "主体确认", "主体识别"),
+    "competitor_discovery": ("discovery", "competitor_search", "competitors",
+                             "find_competitors", "competitor_candidates", "candidate_pool",
+                             "竞品发现", "竞品检索", "竞品候选"),
+    "per_competitor_verify": ("verify", "verification", "competitor_verify",
+                               "per_competitor", "detail", "verify_competitors",
+                               "逐家验证", "竞品验证"),
+    "counter_evidence": ("counter", "negative_evidence", "critique", "counterpoints",
+                         "risks", "complaints", "反证", "反面证据"),
+}
+
+
+def fold_stage(name: str) -> Optional[str]:
+    """把阶段名折叠回四个规范阶段之一；认不出来返回 None。"""
+    raw = str(name or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if not raw:
+        return None
+    if raw in SEARCH_STAGES:
+        return raw
+    for canonical, aliases in _STAGE_SYNONYMS.items():
+        if raw == canonical:
+            return canonical
+        for alias in aliases:
+            if raw == alias.lower() or raw in alias.lower() or alias.lower() in raw:
+                return canonical
+    return None
 STAGE_LABELS = {
     "entity_anchor": "实体锚定",
     "competitor_discovery": "竞品发现",
@@ -600,7 +633,9 @@ def validate_plan_data(data: Dict[str, Any]) -> List[str]:
                 problems.append("search_plan 元素不是对象")
                 continue
             name = str(stage.get("stage") or "")
-            if name not in SEARCH_STAGES:
+            # 阶段名能折叠回规范阶段就不是错（同义改写，代码会折），
+            # 只有连折叠都认不出来才算非法。
+            if fold_stage(name) is None:
                 problems.append(f"搜索阶段非法: {name}")
     return problems
 
@@ -669,8 +704,8 @@ def build_plan_from_data(data: Dict[str, Any], user_query: str) -> ResearchPlan:
     for item in data.get("search_plan") or []:
         if not isinstance(item, dict):
             continue
-        name = str(item.get("stage") or "")
-        if name not in SEARCH_STAGES:
+        name = fold_stage(item.get("stage"))
+        if name is None:
             continue
         queries = [
             str(q).strip() for q in (item.get("queries") or [])
@@ -680,6 +715,24 @@ def build_plan_from_data(data: Dict[str, Any], user_query: str) -> ResearchPlan:
             stage=name,
             queries=queries,
             acceptance=str(item.get("acceptance") or ""),
+        ))
+
+    # **每个阶段都要有查询词**：模型漏给或阶段名对不上时，用默认查询词补上。
+    # 缺查询词的阶段 = 该阶段一条都不搜 = 候选池空 = 整轮空转，
+    # 而这种空转从外面看是"搜索正常、就是没竞品"——最难查的一种故障。
+    entity_name_for_queries = str(entity.get("name") or "").strip() or _entity_name_from_query(user_query)
+    default_stages = {s.stage: s for s in _default_search_queries(entity_name_for_queries)}
+    covered = {s.stage for s in stages if s.queries}
+    for stage_name in SEARCH_STAGES:
+        if stage_name in covered:
+            continue
+        fallback = default_stages.get(stage_name)
+        if not fallback or not fallback.queries:
+            continue
+        stages.append(SearchStage(
+            stage=stage_name,
+            queries=list(fallback.queries),
+            acceptance=fallback.acceptance,
         ))
 
     questions = [

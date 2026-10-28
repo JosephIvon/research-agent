@@ -390,6 +390,40 @@ def test_generic_base_query_gets_competitor_name():
     assert "官网 猫箱" in queries
 
 
+def test_stage_names_are_folded_to_canonical_ones():
+    """模型写 "discovery"/"competitor_search" 是同义改写，不是错误。"""
+    assert rp.fold_stage("entity_anchor") == "entity_anchor"
+    assert rp.fold_stage("discovery") == "competitor_discovery"
+    assert rp.fold_stage("competitor_search") == "competitor_discovery"
+    assert rp.fold_stage("find_competitors") == "competitor_discovery"
+    assert rp.fold_stage("verify") == "per_competitor_verify"
+    assert rp.fold_stage("counter") == "counter_evidence"
+    assert rp.fold_stage("完全不是阶段名") is None
+
+
+def test_paraphrased_stage_names_still_yield_queries():
+    """阶段名对不上 → 0 条查询 → 候选池空 → 整轮空转（实测踩过）。"""
+    data = _plan_data()
+    data["search_plan"] = [
+        {"stage": "discovery", "queries": ["百度搭子 竞品"]},
+        {"stage": "anchor", "queries": ["百度搭子 官网"]},
+    ]
+    plan = rp.build_plan_from_data(data, "找一下百度搭子的全部竞品信息")
+    assert plan.queries_for("competitor_discovery") == ["百度搭子 竞品"]
+    assert plan.queries_for("entity_anchor") == ["百度搭子 官网"]
+
+
+def test_every_stage_always_has_queries():
+    """缺查询词的阶段必须用默认查询词补上——空阶段等于这一段不搜。"""
+    data = _plan_data()
+    data["search_plan"] = [
+        {"stage": "entity_anchor", "queries": ["百度搭子 官网"]},
+    ]
+    plan = rp.build_plan_from_data(data, "找一下百度搭子的全部竞品信息")
+    assert plan.queries_for("competitor_discovery"), "竞品发现阶段不能没有查询词"
+    assert plan.queries_for("entity_anchor")
+
+
 # ----------------------------------------------------------------------
 # 搜索四段式
 # ----------------------------------------------------------------------
