@@ -1,18 +1,26 @@
 """搜索工具模块 - 封装搜索引擎API"""
+import re
+
 import requests
 from typing import List, Dict, Optional
+
+# 长中文整句的相关性下限：命中的二元组长度占比
+_LONG_QUERY_COVERAGE_MIN = 0.25
 from src.config.settings import (
     SERPAPI_KEY,
     SEARXNG_URL,
     SEARCH_PROVIDER,
     SEARCH_TIMEOUT,
-    SEARCH_MAX_RESULTS
+    SEARCH_MAX_RESULTS,
+    SEARCH_FALLBACK_PROVIDERS,
 )
 from src.security.url_validation import validate_fetch_url, UnsafeURL
 
 
 class SearchTool:
     """搜索工具封装 - 支持SearXNG、SerpAPI和Bing Search"""
+
+    _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 
     def __init__(self, api_key: Optional[str] = None):
         self.serpapi_key = api_key or SERPAPI_KEY
@@ -151,16 +159,12 @@ class SearchTool:
             raise RuntimeError("Bing search failed") from exc
 
     def search(self, query: str, num_results: int = None, provider: str = None) -> List[Dict[str, str]]:
-        """
-        统一搜索接口（主入口）
+        """统一搜索接口（主入口）。
 
-        Args:
-            query: 搜索关键词
-            num_results: 返回结果数量
-            provider: 搜索提供商 ("searxng", "serpapi", "bing")，默认使用配置值
-
-        Returns:
-            经过安全校验的搜索结果列表
+        主 provider 失败或结果**全部与查询不相关**时，按
+        `SEARCH_FALLBACK_PROVIDERS` 顺序重试。相关性过滤不是锦上添花：
+        Bing 网页抓取实测会被污染（查“美菜”返回 CVE/秘塔），
+        不过滤就会把无关页面当成竞品喂给下游。
         """
         selected_provider = (provider or self.default_provider).strip().lower()
 
@@ -174,18 +178,93 @@ class SearchTool:
         if not handler:
             raise ValueError(f"Unknown search provider: {selected_provider}")
 
-        raw_results = handler(query, num_results)
+        tried = []
+        safe_results: List[Dict[str, str]] = []
+        for name in [selected_provider] + [
+            p for p in SEARCH_FALLBACK_PROVIDERS if p != selected_provider
+        ]:
+            fn = providers.get(name)
+            if fn is None:
+                continue
+            tried.append(name)
+            try:
+                raw_results = fn(query, num_results)
+            except Exception:
+                continue
+            safe_results = self._filter_results(raw_results, query)
+            if safe_results:
+                break
 
+        if tried and not safe_results:
+            # 明确返回空（而不是把污染结果硬塞下去）：调用方会走
+            # “搜索无结果”的分支，不会拿无关页面生成假报告。
+            return []
+        return safe_results
+
+    @staticmethod
+    def _query_tokens(query: str) -> List[str]:
+        """检索单元：空格/标点切分的主 token + 长中文整句的二元组。
+
+        中文整句没有空格，直接拿整串去匹配会把**所有**结果都过滤掉
+        （整串几乎不可能出现在标题/摘要里）——那是比污染更糟的静默失效。
+        长句用二元组当检索单元，区分度够，又不至于把整串当成唯一条件。
+        """
+        pieces = [t for t in re.split(r"[\s,，、;；|/]+", query or "") if len(t) >= 2]
+        tokens: List[str] = []
+        for piece in pieces:
+            if piece not in tokens:
+                tokens.append(piece)
+            if len(piece) > 4 and SearchTool._CJK_RE.search(piece):
+                for index in range(len(piece) - 1):
+                    bigram = piece[index:index + 2]
+                    if bigram not in tokens:
+                        tokens.append(bigram)
+        return tokens
+
+    @staticmethod
+    def _primary_tokens(query: str) -> List[str]:
+        """主 token：切分后的词，以及长度 ≤6 的整句（短查询按整句判定）。"""
+        pieces = [t for t in re.split(r"[\s,，、;；|/]+", query or "") if len(t) >= 2]
+        whole = (query or "").strip()
+        if 2 <= len(whole) <= 6 and whole not in pieces:
+            pieces.append(whole)
+        return pieces
+
+    def _is_relevant(self, haystack: str, query: str) -> bool:
+        """相关性判定：主 token 命中即算相关；长整句按二元组覆盖度判定。"""
+        haystack = (haystack or "").lower()
+        primary = self._primary_tokens(query)
+        if any(token.lower() in haystack for token in primary):
+            return True
+        pieces = set(primary)
+        bigrams = [
+            token for token in self._query_tokens(query)
+            if len(token) == 2 and token not in pieces
+        ]
+        if not bigrams:
+            return False
+        hit = sum(len(token) for token in bigrams if token.lower() in haystack)
+        total = sum(len(token) for token in bigrams)
+        return bool(total) and (hit / total) >= _LONG_QUERY_COVERAGE_MIN
+
+    def _filter_results(self, raw_results: List[Dict[str, str]], query: str) -> List[Dict[str, str]]:
         safe_results = []
-        for r in raw_results:
+        for r in raw_results or []:
             try:
                 if not r.get("url"):
                     continue
                 validate_fetch_url(r["url"])
+                if self._query_tokens(query):
+                    haystack = " ".join([
+                        str(r.get("title", "")),
+                        str(r.get("content", "")),
+                        str(r.get("url", "")),
+                    ])
+                    if not self._is_relevant(haystack, query):
+                        continue
                 safe_results.append(r)
             except (UnsafeURL, ValueError):
                 continue
-
         return safe_results
 
 

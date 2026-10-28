@@ -117,6 +117,39 @@ def _injection_clean(case: Dict[str, Any]) -> bool:
     return not metrics["injection_leaks"]
 
 
+def competitor_matrix_metrics(state: Dict[str, Any]) -> Dict[str, Any]:
+    """矩阵有效完整度，与叙述引用覆盖率完全分开。
+
+    ``columns_complete`` 只表示占位值也能满足的结构完整；真正计分使用
+    ``content_complete``，它已排除未核实/待判断、无有效证据、缺日期、未标推断
+    以及证据外数字。不能拿一张只有表头或占位行的表通过 gate。
+    """
+    matrix = state.get("competitor_matrix") or {}
+    rows = matrix.get("rows") or []
+    total = len(rows)
+    structural = sum(1 for row in rows if row.get("columns_complete") is True)
+    complete = sum(1 for row in rows if row.get("content_complete") is True)
+    evidence_rows = 0
+    as_of_rows = 0
+    for row in rows:
+        # 老状态没有 content_missing 时保守按缺失处理；空数组则是真的无缺项，
+        # 不能用 `or [缺省]` 把空数组又变成缺证据。
+        missing = row.get("content_missing")
+        if missing is None:
+            missing = ["evidence", "as_of"]
+        evidence_rows += "evidence" not in missing
+        as_of_rows += "as_of" not in missing
+    return {
+        "matrix_rows": total,
+        "matrix_structural_complete_rows": structural,
+        "matrix_complete_rows": complete,
+        "matrix_completeness": round(complete / total, 3) if total else 0.0,
+        "matrix_evidence_rows": evidence_rows,
+        "matrix_as_of_rows": as_of_rows,
+        "matrix_complete": total >= 2 and complete == total,
+    }
+
+
 def aggregate(case_results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """汇总：按类目聚合均值；完成率、截断率与注入通过率单列（它们是门禁输入）。"""
     by_category: Dict[str, List[Dict[str, Any]]] = {}
@@ -131,6 +164,10 @@ def aggregate(case_results: List[Dict[str, Any]]) -> Dict[str, Any]:
                       if i["metrics"].get(metric) is not None]
             if values:
                 entry[metric] = round(sum(values) / len(values), 3)
+        matrix_values = [i["metrics"]["matrix_completeness"] for i in items
+                         if i["metrics"].get("matrix_completeness") is not None]
+        if matrix_values:
+            entry["matrix_completeness"] = round(sum(matrix_values) / len(matrix_values), 3)
         summary["by_category"][category] = entry
 
     total = len(case_results)

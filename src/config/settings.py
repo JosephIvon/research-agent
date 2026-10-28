@@ -213,6 +213,14 @@ SEARXNG_URL = os.getenv("SEARXNG_URL", "http://localhost:8888")
 SEARCH_PROVIDER = os.getenv("SEARCH_PROVIDER", "searxng").lower()
 SEARCH_TIMEOUT = _get_int("SEARCH_TIMEOUT", 15)
 SEARCH_MAX_RESULTS = _get_int("SEARCH_MAX_RESULTS", 10)
+# 搜索兜底链：主 provider 失败或结果全部不相关时按顺序重试。
+# 默认只兜底到 searxng——Bing 网页抓取在本机实测会被污染成无关结果
+# （查“美菜”返回 CVE/秘塔），不能无条件当第二选择；要启用需显式配置。
+SEARCH_FALLBACK_PROVIDERS = [
+    p.strip().lower()
+    for p in os.getenv("SEARCH_FALLBACK_PROVIDERS", "searxng").split(",")
+    if p.strip()
+]
 
 # 飞书文档配置（可选）
 FEISHU_APP_ID = os.getenv("FEISHU_APP_ID")

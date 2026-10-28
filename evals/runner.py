@@ -387,6 +387,18 @@ def collect_metrics(case: Dict[str, Any], run_out: Dict[str, Any],
         result["source_citation_ratio"] = coverage["ratio"]
         result["sources_cited"] = coverage["sources_cited"]
         result["sources_total"] = coverage["sources_total"]
+    matrix_expectation = expected.get("competitor_matrix") or {}
+    if (case.get("category") == "competitor_matrix" or state.get("competitor_matrix")
+            or matrix_expectation):
+        result.update(M.competitor_matrix_metrics(state))
+    if matrix_expectation:
+        # gate 只看 case 预先声明的要求；其他报告的矩阵仍计分但不反向改变
+        # 既有安全门禁口径。叙述 citation_coverage 继续独立采集。
+        result["matrix_gate_required"] = True
+        result["matrix_min_rows"] = int(matrix_expectation.get("min_rows", 2))
+        result["matrix_min_completeness"] = float(
+            matrix_expectation.get("min_completeness", 1.0)
+        )
 
     return result
 
@@ -526,6 +538,25 @@ def gate_check(summary: Dict[str, Any], case_results: List[Dict[str, Any]],
     if summary.get("truncation_rate"):
         ids = [c["id"] for c in case_results if c.get("status") == "partial"]
         print(f"[gate][提示] {len(ids)} 个 case 被预算截断并以 partial 交付: {', '.join(ids)}")
+
+    # 竞品矩阵是独立硬门槛：叙述 citation_coverage=1.0 不能替矩阵占位、
+    # 缺证据或缺日期开脱。只对 manifest 预先声明 matrix 要求的 case 生效。
+    for case in case_results:
+        metrics = case.get("metrics") or {}
+        if not metrics.get("matrix_gate_required"):
+            continue
+        min_rows = metrics.get("matrix_min_rows", 2)
+        min_completeness = metrics.get("matrix_min_completeness", 1.0)
+        if metrics.get("matrix_rows", 0) < min_rows:
+            failures.append(
+                f"{case['id']} 竞品矩阵行数 {metrics.get('matrix_rows', 0)} < {min_rows}"
+            )
+        completeness = metrics.get("matrix_completeness", 0.0)
+        if completeness < min_completeness:
+            failures.append(
+                f"{case['id']} 竞品矩阵有效完整度 {completeness} < "
+                f"{min_completeness}（占位/缺证据/缺日期/无据数字不计完整）"
+            )
 
     # 软性趋势提示：不红，但必须喊出来
     if baseline:

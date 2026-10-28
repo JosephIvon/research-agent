@@ -1,6 +1,6 @@
 {
   "version": "v1.8",
-  "description": "M4 评测集 v1.8：v1.7 的 gap_both 之后加入 3 条 coverage 判别 case（cov_gap_undeclared / cov_gap_declared / cov_gap_partial_declared）——期望维度真缺失且未标注→1、缺口全标注→3、只标注一部分→1，为下游 judge 的 coverage 三分支提供非恒定样本（v1.7 集上三分支 0 命中）。共 23 条，样本仍不足 40。",
+  "description": "M4 评测集 v1.8：v1.7 的 gap_both 之后加入 3 条 coverage 判别 case（cov_gap_undeclared / cov_gap_declared / cov_gap_partial_declared）——期望维度真缺失且未标注→1、缺口全标注→3、只标注一部分→1，为下游 judge 的 coverage 三分支提供非恒定样本（v1.7 集上三分支 0 命中）。共 23 条，样本仍不足 40。；新增 matrix_b2b：结构化竞品矩阵门禁 case（2 家竞品，有效完整度必须 100%，占位/缺证据/缺日期一律不计入）",
   "cases": [
     {
       "id": "reg_doccollab",
@@ -711,6 +711,40 @@
           "features"
         ]
       }
+    },
+    {
+      "id": "matrix_b2b",
+      "category": "competitor_matrix",
+      "mode": "legacy",
+      "query": "对比美菜与川为冻品的仓配模式与定价打法",
+      "sites": [
+        {
+          "key": "meicai",
+          "url": "https://meicai.test/",
+          "pages": [
+            "index.html"
+          ]
+        },
+        {
+          "key": "chuanwei",
+          "url": "https://chuanwei.test/",
+          "pages": [
+            "index.html"
+          ]
+        }
+      ],
+      "expected": {
+        "dimensions": [
+          "pricing",
+          "features",
+          "target_users",
+          "integrations"
+        ],
+        "competitor_matrix": {
+          "min_rows": 2,
+          "min_completeness": 1.0
+        }
+      }
     }
   ],
   "fixture_digests": {
@@ -762,6 +796,9 @@
     "inj_mild/llm.json": "689fec20bf6c8c3ffa5e93692c27b3855e945ef6ecdbed6159ee1dc7496cbfe6",
     "inj_mild/sites/good/index.html": "028946adb0dfe4de3d8352bb86e39ed0d94d64a43549b0cc0e6b788d3453a8a8",
     "inj_mild/sites/poison/index.html": "82c098e60f6338482d5ce1c82573177e1e49fa1dec8d9f678c414bb082c4a334",
+    "matrix_b2b/llm.json": "59f5c2861ce93b329f6f71271b3cf812899a159278adc7be5b79b616b780b476",
+    "matrix_b2b/sites/chuanwei/index.html": "73df45d0f8d0b428c45dea223a895c88828acb5813c1c812c2ff7e3904ff882d",
+    "matrix_b2b/sites/meicai/index.html": "1ec7c0cf20ef57fd0399ad60f0063643508ef2b689a5d9037bdf82a57418a72a",
     "miss_api/llm.json": "4c38af37ff7e9cdd781a8615534aa41155009ea357147487db38a3a0332607ff",
     "miss_api/sites/saas/index.html": "a1274cddd6e86996af0eca24124a7d611f63001fbff592dfd37fbe00bb860de2",
     "miss_enterprise/llm.json": "cad0402185d45cefe880aebd6988499a672a50410cbe2e1a225139457b33093b",

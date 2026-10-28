@@ -1,7 +1,7 @@
 """MVP工作流模块 - 2-agent简化版本：协调者 + 文案撰写员"""
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 from src.llm import get_llm_client, strip_thinking, LLMClient, LLMError
 from src.crawler.web_crawler import WebCrawler
@@ -44,6 +44,11 @@ from src.security.injection import (
     wrap_untrusted,
 )
 from src.workflow.task_store import _sanitize_payload, TaskEventType
+from src.workflow.competitor_matrix import (
+    CompetitorMatrix,
+    build_matrix,
+    inject_section,
+)
 import asyncio
 import contextlib
 import json
@@ -191,19 +196,39 @@ class CoordinatorAgent:
             }
         ]
 
-        response = await self.llm_client.achat_completion(prompt, temperature=0.1)
+        response = await self.llm_client.achat_completion(
+            prompt, temperature=0.1, max_tokens=DECOMPOSE_MAX_TOKENS
+        )
         try:
             # 必须走共享解析入口，不能裸 json.loads：模型经常把 JSON 包在
             # ```json 围栏里（提示词没禁止，它就会这么做），裸解析直接
             # `Expecting value: line 1 column 1`，任务分解静默降级成写死的一步。
             # 真实端到端跑出来的实测遗漏。
-            return _parse_json_response(response)
+            parsed = _parse_json_response(response)
+            # 模型可能只回一个对象、字符串或空数组；这些都不能当子任务列表用。
+            if isinstance(parsed, dict):
+                parsed = [parsed]
+            if not isinstance(parsed, list):
+                raise ValueError(f"任务分解结果不是数组: {type(parsed).__name__}")
+            clean = [
+                item for item in parsed
+                if isinstance(item, dict) and str(item.get("description", "")).strip()
+            ]
+            if not clean:
+                raise ValueError("任务分解结果为空数组或缺少 description")
+            return clean
         except Exception as e:
-            logger.warning(f"任务分解JSON解析失败: {e}")
+            # 降级不是“正常路径”：必须留下明确日志，否则报告退化成单步骤时
+            # 没人知道是模型截断/解析失败造成的。生产排查只靠这一行。
+            logger.warning("任务分解JSON解析失败，降级为单步骤: %s", e, exc_info=True)
             return [{
                 "id": "1",
                 "description": "分析目标网站内容",
-                "priority": 1
+                "priority": 1,
+                # 单步骤可以是合法模型输出，只有带这个标记的才是异常降级。
+                # 状态层据此显式暴露 decompose_degraded，不再只靠日志猜测。
+                "degraded": True,
+                "degrade_reason": str(e),
             }]
 
     async def search_topics(self, user_query: str, num_results: int = 5) -> List[str]:
@@ -272,9 +297,25 @@ class CoordinatorAgent:
             )
             try:
                 data = _parse_json_response(response)
+                # `[]`、对象或字符串都不是一次成功抽取。此前 [] 会跳过
+                # 重试并原样返回，对象则会被当成 key 数组逐字归一化；两者都把
+                # 空/畸形模型输出伪装成正常结构化结果。
+                if not isinstance(data, list) or not data:
+                    raise ValueError("抽取结果必须是非空 JSON 数组")
+                if not any(
+                    (isinstance(item, str) and item.strip())
+                    or (
+                        isinstance(item, dict)
+                        and str(item.get("key", "")).strip()
+                        and str(item.get("value", "") or "").strip()
+                    )
+                    for item in data
+                ):
+                    raise ValueError("抽取数组没有含 key/value 的有效条目")
                 break
             except Exception as e:
                 last_error = e
+                data = None
                 logger.warning(f"信息提取JSON解析失败（第 {attempt + 1} 次）: {e}")
 
         if data is None:
@@ -283,17 +324,28 @@ class CoordinatorAgent:
 
         try:
             normalized = []
+            retrieved_at = datetime.now(timezone.utc).date().isoformat()
             for item in data:
-                if isinstance(item, str):
+                if isinstance(item, str) and item.strip():
                     # 模型返回了字符串数组，转为标准格式
-                    normalized.append({"key": "content", "value": item, "source_url": url, "confidence": 0.8})
+                    normalized.append({
+                        "key": "content", "value": item, "source_url": url,
+                        "confidence": 0.8, "retrieved_at": retrieved_at,
+                    })
                 elif isinstance(item, dict):
-                    item["source_url"] = url
-                    if "confidence" not in item:
-                        item["confidence"] = 0.8
-                    normalized.append(item)
-                else:
-                    normalized.append({"key": "content", "value": str(item), "source_url": url, "confidence": 0.5})
+                    key = str(item.get("key", "")).strip()
+                    value = item.get("value")
+                    if not key or not str(value or "").strip():
+                        continue
+                    normalized_item = dict(item)
+                    normalized_item["source_url"] = url
+                    normalized_item.setdefault("confidence", 0.8)
+                    # 口径日期默认是本次抓取日，不冒充网页发布日期；若模型/上游
+                    # 明确提供 as_of，矩阵会优先采用该日期。
+                    normalized_item.setdefault("retrieved_at", retrieved_at)
+                    normalized.append(normalized_item)
+            if not normalized:
+                raise ValueError("归一化后没有有效抽取条目")
             return normalized
         except Exception as e:
             logger.warning(f"抽取结果归一化失败: {e}")
@@ -408,6 +460,12 @@ class CoordinatorAgent:
 # 真正确认失败模式的是 smoke4 那次「正文为空」，频率低于本次 12 次采样的检出下限。
 REPORT_MAX_TOKENS = 16384
 
+# 任务分解：输出是短 JSON，但推理模型会把同一份预算花在 <think> 上。
+# 客户端默认 4096 实测会把分解结果截断在字符 ~3059，_parse_json_response
+# 解析失败后静默降级成“分析目标网站内容”一步——报告看起来正常，实际
+# 从未拆过维度。分解是链路第一环，预算必须单独给足，不能沿用客户端默认。
+DECOMPOSE_MAX_TOKENS = 8192
+
 # 抽取专用的 token 预算：抽取本身输出很短，但推理模型（M3）会先把同一份预算花在
 # 思考上——沿用客户端默认的 4096 时，思考就能吃光，正文一个字都不剩
 # （实测 Empty response ×2 → 抽取失败 → 报告只能写"无法确认"、竞品名退化成域名）。
@@ -429,7 +487,8 @@ class CopywriterAgent:
         quality_report: Any = None,
         evidence_store: Optional[EvidenceStore] = None,
         violations_feedback: str = "",
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        competitor_matrix: Optional[CompetitorMatrix] = None,
     ) -> str:
         """生成结构化报告，支持竞品对比
 
@@ -578,6 +637,13 @@ class CopywriterAgent:
         if quality_report:
             quality_section = QualityScorer(quality_report.competitors if hasattr(quality_report, 'competitors') else []).generate_quality_section(report=quality_report)
             response = response + "\n\n" + quality_section
+
+        # 竞品矩阵是**固定章节**：由结构化结果渲染，模型只写叙述。放在报告最前，
+        # 读者第一眼看到的就是“一竞品一行、四列齐全”的表，而不是散文。
+        if competitor_matrix is None and competitors:
+            competitor_matrix = build_matrix(user_query, competitors=competitors)
+        if competitor_matrix is not None:
+            response = inject_section(response, competitor_matrix)
 
         return response
 
@@ -852,6 +918,20 @@ class MVPWorkflow:
             state["status"] = "decomposing"
             self._emit("decompose", "decompose", "running", "正在理解需求、拆解调研维度")
             state["subtasks"] = await self.coordinator.decompose_task(user_query, state["target_urls"])
+            degraded = next(
+                (task for task in state["subtasks"] if task.get("degraded")), None
+            )
+            state["decompose_degraded"] = degraded is not None
+            state["decompose_fallback_reason"] = (
+                degraded.get("degrade_reason") if degraded else None
+            )
+            if degraded:
+                self._emit(
+                    "decompose", "decompose", "running",
+                    "任务分解异常，已显式降级为单步骤："
+                    f"{state['decompose_fallback_reason']}",
+                    payload={"degraded": True, "reason": state["decompose_fallback_reason"]},
+                )
 
             if enable_search and not state["target_urls"]:
                 state["status"] = "researching"
@@ -919,6 +999,11 @@ class MVPWorkflow:
             state["quality_grade"] = quality_report.grade
             state["missing_dimensions"] = quality_report.missing_dimensions
 
+            # 矩阵在报告生成前一次性构建；后续补抓会重建（证据变了，矩阵必须跟着变）。
+            # 单独落 state 供评测/前端读取，不靠解析报告反推。
+            matrix_obj = build_matrix(user_query, competitors=state["competitors"])
+            state["competitor_matrix"] = matrix_obj.to_dict()
+
             state["status"] = "writing"
             if not state["verification_passed"]:
                 # 门禁现在只看两项可确定性验证的属性：来源覆盖率与证据条数。
@@ -951,6 +1036,7 @@ class MVPWorkflow:
                     f"证据 {state['evidence_count']} 条",
                 )
                 state["injection_findings_count"] = len(state.get("injection_findings") or [])
+                self._update_task_status_in_sqlite(state)
                 return state
 
             if not quality_report.is_usable:
@@ -969,6 +1055,7 @@ class MVPWorkflow:
                 }
                 self._emit("error", "verify", "failed", f"数据质量不足：{quality_report.overall_score}/10")
                 state["injection_findings_count"] = len(state.get("injection_findings") or [])
+                self._update_task_status_in_sqlite(state)
                 return state
 
             state["status"] = "report_generating"
@@ -982,6 +1069,7 @@ class MVPWorkflow:
                 competitors=state["competitors"],
                 quality_report=quality_report,
                 evidence_store=evidence_store,
+                competitor_matrix=matrix_obj,
             )
 
             # --- 引用校验闭环：不过则带违规清单重生成一次，仍不过标记低可信 ---
@@ -1023,6 +1111,7 @@ class MVPWorkflow:
                     quality_report=quality_report,
                     evidence_store=evidence_store,
                     violations_feedback=feedback,
+                    competitor_matrix=matrix_obj,
                 )
                 state["citation_attempts"] = 2
                 citation_result = await asyncio.to_thread(
@@ -1048,6 +1137,8 @@ class MVPWorkflow:
                         )
                         quality_report = self._refresh_quality_report(state)
                         verification_result = await self._refresh_verification(state)
+                        matrix_obj = build_matrix(user_query, competitors=state["competitors"])
+                        state["competitor_matrix"] = matrix_obj.to_dict()
                         state["report_final"] = await self.copywriter.generate_report(
                             user_query,
                             state["extracted_data"],
@@ -1055,6 +1146,7 @@ class MVPWorkflow:
                             competitors=state["competitors"],
                             quality_report=quality_report,
                             evidence_store=evidence_store,
+                            competitor_matrix=matrix_obj,
                         )
                         state["citation_attempts"] = 3
                         citation_result = await asyncio.to_thread(
@@ -1107,6 +1199,8 @@ class MVPWorkflow:
                 )
                 quality_report = self._refresh_quality_report(state)
                 verification_result = await self._refresh_verification(state)
+                matrix_obj = build_matrix(user_query, competitors=state["competitors"])
+                state["competitor_matrix"] = matrix_obj.to_dict()
                 state["report_final"] = await self.copywriter.generate_report(
                     user_query,
                     state["extracted_data"],
@@ -1114,6 +1208,7 @@ class MVPWorkflow:
                     competitors=state["competitors"],
                     quality_report=quality_report,
                     evidence_store=evidence_store,
+                    competitor_matrix=matrix_obj,
                 )
                 state["citation_attempts"] = state.get("citation_attempts", 1) + 1
                 citation_result = await asyncio.to_thread(
@@ -1176,6 +1271,9 @@ class MVPWorkflow:
 
             # 交付前最后一道闸：注入文本不得原样出现在报告里
             self._enforce_report_output(state)
+            if not str(state.get("report_final") or "").strip():
+                # 清洗可能恰好删掉整份正文；空文件不能落盘后还把任务标 completed。
+                raise LLMError("报告在出口清洗后为空，已中止交付")
 
             state["sync_results"]["local_file"] = self._save_report(state["report_final"], state.get("task_id"))
             state["report_id"] = Path(state["sync_results"]["local_file"]).stem
@@ -1348,6 +1446,8 @@ class MVPWorkflow:
                     )
 
                 self._enforce_report_output(state)
+                if not str(state.get("report_final") or "").strip():
+                    raise LLMError("ReAct 报告在出口清洗后为空，已中止交付")
                 state["sync_results"]["local_file"] = self._save_report(state["report_final"], state.get("task_id"))
                 state["report_id"] = Path(state["sync_results"]["local_file"]).stem
                 self._persist_to_sqlite(state)
@@ -1465,6 +1565,8 @@ class MVPWorkflow:
             "target_urls": target_urls,
             "auth_credentials": None,
             "subtasks": None,
+            "decompose_degraded": False,
+            "decompose_fallback_reason": None,
             "current_subtask_index": 0,
             "raw_search_results": [],
             "extracted_data": [],
@@ -1479,6 +1581,7 @@ class MVPWorkflow:
             "quality_grade": None,
             "missing_dimensions": [],
             "competitors": [],
+            "competitor_matrix": None,
             "comparison_matrix": None,
             "comparison_passed": None,
             "report_draft": None,

@@ -1,8 +1,23 @@
 """报告质量评分模块 - 评估数据完整度，提示缺失维度"""
+import re
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 
 from src.agent.citations import EvidenceStore
+
+
+# “未公开/未披露”不是数据，是缺口声明。此前它会被当成有数据：
+# 四家竞品全写“定价未公开” → 定价维度 ✅ → 数据完整度 10/10 A 级，
+# 与“全部查不到”完全矛盾。这里是质量评分的硬边界：缺口声明不计入维度覆盖。
+_NON_ANSWER_RE = re.compile(
+    r"^\s*(?:未公开|未披露|暂无公开|暂无|未知|待确认|待核实|无法确认|无法核实|"
+    r"n/?a|none|null|—|-)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _is_non_answer(value: Any) -> bool:
+    return isinstance(value, str) and bool(_NON_ANSWER_RE.match(value))
 
 
 @dataclass
@@ -125,6 +140,11 @@ class QualityScorer:
                 value = str(item.get("value", ""))
                 value_lower = value.lower()
 
+                # “未公开/未披露”是缺口声明，不是数据。把它算成有数据，
+                # 会让“全部查不到”的报告拿到最高完整度分。
+                if _is_non_answer(value):
+                    continue
+
                 # 维度自带规范数据 key：key 命中即属于该维度，不靠关键词子串撞。
                 # 关键词表写 "price"、数据 key 是 "pricing" —— "price" 不是 "pricing"
                 # 的子串，值（"标准版 $10/月"）也不含关键词 → 定价被误判成缺失
@@ -159,12 +179,15 @@ class QualityScorer:
         )
 
     def _count_competitors_with_data(self) -> int:
-        """有**结构化**数据的竞品数。抽取失败后的兜底原文不算。"""
+        """有**结构化**数据的竞品数。抽取失败后的兜底原文与“未公开”声明都不算。"""
         count = 0
         for comp in self.competitors:
             items = [
                 item for item in comp.get("extracted_data", [])
-                if isinstance(item, dict) and not item.get("extraction_failed")
+                if isinstance(item, dict)
+                and not item.get("extraction_failed")
+                and not _is_non_answer(item.get("value"))
+                and str(item.get("value", "")).strip()
             ]
             if items:
                 count += 1

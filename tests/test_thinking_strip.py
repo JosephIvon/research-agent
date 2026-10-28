@@ -369,10 +369,18 @@ def test_decompose_task_accepts_fenced_json_behind_thinking():
 
 
 def test_decompose_task_still_falls_back_on_real_garbage():
-    """照常兜底：不是 JSON 就该降级，而不是崩掉。"""
+    """照常兜底：不是 JSON 就该降级，而不是崩掉。
+
+    降级必须**带标记**：报告退化成单步骤时，得能一眼看出这是异常降级，
+    不能和“模型本来就只给一步”混为一谈（那正是原静默降级的老毛病）。
+    """
     client = _make_client(_response("<think>x</think>完全不是 JSON"))
     tasks = _decompose(client)
-    assert tasks == [{"id": "1", "description": "分析目标网站内容", "priority": 1}]
+    assert len(tasks) == 1
+    assert tasks[0]["description"] == "分析目标网站内容"
+    assert tasks[0]["priority"] == 1
+    assert tasks[0]["degraded"] is True
+    assert tasks[0]["degrade_reason"]
 
 
 def test_no_workflow_llm_call_bypasses_the_shared_json_parser():
