@@ -193,6 +193,33 @@ class QualityScorer:
                 count += 1
         return count
 
+    @staticmethod
+    def count_dimensions(comp: Dict[str, Any]) -> int:
+        """这家竞品抽到了**几个维度**的数据。
+
+        与 ``_evaluate_dimension`` 用同一套维度定义与关键词（单一事实来源）：
+        准入闸门要判"至少 N 个维度有数据"，用的必须是质量评分器那套口径，
+        否则报告里说"缺 3 个维度"、闸门却按另一套算，两边对不上。
+        """
+        items = [
+            item for item in (comp.get("extracted_data") or [])
+            if isinstance(item, dict)
+            and not item.get("extraction_failed")
+            and not _is_non_answer(item.get("value"))
+            and str(item.get("value", "")).strip()
+        ]
+        count = 0
+        for dim in QualityScorer.DIMENSIONS:
+            for item in items:
+                key = str(item.get("key", "")).lower()
+                value = str(item.get("value", "")).lower()
+                if dim["key"].lower() in key or any(
+                    kw.lower() in key or kw.lower() in value for kw in dim["keywords"]
+                ):
+                    count += 1
+                    break
+        return count
+
     def _calculate_overall_score(
         self,
         dimension_scores: List[DimensionScore],

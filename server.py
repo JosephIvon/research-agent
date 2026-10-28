@@ -1017,6 +1017,12 @@ async def _run_research_task(task_id: str, req: TaskRequest, user_id: Optional[s
         "competitor_matrix": result.get("competitor_matrix"),
         # 研究计划随终态落库：复盘"这轮为什么选了这些竞品"要靠它
         "research_plan": result.get("research_plan"),
+        # 候选池与入选轨迹随终态落库：候选池、每家的站点类型与入选/剔除理由，
+        # 是"这轮为什么选了这些竞品"唯一的可核对凭据
+        "discovery": result.get("discovery"),
+        # 准入闸门：实际执行的规则、被淘汰的竞品（未采信清单）与补位记录
+        "rejected_competitors": result.get("rejected_competitors"),
+        "admission_gate": result.get("admission_gate"),
     }
 
     if result["status"] in ("completed", "partial"):

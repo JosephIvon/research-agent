@@ -212,6 +212,9 @@
             <button :class="{ active: activeTab === 'sources' }" type="button" @click="activeTab = 'sources'">
               来源状态
             </button>
+            <button :class="{ active: activeTab === 'plan' }" type="button" @click="activeTab = 'plan'">
+              调研口径
+            </button>
           </nav>
 
           <article v-if="activeTab === 'report'" class="report-body">
@@ -229,7 +232,7 @@
             </div>
           </section>
 
-          <section v-else class="report-body sources-body">
+          <section v-else-if="activeTab === 'sources'" class="report-body sources-body">
             <div class="source-header">
               <div>
                 <h2>来源和抓取状态</h2>
@@ -281,6 +284,12 @@
             </div>
           </section>
 
+          <ReportPlanTab
+            v-else-if="activeTab === 'plan'"
+            :research-plan="researchPlan"
+            :discovery="discovery"
+          />
+
           <section class="chart-panel" v-if="activeTab === 'report' && chartData">
             <h2>功能评分雷达图</h2>
             <div ref="chartRef" class="radar-chart"></div>
@@ -312,6 +321,7 @@ import {
   View
 } from '@element-plus/icons-vue'
 import ThemeToggle from '../components/ThemeToggle.vue'
+import ReportPlanTab from './ReportPlanTab.vue'
 import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
 import { RadarChart } from 'echarts/charts'
@@ -319,7 +329,13 @@ import { GridComponent, LegendComponent, RadarComponent, TooltipComponent } from
 import { init, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { useResearchStore } from '../stores/research'
-import { buildSourceRows, getReportCompetitorCount } from '../stores/researchTaskHelpers'
+import {
+  buildResearchPlanText,
+  buildSourceRows,
+  getReportCompetitorCount,
+  getReportDiscovery,
+  getReportResearchPlan
+} from '../stores/researchTaskHelpers'
 import { gradeClassName, resolveGrade } from '../utils/reportGrade'
 import { researchApi } from '../api'
 
@@ -331,7 +347,7 @@ use([RadarChart, RadarComponent, TooltipComponent, LegendComponent, GridComponen
 const report = ref(null)
 const taskId = route.params.id
 const requestedTab = typeof route.query.tab === 'string' ? route.query.tab : ''
-const activeTab = ref(['report', 'prd', 'sources'].includes(requestedTab) ? requestedTab : 'report')
+const activeTab = ref(['report', 'prd', 'sources', 'plan'].includes(requestedTab) ? requestedTab : 'report')
 const isGeneratingPRD = ref(false)
 const chartRef = ref(null)
 const feedbackCounts = ref({ up: 0, down: 0 })
@@ -388,6 +404,10 @@ const chartData = computed(() => report.value?.radar_data)
 const hasPRD = computed(() => Boolean(report.value?.prd))
 const competitorCount = computed(() => getReportCompetitorCount(report.value || {}))
 const sourceRows = computed(() => buildSourceRows(report.value || {}))
+// 调研口径的两份结构化凭据。旧报告没有这两个字段——取不到就是 null，
+// 「调研口径」tab 会显示空态，而不是白屏。
+const researchPlan = computed(() => getReportResearchPlan(report.value || {}))
+const discovery = computed(() => getReportDiscovery(report.value || {}))
 const injectionFindingsCount = computed(() => Number(report.value?.injection_findings_count) || 0)
 // SSE 实时收集的注入发现带来源 URL，终态计数只有一个总数。这里展示来源维度。
 const injectionSources = computed(() => {
@@ -399,6 +419,7 @@ const traceUrl = computed(() => report.value?.trace_url || '')
 const costReport = computed(() => report.value?.cost_report || null)
 const activeArtifactContent = computed(() => {
   if (activeTab.value === 'prd') return report.value?.prd || ''
+  if (activeTab.value === 'plan') return buildResearchPlanText(researchPlan.value, discovery.value)
   if (activeTab.value === 'sources') {
     return sourceRows.value.map(item => {
       const pages = item.pageUrls.length
@@ -418,6 +439,7 @@ const activeArtifactContent = computed(() => {
 const activeArtifactFilename = computed(() => {
   if (activeTab.value === 'prd') return 'prd.md'
   if (activeTab.value === 'sources') return 'sources.md'
+  if (activeTab.value === 'plan') return 'research-plan.md'
   return 'report.md'
 })
 
@@ -549,6 +571,9 @@ async function handleExportFormat(format) {
     return
   }
   try {
+    // 后端导出只认 report / prd 两种内容（content_type 的取值范围是写死的正则）。
+    // 「调研口径」tab 走 report——它导出的仍是报告正文；要导出口径本身，
+    // 得后端加一种 content_type，那是另一个量级的改动。
     const contentType = activeTab.value === 'prd' ? 'prd' : 'report'
     const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || '/api'}/research/export`, {
       method: 'POST',

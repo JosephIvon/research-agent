@@ -385,3 +385,402 @@ export function getEventType(backendEvent, status) {
   if (status === 'completed' || backendEvent === 'completed' || backendEvent === 'partial') return 'success'
   return 'running'
 }
+
+// --------------------------------------------------------------------------
+// 研究计划 / 入选轨迹（报告页「调研口径」tab）
+//
+// 后端在任务终态落库了两份**结构化凭据**：
+//   research_plan —— 主体是谁、竞品怎么定义、四个角度的权重与优先级
+//   discovery     —— 候选池、每家的站点类型、打分与理由、入选/剔除清单
+// 它们回答的是"这轮为什么选了这些竞品"。此前前端只有报告 markdown 里的一段话，
+// 候选池与打分明细完全不可见——用户看不到口径，也就无从判断这轮结果可不可信。
+//
+// 取数与格式化全放在这里，.vue 只做渲染：字段缺失的兜底、旧报告的空态、权重
+// 归一、站点类型中文名都能被 node --test 覆盖（Vue 组件在这套仓库里没有单测位置）。
+// --------------------------------------------------------------------------
+
+/** 站点类型中文名——与后端 src/workflow/site_types.py 的 SITE_TYPE_LABELS 对齐。 */
+export const SITE_TYPE_LABELS = Object.freeze({
+  product_site: '产品官网',
+  media: '媒体/内容站',
+  ugc_platform: '开发者社区/UGC 博客',
+  app_store: '应用商店/下载站',
+  directory: '产品收录/比价目录',
+  unknown: '未知'
+})
+
+/** 主体类型中文名——与后端 research_plan.ENTITY_TYPES 对齐。 */
+export const ENTITY_TYPE_LABELS = Object.freeze({
+  app: '应用',
+  platform: '平台',
+  software: '软件',
+  hardware: '硬件',
+  service: '服务',
+  brand: '品牌',
+  company: '公司',
+  organization: '组织',
+  concept: '概念',
+  person: '人物',
+  place: '地点',
+  unknown: '未知'
+})
+
+/** 分析角度中文名——与后端 research_plan.ANGLE_LABELS 对齐。 */
+export const ANGLE_LABELS = Object.freeze({
+  feature: '功能',
+  business: '业务价值',
+  engineering: '研发与实现',
+  product: '产品与体验'
+})
+
+/** 竞品层级中文名——与后端 research_plan.COMPETITOR_LAYERS 对齐。 */
+export const COMPETITOR_LAYER_LABELS = Object.freeze({
+  direct: '直接竞品',
+  alternative: '替代方案',
+  adjacent: '相邻竞品'
+})
+
+/** 角度优先级中文名——与后端 research_plan.PRIORITY_MULTIPLIER 的键对齐。 */
+export const PRIORITY_LABELS = Object.freeze({
+  primary: '重点',
+  secondary: '次要',
+  ignore: '忽略'
+})
+
+const PLAN_SOURCES = Object.freeze(['model', 'default', 'fallback'])
+const PRIORITY_KEYS = Object.freeze(['primary', 'secondary', 'ignore'])
+
+function round4(value) {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return 0
+  return Math.round(num * 10000) / 10000
+}
+
+function asText(value) {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string') return value.trim()
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return ''
+}
+
+function firstObject(...values) {
+  for (const value of values) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value
+  }
+  return {}
+}
+
+function stringList(value) {
+  if (!Array.isArray(value)) return []
+  return value.map(item => asText(item)).filter(Boolean)
+}
+
+/** 站点类型 → 中文名。认不出来的类型一律显示"未知"，不把 slug 漏到界面上。 */
+export function siteTypeLabel(siteType) {
+  const key = asText(siteType)
+  return SITE_TYPE_LABELS[key] || SITE_TYPE_LABELS.unknown
+}
+
+/**
+ * 角度权重归一化。
+ *
+ * 后端给的权重本来就是"按优先级算完再归一"的和为 1 的小数，但历史计划、模型
+ * 直接吐出的权重、字段缺失都可能不是 1。这里统一再归一一次：
+ *   - 有正权重：按比例缩放到和为 1（比例关系不变）
+ *   - 全是 0 / 全缺：按角度数均分，而不是全 0——权重条全空等于没信息
+ *
+ * 权重条按"相对最重的那条"画（barPercent），否则 0.35 与 0.30 在 0–1 的刻度上
+ * 几乎看不出差别。
+ */
+export function normalizeAngleWeights(angles = []) {
+  const items = (Array.isArray(angles) ? angles : []).filter(item => item && typeof item === 'object')
+  const rawSum = items.reduce((acc, item) => {
+    const value = Number(item.weight)
+    return acc + (Number.isFinite(value) && value > 0 ? value : 0)
+  }, 0)
+  const each = items.length ? 1 / items.length : 0
+  const normalized = items.map(item => {
+    const raw = Number(item.weight)
+    const weight = rawSum > 0
+      ? (Number.isFinite(raw) && raw > 0 ? raw : 0) / rawSum
+      : each
+    return {
+      ...item,
+      rawWeight: Number.isFinite(raw) ? raw : 0,
+      weight: round4(weight)
+    }
+  })
+  const max = normalized.reduce((acc, item) => Math.max(acc, item.weight), 0)
+  return normalized.map(item => ({
+    ...item,
+    percent: round4(item.weight * 100),
+    barPercent: max > 0 ? Math.round((item.weight / max) * 100) : 0
+  }))
+}
+
+/** 消歧候选 → 一行人能读的文本（后端已拍平过字符串，这里再兜一次对象形态）。 */
+function formatDisambiguationCandidate(item) {
+  if (typeof item === 'string') return item.trim()
+  if (!item || typeof item !== 'object') return ''
+  const name = asText(item.name || item.candidate)
+  const description = asText(item.description)
+  let label = name && description ? `${name}（${description}）` : (name || description)
+  const confidence = Number(item.confidence ?? item.likelihood)
+  if (label && Number.isFinite(confidence)) {
+    label += `（置信度 ${confidence.toFixed(2)}）`
+  }
+  return label
+}
+
+/**
+ * 把后端 research_plan 归一化成可直接渲染的结构。
+ *
+ * 兜底原则：**任何字段缺失都不能抛异常**。旧报告没有 research_plan、调用的
+ * 任务走了降级路径、字段被裁剪过——都要退化成"空态"而不是白屏。
+ */
+export function normalizeResearchPlan(raw) {
+  const plan = firstObject(raw)
+  const entity = firstObject(plan.entity)
+  // 后端字段名是 competitor_criteria；早期方案文档里写的是 criteria。两个都认，
+  // 免得字段一改名就把整块口径打空。
+  const criteria = firstObject(plan.competitor_criteria, plan.criteria)
+
+  const source = PLAN_SOURCES.includes(asText(plan.source)) ? asText(plan.source) : ''
+  const isDefault = source === 'default' || source === 'fallback'
+  const sourceLabel = source === 'model'
+    ? '模型生成'
+    : (source === 'fallback' ? '默认口径（降级）' : (source === 'default' ? '默认口径' : '来源未知'))
+  const sourceNote = source === 'model'
+    ? '本次研究计划由模型生成，权重由代码按优先级算。'
+    : (source === 'fallback'
+      ? '模型生成失败，本轮已降级到默认口径（权重取默认优先级表）。'
+      : '本次未生成研究计划，按系统默认口径执行。')
+
+  const entityType = asText(entity.entity_type)
+  const confidenceRaw = Number(entity.resolved_confidence)
+  const confidence = Number.isFinite(confidenceRaw) ? Math.max(0, Math.min(1, confidenceRaw)) : null
+
+  const layerKeys = Array.isArray(criteria.layers) ? criteria.layers.map(item => asText(item)).filter(Boolean) : []
+  const layers = layerKeys.map(key => ({ key, label: COMPETITOR_LAYER_LABELS[key] || key }))
+
+  const minRaw = Number(criteria.min_count)
+  const maxRaw = Number(criteria.max_count)
+  const minCount = Number.isFinite(minRaw) && minRaw > 0 ? minRaw : null
+  const maxCount = Number.isFinite(maxRaw) && maxRaw > 0 ? maxRaw : null
+  const countText = minCount !== null && maxCount !== null
+    ? `${minCount}–${maxCount} 家`
+    : (minCount !== null ? `至少 ${minCount} 家` : (maxCount !== null ? `最多 ${maxCount} 家` : '未限定'))
+
+  const poolRaw = Number(criteria.candidate_pool)
+  const candidatePool = Number.isFinite(poolRaw) && poolRaw > 0 ? poolRaw : null
+
+  const rawAngles = Array.isArray(plan.angles) ? plan.angles : []
+  const angleItems = rawAngles
+    .filter(item => item && typeof item === 'object')
+    .map((item, index) => {
+      const angle = asText(item.angle)
+      const priority = PRIORITY_KEYS.includes(asText(item.priority)) ? asText(item.priority) : 'secondary'
+      return {
+        angle,
+        label: asText(item.label) || ANGLE_LABELS[angle] || (angle || `角度 ${index + 1}`),
+        priority,
+        priorityLabel: PRIORITY_LABELS[priority],
+        reason: asText(item.reason),
+        pageHints: stringList(item.page_hints),
+        weight: Number(item.weight)
+      }
+    })
+  const angles = normalizeAngleWeights(angleItems).map(item => ({
+    ...item,
+    weightText: item.weight.toFixed(2),
+    percentText: `${item.percent.toFixed(1)}%`
+  }))
+
+  const openQuestions = (Array.isArray(plan.open_questions) ? plan.open_questions : [])
+    .filter(item => item && typeof item === 'object')
+    .map(item => ({ question: asText(item.question), default: asText(item.default) }))
+    .filter(item => item.question)
+
+  const disambiguationCandidates = (Array.isArray(entity.disambiguation_candidates)
+    ? entity.disambiguation_candidates
+    : [])
+    .map(formatDisambiguationCandidate)
+    .filter(Boolean)
+
+  const available = Boolean(
+    asText(entity.name) ||
+    asText(entity.what_it_is) ||
+    layers.length ||
+    angles.length ||
+    openQuestions.length ||
+    asText(criteria.admission_rule)
+  )
+
+  return {
+    available,
+    source,
+    sourceLabel,
+    isDefault,
+    sourceNote,
+    error: asText(plan.error),
+    entity: {
+      name: asText(entity.name),
+      type: entityType,
+      typeLabel: ENTITY_TYPE_LABELS[entityType] || ENTITY_TYPE_LABELS.unknown,
+      whatItIs: asText(entity.what_it_is),
+      confidence,
+      confidenceText: confidence === null ? '未评估' : confidence.toFixed(2),
+      candidates: disambiguationCandidates,
+      officialDomains: stringList(entity.official_domains)
+    },
+    criteria: {
+      layers,
+      layerText: layers.length ? layers.map(item => item.label).join(' / ') : '未定义',
+      minCount,
+      maxCount,
+      countText,
+      candidatePool,
+      mustInclude: stringList(criteria.must_include),
+      mustExclude: stringList(criteria.must_exclude),
+      admissionRule: asText(criteria.admission_rule)
+    },
+    angles,
+    weightNote: '权重由代码按优先级算（primary×1.5 / secondary×1.0 / ignore×0.5）后归一化，不是模型给的数字',
+    openQuestions,
+    competitorCandidates: stringList(plan.competitor_candidates),
+    emptyText: '本次未生成研究计划（按默认口径执行）'
+  }
+}
+
+/** 候选匹配键：有 URL 用 URL，否则退回名称。 */
+function candidateKey(item) {
+  const url = asText(item?.url)
+  if (url) return `url:${url}`
+  const name = asText(item?.name)
+  return name ? `name:${name}` : ''
+}
+
+/**
+ * 把后端 discovery 归一化成候选池表格。
+ *
+ * 前端只用 candidates / selected / scored / notes；entity_pages 与 queries_run
+ * 不展示（体积大、价值低），但字段本身不丢——这里只是不取。
+ */
+export function normalizeDiscovery(raw) {
+  const discovery = firstObject(raw)
+  const candidates = Array.isArray(discovery.candidates) ? discovery.candidates : []
+  const selectedRaw = Array.isArray(discovery.selected) ? discovery.selected : []
+  const scoredRaw = Array.isArray(discovery.scored) ? discovery.scored : []
+  const notes = stringList(discovery.notes)
+
+  const selectedKeys = new Set()
+  selectedRaw.forEach(item => {
+    const key = candidateKey(item)
+    if (key) selectedKeys.add(key)
+  })
+
+  // scored 带打分明细，是表格的权威来源；没有它时退回候选池（只有名字和类型）
+  const poolSource = scoredRaw.length ? scoredRaw : candidates
+  const rows = poolSource.map(item => {
+    const key = candidateKey(item)
+    const scoreRaw = Number(item?.score)
+    const score = Number.isFinite(scoreRaw) ? scoreRaw : 0
+    const dimensionsRaw = Number(item?.dimensions ?? item?.dimension_count)
+    return {
+      name: asText(item?.name) || '（未命名候选）',
+      url: asText(item?.url),
+      siteType: asText(item?.site_type),
+      siteTypeLabel: siteTypeLabel(item?.site_type),
+      score,
+      scoreText: Number.isFinite(scoreRaw) ? scoreRaw.toFixed(2) : '—',
+      dimensions: Number.isFinite(dimensionsRaw) ? dimensionsRaw : 0,
+      reasons: stringList(item?.reasons),
+      selected: key ? selectedKeys.has(key) : false
+    }
+  })
+
+  // 入选的排前面：用户先看"选了什么"，再看"其余为什么被剔"
+  rows.sort((a, b) => {
+    if (a.selected !== b.selected) return a.selected ? -1 : 1
+    if (b.score !== a.score) return b.score - a.score
+    return a.name.localeCompare(b.name, 'zh-Hans-CN')
+  })
+
+  const poolSize = candidates.length || scoredRaw.length || rows.length
+  const selectedCount = selectedRaw.length
+
+  return {
+    available: Boolean(poolSource.length || notes.length),
+    poolSize,
+    selectedCount,
+    rejectedCount: Math.max(0, poolSize - selectedCount),
+    rows,
+    selected: rows.filter(row => row.selected),
+    rejected: rows.filter(row => !row.selected),
+    notes,
+    emptyText: '本轮未走候选发现流程（没有候选池与打分明细）'
+  }
+}
+
+/** 从报告对象里取 research_plan——旧报告没有这个字段时返回 null，不抛异常。 */
+export function getReportResearchPlan(report = {}) {
+  const candidates = [report?.research_plan, report?.raw?.research_plan, report?.raw?.researchPlan]
+  for (const item of candidates) {
+    if (item && typeof item === 'object') return item
+  }
+  return null
+}
+
+/** 从报告对象里取 discovery——旧报告没有这个字段时返回 null，不抛异常。 */
+export function getReportDiscovery(report = {}) {
+  const candidates = [report?.discovery, report?.raw?.discovery]
+  for (const item of candidates) {
+    if (item && typeof item === 'object') return item
+  }
+  return null
+}
+
+/** 「调研口径」tab 的纯文本版——用于"复制当前"。 */
+export function buildResearchPlanText(rawPlan, rawDiscovery) {
+  const plan = normalizeResearchPlan(rawPlan)
+  const discovery = normalizeDiscovery(rawDiscovery)
+  const lines = ['# 调研口径', '']
+
+  if (!plan.available) {
+    lines.push(plan.emptyText, '')
+  } else {
+    lines.push(`- 计划来源：${plan.sourceLabel}`)
+    if (plan.entity.name) lines.push(`- 主体：${plan.entity.name}（${plan.entity.typeLabel}，置信度 ${plan.entity.confidenceText}）`)
+    if (plan.entity.whatItIs) lines.push(`- 主体释义：${plan.entity.whatItIs}`)
+    plan.entity.candidates.forEach(item => lines.push(`  - 备选：${item}`))
+    lines.push(`- 竞品层级：${plan.criteria.layerText}`)
+    lines.push(`- 竞品数量：${plan.criteria.countText}`)
+    if (plan.criteria.admissionRule) lines.push(`- 入选标准：${plan.criteria.admissionRule}`)
+    plan.criteria.mustInclude.forEach(item => lines.push(`  - 必须包含：${item}`))
+    plan.criteria.mustExclude.forEach(item => lines.push(`  - 必须排除：${item}`))
+    plan.openQuestions.forEach(item => {
+      lines.push(`- 开放问题：${item.question}${item.default ? `（默认：${item.default}）` : ''}`)
+    })
+    if (plan.angles.length) {
+      lines.push('', '## 重点角度', '')
+      plan.angles.forEach(item => {
+        lines.push(`- ${item.label} ${item.weightText}（${item.priorityLabel}）${item.reason ? ` —— ${item.reason}` : ''}`)
+      })
+      lines.push('', `注：${plan.weightNote}`)
+    }
+  }
+
+  if (!discovery.available) {
+    lines.push('', discovery.emptyText)
+  } else {
+    lines.push('', '## 候选池与入选', '')
+    lines.push(`- 候选 ${discovery.poolSize} · 入选 ${discovery.selectedCount} · 剔除 ${discovery.rejectedCount}`)
+    discovery.rows.forEach(row => {
+      const reasons = row.reasons.length ? ` —— ${row.reasons.join('；')}` : ''
+      lines.push(`- ${row.selected ? '✓' : '✗'} ${row.name}｜${row.siteTypeLabel}｜${row.scoreText}${reasons}`)
+    })
+    discovery.notes.forEach(note => lines.push(`- ${note}`))
+  }
+
+  return lines.join('\n')
+}

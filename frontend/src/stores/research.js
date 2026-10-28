@@ -62,6 +62,10 @@ function normalizeReport(payload, request = {}) {
     missing_dimensions: payload.missing_dimensions || [],
     created_at: payload.created_at || new Date().toLocaleString(),
     output_files: payload.output_files || {},
+    // 调研口径的两份结构化凭据。旧报告没有这两个字段——写成 null 而不是
+    // undefined，页面才能分清"后端没给"与"值是 null"。
+    research_plan: payload.research_plan || null,
+    discovery: payload.discovery || null,
     raw: payload
   }, payload)
 }
@@ -320,9 +324,15 @@ export const useResearchStore = defineStore('research', () => {
         quality_grade: task?.quality_grade,
         missing_dimensions: task?.missing_dimensions || [],
         created_at: reportArtifact?.created_at || new Date().toLocaleString(),
+        // 调研口径：主体/口径/角度权重 + 候选池/打分明细。后端在任务终态落库，
+        // 旧任务没有这两个字段——取不到就是 null，页面显示空态而不是白屏。
+        research_plan: task?.research_plan || null,
+        discovery: task?.discovery || null,
         raw: {
           ...task,
-          competitors: crawlCompetitors
+          competitors: crawlCompetitors,
+          research_plan: task?.research_plan || null,
+          discovery: task?.discovery || null
         }
       }
 

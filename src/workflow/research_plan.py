@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from src.agent.citations import make_evidence_id
+from src.workflow.admission_rules import evaluate_discovery, parse_admission_rule
 from src.workflow.site_types import SITE_PRODUCT, classify_site, site_type_label
 
 PLAN_INTENT = "plan"
@@ -274,6 +275,9 @@ class ResearchPlan:
     # 模型**提名**的竞品（只是候选，代码会搜它的官网并核验是不是产品官网）。
     # 作用：搜索框搜"猫箱 竞品"回来的全是榜单文章，而模型其实知道同赛道是谁。
     competitor_candidates: List[str] = field(default_factory=list)
+    # 准入规则的**可执行形态**（从 criteria.admission_rule 解析而来）：
+    # 报告里写的那句话，到底哪几条被代码判了、在哪个阶段判、哪条判不了。
+    admission_rule: Dict[str, Any] = field(default_factory=dict)
     angles: List[Angle] = field(default_factory=list)
     search_plan: List[SearchStage] = field(default_factory=list)
     open_questions: List[Dict[str, str]] = field(default_factory=list)
@@ -330,6 +334,8 @@ class ResearchPlan:
             },
             "competitor_criteria": dict(self.criteria),
             "competitor_candidates": list(self.competitor_candidates),
+            # 可执行形态的准入规则：报告/前端要能说清"这句口径哪几条真的判了"
+            "admission_rule": dict(self.admission_rule),
             "angles": [a.to_dict() for a in self.angles],
             "search_plan": [s.to_dict() for s in self.search_plan],
             "open_questions": list(self.open_questions),
@@ -786,6 +792,11 @@ def build_plan_from_data(data: Dict[str, Any], user_query: str) -> ResearchPlan:
             str(c).strip() for c in (data.get("competitor_candidates") or [])
             if isinstance(c, str) and str(c).strip()
         ][:12],
+        # 准入标准从"描述"变成"可执行"：解析不出就标记，别让报告里的口径
+        # 变成谎言（声明与执行脱节是这一轮实测里最贵的坑）
+        admission_rule=parse_admission_rule(
+            criteria.get("admission_rule"), criteria
+        ).to_dict(),
         angles=angles,
         search_plan=stages,
         open_questions=questions,
@@ -928,6 +939,16 @@ def admit_competitors(
     scored = [score_candidate(c, plan) for c in candidates]
     scored.sort(key=lambda item: (-item["score"], _path_depth(item["url"]), item["name"]))
     must_include = [t for t in (plan.criteria.get("must_include") or []) if t]
+    # 准入规则按**可执行形态**判（不是另起一套打分口径）：
+    # 计划里写的那句口径，代码判的就是它；判不了的条款记在规则里。
+    rule = parse_admission_rule(plan.criteria.get("admission_rule"), plan.criteria)
+    gate_failed: List[Dict[str, Any]] = []
+    for item in scored:
+        passed, reasons = evaluate_discovery(item, rule)
+        item["gate_passed"] = passed
+        item["gate_reasons"] = reasons
+        if not passed:
+            gate_failed.append(item)
     selected: List[Dict[str, Any]] = []
     # 同一站点只算一家：character.ai/ 与 character.ai/about 是同一个竞品，
     # 算两家会白占一个名额（实测：8 个入选里有 2 个是同一站点的两个页面）。
@@ -935,6 +956,8 @@ def admit_competitors(
     for item in scored:
         if len(selected) >= plan.max_count:
             break
+        if not item.get("gate_passed", True):
+            continue
         host = _host_key(item["url"])
         if host and host in selected_hosts:
             continue
@@ -947,6 +970,8 @@ def admit_competitors(
             break
         if item in selected:
             continue
+        if not item.get("gate_passed", True):
+            continue
         host = _host_key(item["url"])
         if host and host in selected_hosts:
             continue
@@ -958,6 +983,9 @@ def admit_competitors(
     return {
         "selected": selected[:plan.max_count],
         "scored": scored,
+        # 被规则挡下来的候选（连同理由）——"为什么没选它"要能回答
+        "gate_failed": gate_failed,
+        "admission_rule": rule.to_dict(),
         "min_count": plan.min_count,
         "max_count": plan.max_count,
         "met_minimum": len(selected) >= plan.min_count,

@@ -667,6 +667,21 @@ def _render_subject(subject: Dict[str, Any]) -> str:
         parts.append("竞品口径：" + "、".join(str(l) for l in layers))
     if subject.get("min_count") or subject.get("max_count"):
         parts.append(f"数量口径：{subject.get('min_count')}-{subject.get('max_count')} 家")
+    # 实际执行的准入条件：报告里写的那句口径，代码判的是哪几条、哪条判不了。
+    # 不写这一行，读者只能看到一句没人执行的自然语言。
+    rule = subject.get("admission_rule") or {}
+    executable = [str(c) for c in (rule.get("executable") or []) if str(c).strip()]
+    if executable:
+        parts.append("实际执行的入选条件：" + "；".join(executable[:4]))
+    not_executable = [str(c) for c in (rule.get("not_executable") or []) if str(c).strip()]
+    if not_executable:
+        parts.append("未能执行的条件：" + "；".join(not_executable[:2]))
+    rejected = subject.get("rejected_competitors") or []
+    if rejected:
+        names = "、".join(
+            str(r.get("name") or r.get("url") or "") for r in rejected[:5]
+        )
+        parts.append(f"未采信（数据不足已剔除）：{names}")
     angles = subject.get("angles") or []
     if angles:
         parts.append("重点角度：" + "、".join(

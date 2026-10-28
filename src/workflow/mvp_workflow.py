@@ -52,7 +52,12 @@ from src.workflow.competitor_matrix import (
 from src.workflow import borrowable_derivation
 from src.workflow import research_plan
 from src.workflow import search_stages
-from src.workflow.research_plan import ANGLE_LABELS
+from src.workflow.admission_rules import (
+    evaluate_post_crawl,
+    parse_admission_rule,
+)
+from src.workflow.research_plan import ANGLE_LABELS, MIN_ADMISSION_SCORE
+from src.workflow.research_plan import _host_key
 import asyncio
 import contextlib
 import json
@@ -70,6 +75,11 @@ logger = logging.getLogger(__name__)
 # 几十个站点的爬取，预算与墙钟都扛不住。
 MAX_COUNTER_EVIDENCE_PER_COMPETITOR = 2
 MAX_COUNTER_EVIDENCE_TOTAL = 5
+
+# 准入闸门后的补位上限：数据不足的竞品被淘汰后，最多再抓几家顶上。
+# 补位是**真花钱**（每家一次整站爬），所以有上限；补完仍不够就如实标
+# "未达口径下限"，不假装够了。
+MAX_BACKFILL_COMPETITORS = 2
 
 
 
@@ -1057,6 +1067,17 @@ class MVPWorkflow:
                 state["target_sites"], state["competitors"]
             )
 
+            # 抓后准入闸门：维度数不够的竞品不进矩阵（但进"未采信"清单），
+            # 数量不够时从候选留池补位。放在这里（抓完、抽数据之前），
+            # 是因为被淘汰的竞品的数据不能进报告——否则报告里会出现
+            # "未核实"的行，而矩阵里又没有它，两边对不上。
+            await self._apply_admission_gate(
+                state,
+                auth_credentials=auth_credentials,
+                login_url=login_url,
+                custom_selectors=custom_selectors,
+            )
+
             for comp in state["competitors"]:
                 state["extracted_data"].extend(comp["extracted_data"])
                 if comp["status"] == "success":
@@ -1721,6 +1742,9 @@ class MVPWorkflow:
             "missing_dimensions": [],
             "competitors": [],
             "competitor_matrix": None,
+            # 准入闸门：被淘汰的竞品（未采信清单）与补位记录
+            "rejected_competitors": [],
+            "admission_gate": {},
             "borrowable_derivation": None,
             "research_plan": None,
             "entity_pages": [],
@@ -2011,9 +2035,14 @@ class MVPWorkflow:
         lines = [f"【已确定的研究计划】", f"研究主体：{plan.entity_name}（{plan.what_it_is or '未说明'}）"]
         criteria = plan.criteria or {}
         layers = "、".join(criteria.get("layers") or [])
+        # 入选标准给**可执行**的那几条：模型按没被执行的条款去取舍，
+        # 就会与代码裁决出两套结果（声明与执行脱节）。
+        rule = plan.admission_rule or {}
+        executable = [str(c) for c in (rule.get("executable") or []) if str(c).strip()]
+        rule_text = "；".join(executable) if executable else (criteria.get("admission_rule") or "默认")
         lines.append(
             f"竞品口径：{layers}；数量 {criteria.get('min_count')}-{criteria.get('max_count')} 家；"
-            f"入选标准：{criteria.get('admission_rule') or '默认'}"
+            f"入选标准（按此执行）：{rule_text}"
         )
         weights = "、".join(
             f"{ANGLE_LABELS.get(a.angle, a.angle)}{round(a.weight * 100)}%"
@@ -2175,13 +2204,163 @@ class MVPWorkflow:
             user_query,
             competitors=state.get("competitors") or [],
             derived_by_platform=derived_map,
-            subject=self._plan_subject(state.get("research_plan")),
+            subject=self._plan_subject(
+                state.get("research_plan"), state.get("rejected_competitors")
+            ),
         )
         state["competitor_matrix"] = matrix_obj.to_dict()
         return matrix_obj
 
+    async def _apply_admission_gate(
+        self,
+        state: Dict[str, Any],
+        auth_credentials: Optional[Dict[str, str]] = None,
+        login_url: Optional[str] = None,
+        custom_selectors: Optional[Dict[str, List[str]]] = None,
+    ) -> None:
+        """抓后准入闸门 + 从留池补位。
+
+        三件事，按顺序：
+
+        1. **淘汰**：按口径里"至少 N 个维度有数据"这一条（抓后才判得了），
+           把数据不足的竞品从矩阵里剔出去。它们**进"未采信"清单**——
+           既不污染结论，也不隐藏"我们试过它"这件事。
+        2. **补位**：数量不够时，从候选留池（``discovery.scored``）里按分
+           取下一批候选抓一轮。补位有上限（``MAX_BACKFILL_COMPETITORS``），
+           补完仍不够就如实标"未达口径下限"，不假装够了。
+        3. **记账**：把规则、淘汰清单、补位记录写进 state，供报告与前端展示。
+        """
+        plan_data = state.get("research_plan") or {}
+        criteria = plan_data.get("competitor_criteria") or {}
+        rule = parse_admission_rule(criteria.get("admission_rule"), criteria)
+
+        competitors = list(state.get("competitors") or [])
+        accepted: List[Dict[str, Any]] = []
+        rejected: List[Dict[str, Any]] = []
+        for comp in competitors:
+            passed, reasons = evaluate_post_crawl(comp, rule)
+            if passed:
+                accepted.append(comp)
+            else:
+                rejected.append({
+                    "name": comp.get("name") or comp.get("url") or "",
+                    "url": comp.get("url") or "",
+                    "status": comp.get("status"),
+                    "reasons": reasons,
+                    "dimension_count": QualityScorer.count_dimensions(comp),
+                })
+        state["competitors"] = accepted
+        state["rejected_competitors"] = rejected
+
+        if rejected:
+            self._emit(
+                "crawl_complete", "crawl", "completed",
+                f"准入闸门淘汰 {len(rejected)} 家数据不足的竞品（未采信清单）",
+                payload={"rejected": [r.get("name") for r in rejected]},
+            )
+
+        # 补位：口径下限没达到时，从留池补抓
+        min_count = int(criteria.get("min_count") or 0)
+        need = max(0, min_count - len(accepted))
+        backfilled: List[Dict[str, Any]] = []
+        if need:
+            backfilled = await self._backfill_from_pool(
+                state,
+                rule,
+                need=need,
+                auth_credentials=auth_credentials,
+                login_url=login_url,
+                custom_selectors=custom_selectors,
+            )
+        state["admission_gate"] = {
+            "rule": rule.to_dict(),
+            "rejected_count": len(rejected),
+            "rejected": rejected,
+            "backfilled": backfilled,
+            "final_count": len(state.get("competitors") or []),
+            "min_count": min_count,
+            "met_minimum": len(state.get("competitors") or []) >= min_count if min_count else True,
+        }
+
+    async def _backfill_from_pool(
+        self,
+        state: Dict[str, Any],
+        rule,
+        need: int,
+        auth_credentials: Optional[Dict[str, str]] = None,
+        login_url: Optional[str] = None,
+        custom_selectors: Optional[Dict[str, List[str]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """从候选留池补抓下一批候选（受上限约束）。"""
+        discovery = state.get("discovery") or {}
+        pool = discovery.get("scored") or []
+        if not pool:
+            return []
+        seen_hosts = {
+            _host_key(c.get("url")) for c in (state.get("competitors") or [])
+        }
+        seen_hosts |= {
+            _host_key(c.get("url")) for c in (state.get("rejected_competitors") or [])
+        }
+        picked: List[Dict[str, Any]] = []
+        for item in pool:
+            if len(picked) >= min(need, MAX_BACKFILL_COMPETITORS):
+                break
+            if not item.get("gate_passed", True):
+                continue
+            if float(item.get("score") or 0) < MIN_ADMISSION_SCORE:
+                continue
+            host = _host_key(item.get("url"))
+            if host and host in seen_hosts:
+                continue
+            picked.append(item)
+            if host:
+                seen_hosts.add(host)
+        if not picked:
+            return []
+
+        self._emit(
+            "crawl_start", "crawl", "running",
+            f"准入闸门后补抓 {len(picked)} 家候选（口径下限还差 {need} 家）",
+        )
+        sites = [
+            {"url": item["url"], "auth_credentials": None, "login_url": None}
+            for item in picked
+        ]
+        fetched = await self._fetch_all_competitors(
+            sites,
+            auth_credentials,
+            login_url,
+            custom_selectors,
+            page_tiers=state.get("page_tiers"),
+        )
+        state["target_sites"].extend(sites)
+        state["target_urls"].extend(site["url"] for site in sites)
+
+        accepted: List[Dict[str, Any]] = []
+        backfilled: List[Dict[str, Any]] = []
+        for comp in fetched:
+            passed, reasons = evaluate_post_crawl(comp, rule)
+            entry = {
+                "name": comp.get("name") or comp.get("url") or "",
+                "url": comp.get("url") or "",
+                "status": comp.get("status"),
+                "reasons": reasons,
+                "dimension_count": QualityScorer.count_dimensions(comp),
+            }
+            backfilled.append(entry)
+            if passed:
+                accepted.append(comp)
+            else:
+                state.setdefault("rejected_competitors", []).append(entry)
+        state.setdefault("competitors", []).extend(accepted)
+        return backfilled
+
     @staticmethod
-    def _plan_subject(plan_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    def _plan_subject(
+        plan_data: Optional[Dict[str, Any]],
+        rejected: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """从研究计划里取"主体/口径/角度"摘要，供矩阵章节展示。"""
         if not plan_data:
             return {}
@@ -2198,6 +2377,9 @@ class MVPWorkflow:
             "min_count": criteria.get("min_count"),
             "max_count": criteria.get("max_count"),
             "angles": angles,
+            # 实际执行的准入条件 + 未采信清单：矩阵章节要能说清"按什么口径选的"
+            "admission_rule": plan_data.get("admission_rule") or {},
+            "rejected_competitors": list(rejected or []),
         }
 
     def _refresh_quality_report(self, state: Dict[str, Any]):
