@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 from src.workflow.research_plan import ResearchPlan, admit_competitors
@@ -61,6 +61,24 @@ def looks_like_aggregator(url: str) -> bool:
         return True
     path = (urlparse(url).path or "").lower()
     return any(hint in path for hint in _MEDIA_PATH_HINTS)
+
+
+# 模型有时会写**占位符**而不是真词（实测："{竞品名} 官网"）。
+# 直接拿去搜索就是在搜字面量——必须先填成真的竞品名。
+_PLACEHOLDER_PATTERNS = (
+    "{竞品名}", "{竞品}", "{competitor}", "{competitor_name}", "{{竞品名}}",
+    "<竞品名>", "【竞品名】", "[竞品名]", "{name}", "<name>",
+    # 裸写的占位符（实测模型给过 "竞品名 官网"，不带括号）
+    "竞品名", "竞品名称",
+)
+
+
+def _expand_placeholder(query: str, competitor: str) -> str:
+    """把查询词里的竞品名占位符换成真名。"""
+    text = query or ""
+    for pattern in _PLACEHOLDER_PATTERNS:
+        text = text.replace(pattern, competitor)
+    return text.strip()
 
 
 def clean_candidate_name(title: str, url: str) -> str:
@@ -120,6 +138,8 @@ class SearchStageRunner:
     def __init__(self, search_tool: Any, num_results: int = 8):
         self.search_tool = search_tool
         self.num_results = num_results
+        # 主体锚定的结果缓存：竞品发现阶段要据此排除"主体自己的官方页"
+        self._entity_pages: List[Dict[str, Any]] = []
 
     # -- 单次查询 --------------------------------------------------------
     def _search(self, query: str, stage: str) -> List[Dict[str, Any]]:
@@ -147,35 +167,82 @@ class SearchStageRunner:
         seen_urls = set()
         for query in queries:
             results = self._search(query, stage)
-            collected.extend(results)
             for item in results:
+                # 按 URL 去重：同一条查询会返回同一批页面，多条查询更是重叠。
+                # 不去重的话"取前 5 条"会变成"同一个 URL 占 4 个名额"，
+                # 实体锚定阶段就会只覆盖到 1–2 个站点（实测）。
+                if item["url"] in seen_urls:
+                    continue
                 seen_urls.add(item["url"])
+                collected.append(item)
         return collected
 
     # -- 阶段 1：实体锚定 -------------------------------------------------
     def run_entity_anchor(self, plan: ResearchPlan) -> List[Dict[str, Any]]:
-        """目标是弄清主体是什么，不是找竞品。"""
+        """目标是弄清主体是什么，不是找竞品。
+
+        排序：非媒体页优先 → 标题里带主体名的优先 → 标题短优先。
+        最后一条是"标题短优先"而不是"长优先"：短标题通常是产品页
+        （"猫箱"），长标题通常是文章页（"2024年AI社交产品盘点:…"）。
+        """
         pages = self._run_stage(plan, "entity_anchor")
-        pages.sort(key=lambda item: (looks_like_aggregator(item["url"]), len(item["title"])))
-        return pages[:5]
+        entity_tokens = [t for t in re.split(r"[\s\-_｜|]+", plan.entity_name or "") if t]
+
+        def _key(item: Dict[str, Any]) -> Tuple:
+            title = item["title"]
+            mentions = 0 if not entity_tokens else int(
+                any(tok in title for tok in entity_tokens)
+            )
+            return (looks_like_aggregator(item["url"]), -mentions, len(title))
+
+        pages.sort(key=_key)
+        self._entity_pages = pages[:5]
+        return self._entity_pages
 
     # -- 阶段 2：竞品发现 + 入选 ------------------------------------------
     def run_competitor_discovery(self, plan: ResearchPlan) -> DiscoveryResult:
         result = DiscoveryResult()
+        result.entity_pages = list(self._entity_pages)
         results = self._run_stage(plan, "competitor_discovery")
         seen = set()
+        by_name: Dict[str, Candidate] = {}
         for item in results:
             url = item["url"]
             if url in seen:
                 continue
             seen.add(url)
-            result.candidates.append(Candidate(
+            candidate = Candidate(
                 name=clean_candidate_name(item["title"], url),
                 url=url,
                 description=item["content"],
                 source_stage="competitor_discovery",
                 is_aggregator=looks_like_aggregator(url),
-            ))
+            )
+            result.candidates.append(candidate)
+            # 同名去重：同一个产品常在多个页面里出现（官网 + 媒体盘点页）。
+            # 保留**官网**那份——媒体页已被标记为 aggregator，先到先得的
+            # 做法会把官网挤掉。
+            existing = by_name.get(candidate.name)
+            if existing is None or (existing.is_aggregator and not candidate.is_aggregator):
+                by_name[candidate.name] = candidate
+        # 主体自己的官方页不是竞品。但"官方页"要判准：竞品官网的首页常提到主体
+        # （"猫箱 - 与百度搭子对比"），若凡是出现在锚定结果里的 URL 都算主体页，
+        # 就会把真竞品一起排掉（实测）。判准 = 标题里带主体名**且**页面就是主体页。
+        entity_name = (plan.entity_name or "").strip()
+        entity_urls = {p["url"] for p in (result.entity_pages or [])}
+        self_page_urls = {
+            p["url"] for p in (result.entity_pages or [])
+            if entity_name and entity_name in str(p.get("title") or "")
+        }
+        before = len(result.candidates)
+        result.candidates = [
+            c for c in result.candidates
+            if c.url not in self_page_urls
+            and not (entity_name and c.name.strip() == entity_name)
+        ]
+        dropped_self = before - len(result.candidates)
+        if dropped_self:
+            result.notes.append(f"排除主体自身的 {dropped_self} 个页面（主体不是自己的竞品）")
         # 媒体/百科/社区页不是竞品官网：剔掉（但保留在候选里以备人工查看）
         official = [c for c in result.candidates if not c.is_aggregator]
         if official:
@@ -184,9 +251,16 @@ class SearchStageRunner:
                 f"候选池剔除 {len(dropped)} 个媒体/社区页："
                 + "、".join(f"{c.name}({c.url})" for c in dropped[:5])
             )
-        admission = admit_competitors(
-            [c.to_dict() for c in (official or result.candidates)], plan
-        )
+            pool = official
+        else:
+            # 一个官网都没剩：按口径**不拿媒体页充数**。宁可空手回去说
+            # "没找到竞品官网"，也不把知乎/百科写成竞品。
+            result.notes.append(
+                "候选池里没有竞品官网（只有媒体/社区页）——按口径不入选，"
+                "本轮可能找不到竞品"
+            )
+            pool = []
+        admission = admit_competitors([c.to_dict() for c in pool], plan)
         result.selected = admission["selected"]
         result.scored = admission["scored"]
         if not admission["met_minimum"]:
@@ -205,10 +279,25 @@ class SearchStageRunner:
         }.get(stage, [])
         queries = []
         for query in base:
-            queries.append(f"{query} {competitor}")
+            expanded = _expand_placeholder(query, competitor)
+            # 模型的查询词是**模板**：要么带占位符（"{竞品名} 官网"），
+            # 要么是通用词（"官网"）。两种都得把真竞品名放进去，
+            # 否则搜出来的是"竞品名 官网"这种字面量。
+            if competitor and competitor not in expanded:
+                expanded = f"{expanded} {competitor}"
+            queries.append(expanded)
         for word in intent:
             queries.append(f"{competitor} {word}")
-        return queries
+        # 去重且保持顺序：模型的查询词里可能已经带了这家竞品名
+        seen = set()
+        unique = []
+        for query in queries:
+            query = query.strip()
+            if not query or query in seen:
+                continue
+            seen.add(query)
+            unique.append(query)
+        return unique
 
     def run_verification(self, plan: ResearchPlan, competitors: Sequence[str]) -> List[Dict[str, Any]]:
         """对已入选竞品做站外补充检索（逐家验证 + 反证）。

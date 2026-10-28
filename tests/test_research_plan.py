@@ -84,13 +84,10 @@ def test_model_never_sets_weights_directly():
 # ----------------------------------------------------------------------
 
 @pytest.mark.parametrize("mutate,expect", [
-    (lambda d: d["entity"].__setitem__("entity_type", "小程序"), "entity_type"),
     (lambda d: d["competitor_criteria"].__setitem__("layers", ["unknown_layer"]), "层级非法"),
     (lambda d: d["competitor_criteria"].__setitem__("min_count", 99), "min_count"),
     (lambda d: d["competitor_criteria"].__setitem__("min_count", 6) or
                 d["competitor_criteria"].__setitem__("max_count", 3), "min_count > max_count"),
-    (lambda d: d["angles"][0].__setitem__("angle", "vibes"), "分析角度非法"),
-    (lambda d: d["angles"][0].__setitem__("priority", "very_high"), "优先级非法"),
     (lambda d: d["search_plan"][0].__setitem__("stage", "vibes"), "搜索阶段非法"),
 ])
 def test_invalid_plan_is_rejected(mutate, expect):
@@ -98,6 +95,64 @@ def test_invalid_plan_is_rejected(mutate, expect):
     mutate(data)
     problems = rp.validate_plan_data(data)
     assert any(expect in p for p in problems), problems
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda d: d["entity"].__setitem__("entity_type", "小程序"),
+    lambda d: d["angles"][0].__setitem__("angle", "pricing"),
+    lambda d: d["angles"][0].__setitem__("priority", "very_high"),
+])
+def test_paraphrased_enum_is_folded_not_rejected(mutate):
+    """模型改写枚举词是同义改写，不是错误——折叠回规范词即可。"""
+    data = _plan_data()
+    mutate(data)
+    assert rp.validate_plan_data(data) == []
+    plan = rp.build_plan_from_data(data, "x")
+    assert plan.source == "model"
+
+
+def test_angles_that_fold_to_nothing_are_rejected():
+    """一个规范角度都折不出来 = 模型在说完全不同的事 → 退回默认计划。"""
+    data = _plan_data()
+    data["angles"] = [{"angle": "vibes", "priority": "primary", "reason": ""}]
+    problems = rp.validate_plan_data(data)
+    assert any("无法归入" in p for p in problems), problems
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("小程序", "app"), ("application", "app"), ("SaaS", "platform"),
+    ("公司", "company"), ("tool", "software"), ("vibes", "unknown"), ("", "unknown"),
+])
+def test_entity_type_folding(raw, expected):
+    assert rp.fold_entity_type(raw) == expected
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("pricing", "business"), ("market_positioning", "business"),
+    ("technology", "engineering"), ("功能", "feature"),
+    ("ux", "product"), ("vibes", None),
+])
+def test_angle_folding(raw, expected):
+    assert rp.fold_angle(raw) == expected
+
+
+def test_priority_folding_is_neutral_when_unknown():
+    assert rp.fold_priority("very_high") == "secondary"
+    assert rp.fold_priority("high") == "primary"
+    assert rp.fold_priority("ignore") == "ignore"
+
+
+def test_folded_angle_keeps_highest_priority():
+    """多个模型角度折到同一规范角度时，取优先级最高的那个。"""
+    data = _plan_data()
+    data["angles"] = [
+        {"angle": "pricing", "priority": "secondary", "reason": "定价", "page_hints": []},
+        {"angle": "market_positioning", "priority": "primary", "reason": "市场", "page_hints": []},
+    ]
+    plan = rp.build_plan_from_data(data, "x")
+    business = next(a for a in plan.angles if a.angle == "business")
+    assert business.priority == "primary"
+    assert business.reason == "市场"
 
 
 def test_valid_plan_has_no_problems():
@@ -151,8 +206,9 @@ def test_build_plan_from_model_output():
 
 
 def test_invalid_plan_falls_back_to_defaults():
+    """角度一个都折不出来 → 退回默认计划（主体与口径仍然可用则不必退）。"""
     data = _plan_data()
-    data["angles"][0]["angle"] = "vibes"
+    data["angles"] = [{"angle": "vibes", "priority": "primary", "reason": ""}]
     llm = _FakeLLM(response=json.dumps(data, ensure_ascii=False))
     plan = asyncio.run(rp.build_research_plan(llm, "找一下百度搭子的全部竞品信息"))
     assert plan.source == "default"
@@ -203,10 +259,23 @@ def test_admission_respects_max_count():
 
 
 def test_admission_requires_two_dimensions():
+    """发现阶段没有维度数据：门槛只能是"有自己的站点"，不能是"≥2 个维度"。
+
+    拿抓完才知道的规则当发现阶段的门槛，结果是维度数恒为 0 → 一家都选不出来。
+    """
     plan = rp.build_default_plan("百度搭子")
     result = rp.admit_competitors(_candidates(), plan)
     names = [item["name"] for item in result["selected"]]
-    assert "闲聊AI" not in names, "只有 1 个维度的候选不该入选"
+    assert "闲聊AI" in names, "有官网的候选就该入选（维度数此时未知）"
+    assert all(item["score"] >= rp.MIN_ADMISSION_SCORE for item in result["selected"])
+
+
+def test_admission_rejects_candidates_without_own_site():
+    plan = rp.build_default_plan("百度搭子")
+    result = rp.admit_competitors(
+        [{"name": "某资讯站", "url": "", "description": "盘点", "dimension_count": 0}], plan
+    )
+    assert result["selected"] == []
 
 
 def test_admission_reports_minimum_shortfall():
@@ -229,6 +298,96 @@ def test_must_exclude_is_penalised():
     result = rp.admit_competitors(_candidates(), plan)
     scored = {item["name"]: item for item in result["scored"]}
     assert scored["猫箱"]["score"] < scored["Talkie"]["score"]
+
+
+def test_subject_own_page_is_not_a_competitor():
+    """主体自己的官方页不是竞品。"""
+    plan = rp.build_plan_from_data(_plan_data(), "x")
+    stub = _StubSearch({
+        "百度搭子 是什么": [
+            {"title": "百度搭子官网", "url": "https://dazi.test/", "content": "官方"},
+        ],
+        "百度搭子 竞品": [
+            {"title": "百度搭子 - 官方介绍", "url": "https://dazi.test/", "content": "官方"},
+            {"title": "猫箱", "url": "https://maoxiang.test/", "content": "AI 搭子"},
+        ],
+    })
+    runner = ss.SearchStageRunner(stub)
+    runner.run_entity_anchor(plan)
+    result = runner.run_competitor_discovery(plan)
+    urls = [item["url"] for item in result.selected]
+    assert "https://dazi.test/" not in urls, "主体自己的页不能入选"
+    assert any("主体" in note for note in result.notes)
+
+
+def test_same_name_candidates_keep_the_official_site():
+    """同一产品出现在多个页面时，保留官网那份。"""
+    plan = rp.build_plan_from_data(_plan_data(), "x")
+    stub = _StubSearch({
+        "百度搭子 竞品": [
+            {"title": "猫箱 - 媒体盘点", "url": "https://zhuanlan.zhihu.com/p/1", "content": "盘点"},
+            {"title": "猫箱 - AI 搭子", "url": "https://maoxiang.test/", "content": "AI 搭子"},
+        ],
+    })
+    runner = ss.SearchStageRunner(stub)
+    result = runner.run_competitor_discovery(plan)
+    official = [c for c in result.candidates if c.name == "猫箱" and not c.is_aggregator]
+    assert official and official[0].url == "https://maoxiang.test/"
+
+
+def test_aggregator_only_pool_admits_nothing():
+    """候选池只剩媒体/百科页时，按口径不拿它们充数——宁可空手。"""
+    plan = rp.build_plan_from_data(_plan_data(), "x")
+    stub = _StubSearch({
+        "百度搭子 竞品": [
+            {"title": "盘点文", "url": "https://zhuanlan.zhihu.com/p/1", "content": "盘点"},
+            {"title": "百科词条", "url": "https://baike.baidu.com/item/x", "content": "百科"},
+        ],
+    })
+    runner = ss.SearchStageRunner(stub)
+    result = runner.run_competitor_discovery(plan)
+    assert result.selected == []
+    assert any("没有竞品官网" in note for note in result.notes)
+
+
+def test_stage_results_are_deduped_by_url():
+    """同一条查询会返回同一批页面；不去重的话"取前 5 条"会被同一个 URL 占满。"""
+    plan = rp.build_plan_from_data(_plan_data(), "x")
+    stub = _StubSearch({
+        "百度搭子": [
+            {"title": "A", "url": "https://a.test/", "content": "a"},
+            {"title": "B", "url": "https://b.test/", "content": "b"},
+        ],
+    })
+    runner = ss.SearchStageRunner(stub)
+    pages = runner.run_entity_anchor(plan)
+    urls = [p["url"] for p in pages]
+    assert len(urls) == len(set(urls))
+
+
+@pytest.mark.parametrize("raw", [
+    "{竞品名} 官网", "竞品名 官网", "<竞品名> 功能", "{competitor} 缺点",
+])
+def test_placeholder_queries_are_expanded(raw):
+    plan = rp.build_plan_from_data(_plan_data(), "x")
+    plan.search_plan = [
+        rp.SearchStage(stage="per_competitor_verify", queries=[raw]),
+        rp.SearchStage(stage="counter_evidence", queries=[raw]),
+    ]
+    runner = ss.SearchStageRunner(_StubSearch({"": []}))
+    queries = runner.site_scoped_queries(plan, "猫箱", "per_competitor_verify")
+    assert queries
+    assert all("竞品名" not in q and "{competitor}" not in q for q in queries)
+    assert any("猫箱" in q for q in queries)
+
+
+def test_generic_base_query_gets_competitor_name():
+    """模型给通用词（"官网"）时也要拼上竞品名，否则搜的是字面量。"""
+    plan = rp.build_plan_from_data(_plan_data(), "x")
+    plan.search_plan = [rp.SearchStage(stage="per_competitor_verify", queries=["官网"])]
+    runner = ss.SearchStageRunner(_StubSearch({"": []}))
+    queries = runner.site_scoped_queries(plan, "猫箱", "per_competitor_verify")
+    assert "官网 猫箱" in queries
 
 
 # ----------------------------------------------------------------------

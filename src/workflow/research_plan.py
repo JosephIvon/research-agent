@@ -44,13 +44,55 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from src.agent.citations import make_evidence_id
 
 PLAN_INTENT = "plan"
-PLAN_MAX_TOKENS = 8192
+PLAN_MAX_TOKENS = 16384
 
 # ---- 有限枚举（结构，不是行业知识）------------------------------------
 ENTITY_TYPES = (
     "app", "platform", "software", "hardware", "service", "brand",
     "company", "organization", "concept", "person", "place", "unknown",
 )
+
+# 模型会**改写**枚举词（实测真实模型给过 entity_type="product"、
+# angle="pricing/market_positioning/technology"）。枚举是**契约的词汇表**，
+# 不是判决：改写就折叠回规范词，而不是整份拒收——模型给出的主体判断与
+# 竞品口径仍然有用，为一个同义词把整份计划扔掉是最亏的。
+# 折叠表是**通用词形映射**（与行业无关）。
+_ENTITY_TYPE_SYNONYMS: Dict[str, str] = {
+    "app": "app", "application": "app", "mobile_app": "app", "mobile app": "app",
+    "小程序": "app", "应用": "app", "手机应用": "app", "软件应用": "app",
+    "platform": "platform", "website": "platform", "web": "platform",
+    "site": "platform", "saas": "platform", "平台": "platform", "网站": "platform",
+    "software": "software", "tool": "software", "系统": "software",
+    "软件": "software", "工具": "software", "工具软件": "software",
+    "hardware": "hardware", "device": "hardware", "硬件": "hardware", "设备": "hardware",
+    "service": "service", "服务": "service", "服务类": "service",
+    "brand": "brand", "品牌": "brand", "牌子": "brand",
+    "company": "company", "enterprise": "company", "vendor": "company",
+    "公司": "company", "企业": "company", "厂商": "company",
+    "organization": "organization", "org": "organization", "机构": "organization",
+    "组织": "organization", "平台方": "organization",
+    "concept": "concept", "概念": "concept", "概念级": "concept",
+    "person": "person", "人物": "person", "人": "person",
+    "place": "place", "地点": "place", "城市": "place", "地区": "place",
+}
+
+_ANGLE_SYNONYMS: Dict[str, str] = {
+    "feature": "feature", "features": "feature", "function": "feature",
+    "functions": "feature", "capability": "feature", "capabilities": "feature",
+    "功能": "feature", "特性": "feature", "功能特性": "feature", "能力": "feature",
+    "business": "business", "business_model": "business", "business value": "business",
+    "pricing": "business", "price": "business", "revenue": "business",
+    "monetization": "business", "market": "business", "market_positioning": "business",
+    "gtm": "business", "go_to_market": "business", "commercial": "business",
+    "商业模式": "business", "定价": "business", "商业": "business", "市场": "business",
+    "工程": "engineering", "engineering": "engineering", "technology": "engineering",
+    "tech": "engineering", "technical": "engineering", "architecture": "engineering",
+    "implementation": "engineering", "技术": "engineering", "研发": "engineering",
+    "架构": "engineering", "技术实现": "engineering",
+    "product": "product", "ux": "product", "ui": "product",
+    "experience": "product", "usability": "product", "产品": "product",
+    "体验": "product", "交互": "product", "易用": "product",
+}
 
 # ---- 分析角度与默认权重（产品默认值）---------------------------------
 DEFAULT_ANGLES: Tuple[Tuple[str, str, float], ...] = (
@@ -70,6 +112,9 @@ DEFAULT_MIN_COMPETITORS = 3
 DEFAULT_MAX_COMPETITORS = 5
 DEFAULT_CANDIDATE_POOL = 10   # 候选池先抓 8–12，取打分前 N
 DEFAULT_ADMISSION_RULE = "必须有官网 + 至少 2 个维度有数据"
+# 入选分数线：0.3 = "有自己的站点"。发现阶段没有维度数据可看，
+# 门槛只能定在**发现阶段拿得到**的那一层。
+MIN_ADMISSION_SCORE = 0.3
 COMPETITOR_LAYERS = ("direct", "alternative", "adjacent")
 DEFAULT_LAYERS = ("direct",)
 
@@ -87,7 +132,9 @@ _SYSTEM_PROMPT = (
     "你是竞品研究的**规划员**。把用户的调研请求翻译成一份结构化研究计划。\n\n"
     "规则：\n"
     "1. 用户给的是**任务描述**，不是搜索词。先弄清主体是什么："
-    "entity.what_it_is 用一句话说明主体是做什么的；entity.entity_type 从枚举里选。\n"
+    "entity.what_it_is 用一句话说明主体是做什么的；"
+    "entity.entity_type 只能取 "
+    + " / ".join(ENTITY_TYPES) + " 之一。\n"
     "2. 若主体名有歧义（同名不同物），列出 disambiguation_candidates，"
     "resolved_confidence 给 0–1 的置信度，不要假装确定。\n"
     "3. competitor_criteria 给出竞品的判定标准（写「同客群×同场景×同交付形态」"
@@ -95,6 +142,8 @@ _SYSTEM_PROMPT = (
     "count 落在 2–8 之间。\n"
     "4. angles：分析角度的**优先级**（primary/secondary/ignore）、理由，"
     "以及该角度值得看的**站内页面关键词** page_hints（如定价页、功能页、API 文档）。"
+    "angle 只能取 " + " / ".join(ANGLE_ORDER) + "（"
+    + " / ".join(f"{k}={v}" for k, v in ANGLE_LABELS.items()) + "）。"
     "**不要输出权重数字**——权重由系统按优先级计算。"
     "若用户表达了角色或侧重（如「偏研发」「站在采购角度」），"
     "据此排优先级；没有这类线索就四个角度都标 secondary。\n"
@@ -102,7 +151,12 @@ _SYSTEM_PROMPT = (
     "competitor_discovery（找候选竞品）、per_competitor_verify（逐家查证）、"
     "counter_evidence（找缺点与评价）。查询词要短，是**搜索词**不是任务句。\n"
     "6. open_questions 列出需要用户确认的点（带 default 默认值），"
-    "没有就不列。\n\n"
+    "没有就不列。\n"
+    "7. **长度上限**（超了会被截断，整份计划就废了）："
+    "what_it_is ≤ 60 字；admission_rule ≤ 150 字；"
+    "must_include / must_exclude 各 ≤ 3 条、每条 ≤ 60 字；"
+    "reason ≤ 50 字；page_hints ≤ 8 个、每个 ≤ 12 字；"
+    "每阶段 queries ≤ 4 条、每条 ≤ 20 字。\n\n"
     "输出严格 JSON，不要 markdown 代码块：\n"
     '{"entity":{"name":"","entity_type":"","what_it_is":"",'
     '"disambiguation_candidates":[],"resolved_confidence":0.0},'
@@ -273,6 +327,50 @@ class ResearchPlan:
 # ----------------------------------------------------------------------
 # 权重：数值一律由代码算
 # ----------------------------------------------------------------------
+
+def fold_angle(name: Any) -> Optional[str]:
+    """把模型给的角度名折叠回规范角度；认不出返回 None（丢弃该角度）。"""
+    key = str(name or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if not key:
+        return None
+    if key in ANGLE_ORDER:
+        return key
+    if key in _ANGLE_SYNONYMS:
+        return _ANGLE_SYNONYMS[key]
+    compact = key.replace("_", "")
+    for candidate, canonical in _ANGLE_SYNONYMS.items():
+        if candidate.replace("_", "") == compact:
+            return canonical
+    return None
+
+
+def fold_entity_type(name: Any) -> str:
+    """把模型给的实体类型折叠回规范枚举；认不出就是 unknown（不拒收）。"""
+    key = str(name or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if not key:
+        return "unknown"
+    if key in ENTITY_TYPES:
+        return key
+    if key in _ENTITY_TYPE_SYNONYMS:
+        return _ENTITY_TYPE_SYNONYMS[key]
+    compact = key.replace("_", "")
+    for candidate, canonical in _ENTITY_TYPE_SYNONYMS.items():
+        if candidate.replace("_", "") == compact:
+            return canonical
+    return "unknown"
+
+
+def fold_priority(value: Any) -> str:
+    """优先级折叠：认不出一律 secondary（中性，不猜）。"""
+    key = str(value or "").strip().lower()
+    if key in PRIORITY_MULTIPLIER:
+        return key
+    if key in ("high", "most_important", "top", "核心", "高"):
+        return "primary"
+    if key in ("low", "none", "skip", "不重要", "低"):
+        return "ignore"
+    return "secondary"
+
 
 def resolve_weights(priorities: Dict[str, str]) -> Dict[str, float]:
     """按优先级倍率算权重并归一化；没提到的角度用 secondary。
@@ -448,9 +546,8 @@ def validate_plan_data(data: Dict[str, Any]) -> List[str]:
         return ["entity 不是对象"]
     # entity.name 缺失不算致命：主体名可以从用户原话里补（属于**修复**，
     # 不是**采纳半份计划**——结构性问题仍然整份拒收）。
-    entity_type = str(entity.get("entity_type") or "").strip()
-    if entity_type and entity_type not in ENTITY_TYPES:
-        problems.append(f"entity.entity_type 非法: {entity_type}")
+    # entity_type 也不因"不在枚举里"而拒收：枚举词会被模型改写，
+    # 折叠回规范词即可（fold_entity_type），折叠不出就是 unknown。
 
     criteria = data.get("competitor_criteria") or {}
     if not isinstance(criteria, dict):
@@ -476,21 +573,12 @@ def validate_plan_data(data: Dict[str, Any]) -> List[str]:
     if not isinstance(angles, list) or not angles:
         problems.append("angles 为空")
     else:
-        seen = set()
-        for item in angles:
-            if not isinstance(item, dict):
-                problems.append("angles 元素不是对象")
-                continue
-            key = str(item.get("angle") or "")
-            if key not in ANGLE_ORDER:
-                problems.append(f"分析角度非法: {key}")
-                continue
-            if key in seen:
-                problems.append(f"分析角度重复: {key}")
-            seen.add(key)
-            priority = str(item.get("priority") or "")
-            if priority not in PRIORITY_MULTIPLIER:
-                problems.append(f"优先级非法: {priority}")
+        # 角度名与优先级都会**折叠**（fold_angle / fold_priority）：
+        # 改写不是错误，是同义词。真正的问题是"折叠后一个规范角度都不剩"，
+        # 那说明模型在说完全不同的事——那种情况退回默认计划更诚实。
+        folded = [fold_angle(item.get("angle")) for item in angles if isinstance(item, dict)]
+        if not any(folded):
+            problems.append("分析角度无法归入任一规范角度")
 
     stages = data.get("search_plan") or []
     if isinstance(stages, list):
@@ -529,19 +617,23 @@ def build_plan_from_data(data: Dict[str, Any], user_query: str) -> ResearchPlan:
         "must_exclude": list(criteria.get("must_exclude") or []),
     })
 
-    # 角度：优先级 → 权重（代码算）
+    # 角度：模型给的是**优先级 + 理由 + 页面提示**，权重由代码算。
+    # 角度名与优先级先折叠回规范形式：模型改写枚举词（"pricing"、
+    # "market_positioning"）是同义改写，不是错误——为它把整份计划扔掉最亏。
+    # 多个模型角度折到同一个规范角度时，取**优先级最高**的那个。
     priorities: Dict[str, str] = {}
     reasons: Dict[str, str] = {}
     hints: Dict[str, List[str]] = {}
+    priority_rank = {"ignore": 0, "secondary": 1, "primary": 2}
     for item in data.get("angles") or []:
         if not isinstance(item, dict):
             continue
-        key = str(item.get("angle") or "")
-        if key not in ANGLE_ORDER:
+        key = fold_angle(item.get("angle"))
+        if key is None:
             continue
-        priority = str(item.get("priority") or "")
-        if priority not in PRIORITY_MULTIPLIER:
-            priority = "secondary"
+        priority = fold_priority(item.get("priority"))
+        if key in priorities and priority_rank[priority] <= priority_rank[priorities[key]]:
+            continue
         priorities[key] = priority
         reasons[key] = str(item.get("reason") or "")
         hints[key] = [
@@ -591,7 +683,7 @@ def build_plan_from_data(data: Dict[str, Any], user_query: str) -> ResearchPlan:
 
     return ResearchPlan(
         entity_name=str(entity.get("name") or "").strip() or _entity_name_from_query(user_query),
-        entity_type=str(entity.get("entity_type") or "unknown").strip(),
+        entity_type=fold_entity_type(entity.get("entity_type")),
         what_it_is=str(entity.get("what_it_is") or "").strip(),
         disambiguation_candidates=[
             str(c).strip() for c in (entity.get("disambiguation_candidates") or []) if str(c).strip()
@@ -699,7 +791,14 @@ def admit_competitors(
     candidates: Sequence[Dict[str, Any]],
     plan: ResearchPlan,
 ) -> Dict[str, Any]:
-    """按计划约束选出最终竞品集合（代码裁决，模型无权直接指定）。"""
+    """按计划约束选出最终竞品集合（代码裁决，模型无权直接指定）。
+
+    裁决依据只能是**发现阶段拿得到的信息**：有没有自己的站点、是否命中排除项、
+    词面上是否与主体相关、是否被用户点名。
+    「至少 2 个维度有数据」是**抓完之后**才能知道的规则，不能当发现阶段的门槛——
+    拿它当门槛的结果是"维度数恒为 0 → 一家都选不出来"（实测）。
+    抓完之后的完整性由矩阵层把关（content_complete 要求有效证据）。
+    """
     scored = [score_candidate(c, plan) for c in candidates]
     scored.sort(key=lambda item: (-item["score"], item["name"]))
     must_include = [t for t in (plan.criteria.get("must_include") or []) if t]
@@ -715,8 +814,9 @@ def admit_competitors(
             break
         if item in selected:
             continue
-        if item["dimensions"] >= 2:
-            selected.append(item)
+        if item["score"] < MIN_ADMISSION_SCORE:
+            continue
+        selected.append(item)
     return {
         "selected": selected[:plan.max_count],
         "scored": scored,

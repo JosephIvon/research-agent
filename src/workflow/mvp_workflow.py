@@ -967,7 +967,7 @@ class MVPWorkflow:
             # 澄清与定界前置（计划已在模式分支之前生成，两种模式共用）
             if enable_search and not state["target_urls"]:
                 state["status"] = "researching"
-                runner = search_stages.SearchStageRunner(self.search_tool)
+                runner = search_stages.SearchStageRunner(self._get_search_tool())
                 entity_pages = runner.run_entity_anchor(plan)
                 state["entity_pages"] = entity_pages
                 discovery = runner.run_competitor_discovery(plan)
@@ -978,10 +978,16 @@ class MVPWorkflow:
                     search_urls = [item["url"] for item in discovery.selected]
                 else:
                     # 计划没产出候选：退回旧行为（把任务描述当搜索词），
-                    # 但仍走 SSRF 校验，行为不比以前差
+                    # 但仍走 SSRF 校验与"媒体页不算竞品"的口径，
+                    # 行为不比以前差（以前媒体页会直接进矩阵）
                     fallback_urls = await self.coordinator.search_topics(user_query)
-                    search_urls = list(fallback_urls)
-                    discovery.notes.append("竞品发现无结果，已退回任务描述直接搜索")
+                    kept = [u for u in fallback_urls if not search_stages.looks_like_aggregator(u)]
+                    dropped = len(fallback_urls) - len(kept)
+                    search_urls = list(kept)
+                    discovery.notes.append(
+                        "竞品发现无结果，已退回任务描述直接搜索"
+                        + (f"（并剔除 {dropped} 个媒体/社区页）" if dropped else "")
+                    )
                     state["discovery"] = discovery.to_dict()
 
                 search_target_sites = [
@@ -1411,6 +1417,16 @@ class MVPWorkflow:
         # 收尾统一记录注入审计计数：正常完成与异常兜底两条路径共用这个出口
         state["injection_findings_count"] = len(state.get("injection_findings") or [])
         return state
+
+    def _get_search_tool(self) -> Any:
+        """取搜索工具：注入优先（评测/测试替身），否则用协调者的生产实例。
+
+        搜索发生在协调者里（coordinator.search_topics），但四段式搜索是
+        **管线级**行为，不能依赖协调者——它只是恰好持有一个工具实例。
+        """
+        if self._search_factory is not None:
+            return self._search_factory()
+        return self.coordinator.search_tool
 
     async def _run_react_mode(
         self,
