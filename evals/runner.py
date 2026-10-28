@@ -124,6 +124,10 @@ def _build_scripted_llm(case: Dict[str, Any], llm_spec: Dict[str, Any]):
     script: Dict[str, List[Any]] = {
         "report": [resolve_citations(r, case, llm_spec) for r in reports],
     }
+    # 借鉴点推导（域无关路径）：夹具可脚本化模型的锚定推导输出。
+    # 不给就用缺省脚本（空 rows）→ 推导无产出 → 矩阵退回规则表兜底。
+    if llm_spec.get("borrowable"):
+        script["borrowable"] = [json.dumps(llm_spec["borrowable"], ensure_ascii=False)]
     return _SiteKeyedScriptedLLM(script=script, extract_by_host=extract_by_host)
 
 

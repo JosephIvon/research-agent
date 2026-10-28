@@ -280,6 +280,9 @@ class ResearchRequest(StrictModel):
     login_url: Optional[str] = None
     enable_search: bool = True
     custom_selectors: Optional[Dict[str, List[str]]] = None
+    # 我方上下文（我方产品/目标/约束）：借鉴点是否"针对我们"取决于它。
+    # 不给就退化成通用话——这是上下文缺失，与竞品属于哪个行业无关。
+    self_context: str = Field(default="", max_length=4000)
 
     @field_validator("urls")
     @classmethod
@@ -680,6 +683,7 @@ async def competitive_research(request: Request, req: ResearchRequest):
             enable_search=req.enable_search,
             custom_selectors=req.custom_selectors,
             user_id=user_id,
+            self_context=req.self_context,
         )
 
         return {
@@ -828,6 +832,7 @@ async def prd_from_query(request: Request, req: ResearchRequest):
             enable_search=req.enable_search,
             custom_selectors=req.custom_selectors,
             user_id=_principal(request)[0],
+            self_context=req.self_context,
         )
 
         if research_result["status"] != "completed":
@@ -870,6 +875,8 @@ class TaskRequest(BaseModel):
     auth_credentials: Optional[AuthCredentials] = None
     login_url: Optional[str] = Field(default=None, min_length=1, max_length=2048)
     enable_search: bool = True
+    # 我方上下文（我方产品/目标/约束）：借鉴点"针对我们"与否取决于它
+    self_context: str = Field(default="", max_length=4000)
     # 预算覆盖。此前四道闸门只有环境变量一个入口，而界面在 partial 时会提示
     # 「建议提高预算后重跑」——用户无处可调，文案指着一个不存在的入口。
     # 不传 = 用服务端默认值。
@@ -990,6 +997,7 @@ async def _run_research_task(task_id: str, req: TaskRequest, user_id: Optional[s
         deliverables=req.deliverables,
         task_id=task_id,
         user_id=user_id,
+        self_context=req.self_context,
     )
 
     research_metadata = {

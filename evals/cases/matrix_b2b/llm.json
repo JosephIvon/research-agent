@@ -21,5 +21,54 @@
       {"key": "as_of", "value": "2026-10-28", "confidence": 0.9}
     ]
   ],
+  "borrowable": {
+    "rows": [
+      {
+        "platform": "美菜",
+        "items": [
+          {
+            "anchor_key": "business_model",
+            "anchor_span": "多温层仓库分别存放冷冻、冷藏与常温商品",
+            "take": "温区分层：冷链库位与拣货线按温区独立，出库校验不串货"
+          },
+          {
+            "anchor_key": "business_model",
+            "anchor_span": "大数据排线做每车承载与路线规划",
+            "take": "排线可复算：排线结果留痕，便于按线路核算运力成本"
+          },
+          {
+            "anchor_key": "business_model",
+            "anchor_span": "商品二维码全程溯源，一物一码入库贴码",
+            "take": "一物一码：入库即贴码，签收前全链扫码不断点"
+          }
+        ]
+      },
+      {
+        "platform": "川为冻品",
+        "items": [
+          {
+            "anchor_key": "business_model",
+            "anchor_span": "多仓网络覆盖多个城市，按服务半径划分配送范围",
+            "take": "服务半径分层：按半径切服务承诺与运费，密度不够的城市不承诺时效"
+          },
+          {
+            "anchor_key": "business_model",
+            "anchor_span": "支持商家入驻，城市商品按区域定价",
+            "take": "入驻商定价：城市商品按区域定价，差异留在报价层而非系统层"
+          }
+        ]
+      },
+      {
+        "platform": "川为冻品",
+        "items": [
+          {
+            "anchor_key": "features",
+            "anchor_span": "小程序商城",
+            "take": "商城端下单、作业端扫码：一线不碰后台系统"
+          }
+        ]
+      }
+    ]
+  },
   "report": "## 一、概述\n\n美菜是生鲜 B2B 供应链服务商 {{cite:meicai:1}}；川为冻品是面向中小餐饮商户的冻品低价平台 {{cite:chuanwei:1}}。\n\n## 二、模式要点\n\n美菜自建仓配网络并用 WMS 与 TMS 协同调度 {{cite:meicai:2}}；川为采用自研数字化管理软件加外接数字货运平台的组合 {{cite:chuanwei:2}}。\n\n## 三、功能\n\n美菜的核心功能覆盖多温层仓配、一物一码溯源、智能排线调度与次日达配送 {{cite:meicai:4}}；川为的功能以小程序商城、贴码分拣、分拣作业端与商家入驻为主 {{cite:chuanwei:4}}。\n\n## 四、目标用户\n\n美菜面向餐饮门店与团餐单位的采购与后厨负责人 {{cite:meicai:5}}；川为面向中小餐饮商户与冻品经销商 {{cite:chuanwei:5}}。\n\n## 五、集成生态\n\n美菜提供开放接口供餐饮 SaaS 对接订单与库存 {{cite:meicai:6}}；川为则由自研管理软件与外部货运平台对接 {{cite:chuanwei:6}}。\n\n## 六、定价与可借鉴\n\n美菜按品类与配送量报价 {{cite:meicai:3}}；川为按区域与城市分级报价 {{cite:chuanwei:3}}。两者在仓配、贴码溯源与小程序作业上的做法，可直接对照我们的仓网与码服务设计。\n"
 }

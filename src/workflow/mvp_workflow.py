@@ -49,6 +49,7 @@ from src.workflow.competitor_matrix import (
     build_matrix,
     inject_section,
 )
+from src.workflow import borrowable_derivation
 import asyncio
 import contextlib
 import json
@@ -889,6 +890,7 @@ class MVPWorkflow:
         deliverables: Optional[Dict[str, bool]] = None,
         task_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        self_context: str = "",
     ) -> Dict[str, Any]:
         deliverables = deliverables or {"report": True, "prd": False}
 
@@ -902,7 +904,7 @@ class MVPWorkflow:
         if len(initial_sites) > MAX_FETCH_URLS:
             raise ValueError(f"目标URL数量不能超过 {MAX_FETCH_URLS} 个")
 
-        state = self._initialize_state(user_query, initial_urls, task_id, user_id)
+        state = self._initialize_state(user_query, initial_urls, task_id, user_id, self_context)
         state["target_sites"] = initial_sites
         state["custom_selectors"] = custom_selectors
         self.state = state
@@ -1058,6 +1060,9 @@ class MVPWorkflow:
                 self._update_task_status_in_sqlite(state)
                 return state
 
+            # 质量门禁过了再花 LLM 调用于推导：被中止的运行不值得付这个钱。
+            matrix_obj = await self._derive_and_build_matrix(state, user_query)
+
             state["status"] = "report_generating"
             self._emit("report_generate", "report_generate", "running", "正在生成竞品分析报告")
             evidence_store = EvidenceStore.from_extracted_data(state["extracted_data"])
@@ -1137,8 +1142,8 @@ class MVPWorkflow:
                         )
                         quality_report = self._refresh_quality_report(state)
                         verification_result = await self._refresh_verification(state)
-                        matrix_obj = build_matrix(user_query, competitors=state["competitors"])
-                        state["competitor_matrix"] = matrix_obj.to_dict()
+                        # 补抓后证据变了：锚定借鉴点要重新推导（旧的锚点可能已不存在）
+                        matrix_obj = await self._derive_and_build_matrix(state, user_query)
                         state["report_final"] = await self.copywriter.generate_report(
                             user_query,
                             state["extracted_data"],
@@ -1199,8 +1204,8 @@ class MVPWorkflow:
                 )
                 quality_report = self._refresh_quality_report(state)
                 verification_result = await self._refresh_verification(state)
-                matrix_obj = build_matrix(user_query, competitors=state["competitors"])
-                state["competitor_matrix"] = matrix_obj.to_dict()
+                # 补抓后证据变了：锚定借鉴点要重新推导（旧的锚点可能已不存在）
+                matrix_obj = await self._derive_and_build_matrix(state, user_query)
                 state["report_final"] = await self.copywriter.generate_report(
                     user_query,
                     state["extracted_data"],
@@ -1553,7 +1558,7 @@ class MVPWorkflow:
 
         return sites
 
-    def _initialize_state(self, user_query: str, target_urls: List[str], task_id: Optional[str] = None, user_id: Optional[str] = None) -> Dict[str, Any]:
+    def _initialize_state(self, user_query: str, target_urls: List[str], task_id: Optional[str] = None, user_id: Optional[str] = None, self_context: str = "") -> Dict[str, Any]:
         return {
             "task_id": task_id or str(uuid4()),
             "user_id": user_id,
@@ -1582,6 +1587,8 @@ class MVPWorkflow:
             "missing_dimensions": [],
             "competitors": [],
             "competitor_matrix": None,
+            "borrowable_derivation": None,
+            "self_context": self_context,
             "comparison_matrix": None,
             "comparison_passed": None,
             "report_draft": None,
@@ -1845,6 +1852,47 @@ class MVPWorkflow:
             if site_of(str(comp.get("url") or "")) == target:
                 comp.setdefault("extracted_data", []).extend(items)
                 return
+
+    async def _derive_and_build_matrix(
+        self,
+        state: Dict[str, Any],
+        user_query: str,
+    ):
+        """推导「可借鉴点」并重建竞品矩阵。
+
+        推导走**域无关**路径：模型给出「锚点 key + 逐字片段 + 借鉴动作」，
+        代码机械校验（锚点存在、片段逐字命中、动作里的数字有据），
+        不需要为每个行业维护一张规则表。推导失败不拖垮链路——
+        矩阵退回规则表兜底，再不行就留「待产品判断」。
+
+        针对性来自 ``self_context``（我方是谁、要解决什么）：
+        没有它，模型只能给通用话——那是上下文缺失，不是规则缺失。
+        """
+        derived_map: Dict[str, List[Dict[str, Any]]] = {}
+        try:
+            result = await borrowable_derivation.derive(
+                self.llm_client,
+                user_query,
+                str(state.get("self_context") or ""),
+                state.get("competitors") or [],
+            )
+            state["borrowable_derivation"] = result.to_dict()
+            if result.ok:
+                derived_map = {
+                    platform: [item.to_dict() for item in items]
+                    for platform, items in result.items_by_platform.items()
+                }
+        except Exception as exc:  # noqa: BLE001 —— 推导是增强项，不能让它炸掉整条链路
+            state["borrowable_derivation"] = {
+                "items_by_platform": {}, "rejected": [], "error": f"{type(exc).__name__}: {exc}",
+            }
+        matrix_obj = build_matrix(
+            user_query,
+            competitors=state.get("competitors") or [],
+            derived_by_platform=derived_map,
+        )
+        state["competitor_matrix"] = matrix_obj.to_dict()
+        return matrix_obj
 
     def _refresh_quality_report(self, state: Dict[str, Any]):
         """按当前竞品数据重算数据完整度（补抓后必须重算）。
@@ -2299,7 +2347,8 @@ def run_sync(
     login_url: Optional[str] = None,
     sync_targets: Optional[List[str]] = None,
     enable_search: bool = True,
-    custom_selectors: Optional[Dict[str, List[str]]] = None
+    custom_selectors: Optional[Dict[str, List[str]]] = None,
+    self_context: str = ""
 ) -> Dict[str, Any]:
     """同步执行工作流"""
     return asyncio.run(MVPWorkflow().run(
@@ -2311,4 +2360,5 @@ def run_sync(
         sync_targets=sync_targets,
         enable_search=enable_search,
         custom_selectors=custom_selectors,
+        self_context=self_context,
     ))

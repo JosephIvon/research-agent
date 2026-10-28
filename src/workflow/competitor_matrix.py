@@ -390,7 +390,11 @@ def _as_inference(value: str) -> str:
     return f"推断：{value}"
 
 
-def _row_from(comp: Dict[str, Any], items: Sequence[Dict[str, Any]]) -> CompetitorRow:
+def _row_from(
+    comp: Dict[str, Any],
+    items: Sequence[Dict[str, Any]],
+    derived_items: Optional[Sequence[Dict[str, Any]]] = None,
+) -> CompetitorRow:
     warnings: List[str] = []
     platform = _platform_from(items, comp)
     positioning = _pick(
@@ -408,10 +412,19 @@ def _row_from(comp: Dict[str, Any], items: Sequence[Dict[str, Any]]) -> Competit
 
     borrowable = _pick_list(items, tuple(_BORROWABLE_KEYS))
     derived: List[Dict[str, Any]] = []
-    if not borrowable:
+    # 锚定借鉴点：模型给出「锚点 key + 逐字片段 + 借鉴动作」，代码已校验过
+    # （锚点存在、片段逐字命中、数字有据）。这是**域无关**的路径——
+    # 不需要为每个行业写一张规则表。
+    anchored: List[Dict[str, Any]] = list(derived_items or [])
+    if anchored:
+        borrowable = [f"推断：{item['take']}" for item in anchored[:MAX_BORROWABLE_PER_ROW]]
+        warnings.append(
+            "可借鉴点由模型从证据锚定推导并经代码校验（推断，非竞品官方表述）"
+        )
+    elif not borrowable:
         # 抽取链路不会产出“可借鉴”——那是我们的产品判断，不是竞品事实。
-        # 用可审计的规则表从**有证据的模式要点**推导，命中不到就留空，
-        # 绝不硬凑（硬凑出来的“可借鉴”正是早期报告里最像编造的段落）。
+        # 没有可用模型推导时，退回可审计的规则表从**有证据的模式要点**推导，
+        # 命中不到就留空，绝不硬凑（硬凑出来的“可借鉴”正是早期报告里最像编造的段落）。
         model_pairs = _pick_items(
             items,
             ("model_points", "business_model", "模式要点", "features", "功能", "核心功能"),
@@ -427,7 +440,7 @@ def _row_from(comp: Dict[str, Any], items: Sequence[Dict[str, Any]]) -> Competit
             )
         else:
             borrowable = ["待产品判断（无直接证据）"]
-            warnings.append("缺可借鉴点：未找到 borrowable/借鉴 证据，规则表也未命中，未编造")
+            warnings.append("缺可借鉴点：未找到 borrowable/借鉴 证据，推导未产出，规则表也未命中，未编造")
 
     evidence = _build_evidence(items, comp)
     # 用完整证据原文对账，不能用渲染时截断到 200 字的 quote。
@@ -449,9 +462,14 @@ def _row_from(comp: Dict[str, Any], items: Sequence[Dict[str, Any]]) -> Competit
     positioning = _mark([positioning])[0]
     model_points = _mark(model_points)
     borrowable = [_as_inference(value) for value in _mark(borrowable)]
-    if derived:
+    if anchored:
         # 证据引用放在数字校对之后追加：证据 id 含十六进制数字，
         # 先加进正文会被“证据外数字”判定误伤成未核实。
+        borrowable = [
+            f"{value}（据 [e:{item['evidence_id']}]）" if item.get("evidence_id") else value
+            for value, item in zip(borrowable, anchored)
+        ]
+    elif derived:
         borrowable = [
             f"{value}（据 [e:{item['evidence_id']}]）" if item.get("evidence_id") else value
             for value, item in zip(borrowable, derived)
@@ -514,8 +532,13 @@ def build_matrix(
     query: str,
     extracted_data: Optional[Sequence[Dict[str, Any]]] = None,
     competitors: Optional[Sequence[Dict[str, Any]]] = None,
+    derived_by_platform: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> CompetitorMatrix:
-    """从抽取结果构造矩阵；competitors 保留“一家竞品一行”的边界。"""
+    """从抽取结果构造矩阵；competitors 保留“一家竞品一行”的边界。
+
+    ``derived_by_platform`` 是**证据锚定**的借鉴点（模型推导 + 代码校验），
+    键为竞品名；命中则优先于规则表兜底。
+    """
     groups: List[Tuple[Dict[str, Any], List[Dict[str, Any]]]] = []
     if competitors:
         for comp in competitors:
@@ -530,9 +553,20 @@ def build_matrix(
         for url, items in by_url.items():
             groups.append(({"url": url}, items))
 
+    derived_map = derived_by_platform or {}
+
+    def _derived_for(comp: Dict[str, Any]) -> List[Dict[str, Any]]:
+        for key in (
+            str(comp.get("name") or "").strip(),
+            str(comp.get("url") or "").strip(),
+        ):
+            if key and derived_map.get(key):
+                return list(derived_map[key])
+        return []
+
     matrix = CompetitorMatrix(
         query=query,
-        rows=[_row_from(comp, items) for comp, items in groups],
+        rows=[_row_from(comp, items, _derived_for(comp)) for comp, items in groups],
     )
     validate(matrix)
     return matrix

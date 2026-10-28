@@ -38,6 +38,18 @@ eid = {item["key"]: make_evidence_id(url, item["key"], str(item["value"])) for i
 script = {
     "decompose": ['[{"id":"1","description":"分析仓配模式与定价打法","priority":1}]'],
     "extract": [json.dumps(EXTRACT, ensure_ascii=False)],
+    "borrowable": [
+        json.dumps({
+            "rows": [{
+                "platform": "美菜",
+                "items": [{
+                    "anchor_key": "business_model",
+                    "anchor_span": "多温层仓库分别存放冷冻、冷藏与常温商品",
+                    "take": "温区分层：冷链库位与拣货线按温区独立，出库校验不串货",
+                }],
+            }],
+        }, ensure_ascii=False)
+    ],
     "report": [
         (
             "## 一、概述\n\n美菜是生鲜 B2B 供应链服务商 [e:{positioning}]。\n\n"
@@ -66,7 +78,8 @@ try:
     env["PYTHONUTF8"] = "1"
     proc = subprocess.run(
         [sys.executable, "main.py", "--query", "美菜的仓配模式与定价打法",
-         "--urls", f"{BASE}/meicai/index.html", "--no-search"],
+         "--urls", f"{BASE}/meicai/index.html", "--no-search",
+         "--self-context", "我们是做团餐的中央厨房，想建自己的冷链仓配网络"],
         cwd=str(REPO), env=env, capture_output=True, text=True, encoding="utf-8", timeout=600,
     )
     print("=== main.py exit code:", proc.returncode)

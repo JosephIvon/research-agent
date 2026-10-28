@@ -735,6 +735,8 @@ DEFAULT_FAKE_SCRIPT = {
     "extract": ['[{"key": "content", "value": "脚本化抽取占位内容", "confidence": 0.9}]'],
     "report": ["（脚本化报告占位。通过 LLM_FAKE_SCRIPT 或 ScriptedLLMClient(script=...) 提供正文。）"],
     "prd": ["（脚本化 PRD 占位。）"],
+    # 借鉴点推导：默认不给行——没有证据锚定时宁缺毋滥
+    "borrowable": ['{"rows": []}'],
 }
 
 

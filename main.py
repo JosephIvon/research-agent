@@ -67,6 +67,9 @@ def main():
     parser.add_argument("--sync", type=str, nargs="+", choices=["feishu", "tencent"],
                         help="同步目标平台")
     parser.add_argument("--no-search", action="store_true", help="禁用自动搜索")
+    parser.add_argument("--self-context", type=str, default="",
+                        help="我方产品/目标/约束的简短描述。借鉴点是否"
+                             "「针对我们」取决于它；不给就只能给通用话。")
 
     args = parser.parse_args()
 
@@ -129,7 +132,8 @@ def main():
             login_url=args.login_url,
             sync_targets=args.sync,
             enable_search=not args.no_search,
-            custom_selectors=custom_selectors
+            custom_selectors=custom_selectors,
+            self_context=args.self_context
         )
 
         print(f"\n{'='*60}")

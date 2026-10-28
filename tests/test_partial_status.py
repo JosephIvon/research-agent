@@ -57,6 +57,23 @@ def _react_llm(*entries):
     return ScriptedLLMClient(script={"react": list(entries)})
 
 
+def _offline_tools(llm):
+    """ReAct 工具集：搜索走桩，不碰网络。
+
+    本文件头部的「零网络零密钥」承诺此前只覆盖了 LLM 侧——ReAct 的
+    web_search 仍走 `get_search_tool()` 真连网。于是收束原因取决于网络：
+    搜到东西 → 观察非空 → 走 duplicate_loop；搜不到（无密钥/超时/代理拒绝）
+    → 观察全空 → 走 empty_observations。同一份断言在两种网络状态下
+    拿到不同的 stop_reason，测试就变成了环境抽奖（实测全量跑时红、单跑时绿）。
+    """
+    from src.agent.tool_specs import build_default_tools
+
+    def search_factory():
+        return _FakeSearchTool(SEARCH_HIT)
+
+    return build_default_tools(llm, {}, search_factory=search_factory)
+
+
 class _UsageLLM(ScriptedLLMClient):
     """真值 usage 供给者：在 raw 返回里补 usage（做法照抄 test_react_runner）。"""
 
@@ -308,7 +325,8 @@ def test_agent_step_event_payload_has_real_stop_reason(tmp_path, monkeypatch):
 def test_stop_reason_if_any_written_on_budget_exceeded():
     """token 预算在下一轮守卫触发时，终止原因回写到最后一轮 step。"""
     llm = _react_llm(_call("web_search", query="q"), "答案")
-    result = asyncio.run(ReActRunner(llm, max_steps=5, token_budget=10).run("t"))
+    result = asyncio.run(ReActRunner(llm, max_steps=5, token_budget=10,
+                                     tools=_offline_tools(llm)).run("t"))
 
     assert result.stop_reason == "budget_exceeded"
     assert result.steps, "预算超额前应已有 step"
@@ -321,7 +339,7 @@ def test_on_step_callback_sees_stop_reason_before_emitting():
     seen: List[AgentStep] = []
     same = _call("web_search", query="acme")
     llm = _react_llm(same, same, same, same)
-    runner = ReActRunner(llm, max_steps=8, on_step=seen.append)
+    runner = ReActRunner(llm, max_steps=8, on_step=seen.append, tools=_offline_tools(llm))
 
     result = asyncio.run(runner.run("t"))
 
@@ -332,7 +350,7 @@ def test_on_step_callback_sees_stop_reason_before_emitting():
 def test_usage_estimated_true_without_provider_usage():
     """fake provider 不返回 usage → 只能估算，必须打 estimated 标记。"""
     llm = _react_llm(_call("web_search", query="q"), "答案")
-    result = asyncio.run(ReActRunner(llm, max_steps=5).run("t"))
+    result = asyncio.run(ReActRunner(llm, max_steps=5, tools=_offline_tools(llm)).run("t"))
 
     assert result.usage_estimated is True
     assert result.usage["total"] > 0
