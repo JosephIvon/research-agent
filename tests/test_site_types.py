@@ -287,3 +287,39 @@ def test_model_named_candidate_must_still_pass_the_site_type_check():
     runner = ss.SearchStageRunner(stub)
     result = runner.run_competitor_discovery(plan)
     assert result.selected == []
+
+
+def test_same_product_under_different_domains_counts_once():
+    """同一产品的多个域名/子域只算一家（实测：Replika 三个域名占了三个名额）。"""
+    plan = rp.build_default_plan("猫箱")
+    plan.competitor_candidates = ["Replika"]
+    stub = _StubSearch({
+        "猫箱 竞品": [],
+        "Replika 官网": [
+            {"title": "Replika", "url": "https://replika.com/", "content": "AI 伴侣"},
+            {"title": "Replika", "url": "https://create.replika.com/", "content": "创作"},
+            {"title": "Replika", "url": "https://www.myreplika.com/", "content": "下载"},
+        ],
+    })
+    runner = ss.SearchStageRunner(stub)
+    result = runner.run_competitor_discovery(plan)
+    assert len(result.selected) == 1, result.selected
+    # 取路径最浅的那份（官网首页）
+    assert result.selected[0]["url"] == "https://replika.com/"
+
+
+def test_same_name_different_industry_keeps_the_exact_title_match():
+    """"星野"（AI 应用）与"星野集团"（酒店公司）同名：留标题完全一致的那个。"""
+    plan = rp.build_default_plan("猫箱")
+    plan.competitor_candidates = ["星野"]
+    stub = _StubSearch({
+        "猫箱 竞品": [],
+        "星野 官网": [
+            {"title": "星野集团", "url": "https://hoshinoresorts.com/zh/", "content": "度假村"},
+            {"title": "星野", "url": "https://www.xingyeai.com/", "content": "AI 角色扮演"},
+        ],
+    })
+    runner = ss.SearchStageRunner(stub)
+    result = runner.run_competitor_discovery(plan)
+    assert len(result.selected) == 1, result.selected
+    assert "xingyeai" in result.selected[0]["url"], result.selected

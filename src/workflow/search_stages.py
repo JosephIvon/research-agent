@@ -70,6 +70,21 @@ def _expand_placeholder(query: str, competitor: str) -> str:
     return text.strip()
 
 
+def _title_is_exactish(title: str, name: str) -> bool:
+    """标题是否就是这个名字（去掉常见的后缀分隔）。
+
+    实测："星野"（AI 应用）与"星野集团"（一家酒店公司）同名，靠这个判据
+    留下的是真产品那个。
+    """
+    text = (title or "").strip()
+    target = (name or "").strip()
+    if not text or not target:
+        return False
+    for sep in (" - ", " | ", "｜", " — ", "_", "－"):
+        text = text.split(sep)[0].strip()
+    return text == target
+
+
 def _strip_www(host: str) -> str:
     """去掉 www. 前缀——官网域名常写成 www.dumate.cn，模型给的可能是 dumate.cn。"""
     host = (host or "").split(":")[0].lower()
@@ -240,6 +255,7 @@ class SearchStageRunner:
                     results.append(item)
         seen = set()
         by_name: Dict[str, Candidate] = {}
+        title_by_name: Dict[str, str] = {}
         model_names = [n.strip() for n in (plan.competitor_candidates or []) if n.strip()]
         for item in results:
             url = item["url"]
@@ -266,12 +282,26 @@ class SearchStageRunner:
                 is_aggregator=classify_site(url, title) != SITE_PRODUCT,
             )
             result.candidates.append(candidate)
-            # 同名去重：同一个产品常在多个页面里出现（官网 + 媒体盘点页）。
-            # 保留**官网**那份——媒体页已被标记为 aggregator，先到先得的
-            # 做法会把官网挤掉。
+            # 同名去重：同一个产品常在多个页面里出现（官网 + 媒体盘点页，
+            # 或者是同产品的多个域名：replika.com / create.replika.com /
+            # myreplika.com）。留**官网**那份；同名里若有一份标题与名字**完全
+            # 一致**，它更像产品本身（"星野" vs 同名的酒店公司"星野集团"）。
             existing = by_name.get(candidate.name)
-            if existing is None or (existing.is_aggregator and not candidate.is_aggregator):
+            if existing is None:
                 by_name[candidate.name] = candidate
+                title_by_name[candidate.name] = title
+            else:
+                better = False
+                if existing.is_aggregator and not candidate.is_aggregator:
+                    better = True
+                elif not existing.is_aggregator and not candidate.is_aggregator:
+                    if _title_is_exactish(title, candidate.name) and not _title_is_exactish(
+                        title_by_name.get(candidate.name, ""), candidate.name
+                    ):
+                        better = True
+                if better:
+                    by_name[candidate.name] = candidate
+                    title_by_name[candidate.name] = title
         # 主体自己的官方页不是竞品。但"官方页"要判准：竞品官网的首页常提到主体
         # （"猫箱 - 与百度搭子对比"），若凡是出现在锚定结果里的 URL 都算主体页，
         # 就会把真竞品一起排掉（实测）。判准 = 标题里带主体名**且**页面就是主体页。
@@ -302,6 +332,11 @@ class SearchStageRunner:
         dropped_self = before - len(result.candidates)
         if dropped_self:
             result.notes.append(f"排除主体自身的 {dropped_self} 个页面（主体不是自己的竞品）")
+        # 同名合并表要跟着一起筛：主体自己的页被排掉后，不能又从 by_name 里回来
+        surviving = {c.url for c in result.candidates}
+        by_name = {
+            name: c for name, c in by_name.items() if c.url in surviving
+        }
         # 媒体/百科/社区/应用商店/开发者平台/收录目录/文章页都不是竞品官网：
         # 剔掉（但保留在候选里以备人工查看）
         official = [c for c in result.candidates if not c.is_aggregator]
@@ -317,7 +352,9 @@ class SearchStageRunner:
                 f"候选池剔除 {len(dropped)} 个非官网页（{type_desc}）："
                 + "、".join(f"{c.name}({c.url})" for c in dropped[:5])
             )
-            pool = official
+            # 同名合并后再送裁决：同一个产品的多个域名/页面只算一个竞品，
+            # 否则一个名额会被同一个产品占掉（实测：Replika 三个域名占了三个名额）
+            pool = [c for c in by_name.values() if not c.is_aggregator]
         else:
             # 一个官网都没剩：按口径**不拿媒体页充数**。宁可空手回去说
             # "没找到竞品官网"，也不把知乎/百科写成竞品。

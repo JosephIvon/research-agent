@@ -20,6 +20,9 @@ _APP_STORE_HOST_HINTS = (
     "apps.apple.com", "itunes.apple.com", "play.google.com", "appgallery.",
     "app.mi.com", "sj.qq.com", "myapp.com", "appstore.", "apps.apple",
     "apkpure.", "2265.", "9game.", "wandoujia.", "coolapk.", "apkmirror.",
+    # 实测第五轮：下载分发站（抓取它们的"版本列表"页全是噪音）
+    "uptodown.", "appteka.", "apkgk.", "apkcombo.", "f-droid.",
+    "91mobiles.", "androidrank.", "appbrain.", "apkpure.com",
 )
 
 # 开发者社区 / UGC 博客平台
@@ -64,7 +67,7 @@ _DIRECTORY_HOST_HINTS = (
     "top.aibase.", "aibase.", "usefulai.", "aimultiple.", "sourceforge.net",
     "flowpixai.", "mroldcat.", "foreverse.", "legal500.", "producthunt.",
     "g2.com", "capterra.", "trustradius.", "apptopia.", "sensortower.",
-    "similarweb.", "semrush.", "ahrefs.",
+    "similarweb.", "semrush.", "ahrefs.", "aiproducthub.",
 )
 
 # 社交 / 视频 / 社区平台（不是竞品官网）
