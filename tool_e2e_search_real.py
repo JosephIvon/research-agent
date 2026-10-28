@@ -526,13 +526,25 @@ def _judge_review_file(path: Path) -> int:
     q2 = verdict["Q2"]
     print(f"Q2 {q2['status']}")
     for item in q2["detail"]:
+        state = {True: "PASS", False: "FAIL"}.get(item["pass"], "不判（该组没有可核对的入选项）")
         print(
             f"  {item['subject']}/{item['style']}: 核对 {item['manual_checked']} 条，"
-            f"真竞品官网 {item['manual_real']} 条，占比 {item['manual_ratio']} "
-            f"→ {'PASS' if item['pass'] else 'FAIL'}"
+            f"真竞品官网 {item['manual_real']} 条，占比 {item['manual_ratio']} → {state}"
         )
-    print(f"结论：{'PASS' if q2['pass'] else 'FAIL'}")
-    return 0 if q2["pass"] else 1
+    judged = [item for item in q2["detail"] if item["pass"] is not None]
+    failed = [item for item in judged if not item["pass"]]
+    if q2["pass"] is True:
+        print("结论：PASS")
+        return 0
+    if q2["pass"] is False:
+        print("结论：FAIL")
+        return 1
+    # 有组没判（一条入选都没有）：整条线不能下结论，但已判的组里若有 FAIL，要说出来
+    if failed:
+        print(f"结论：待人工核对（已判 {len(judged)} 组，其中 {len(failed)} 组 FAIL）")
+        return 1
+    print(f"结论：待人工核对（已判 {len(judged)} 组，暂无 FAIL；缺 {len(q2['detail']) - len(judged)} 组）")
+    return 2
 
 
 def _render(records: List[Dict[str, Any]], verdict: Dict[str, Any], meta: Dict[str, Any]) -> str:

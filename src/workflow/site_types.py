@@ -23,6 +23,18 @@ _APP_STORE_HOST_HINTS = (
     # 实测第五轮：下载分发站（抓取它们的"版本列表"页全是噪音）
     "uptodown.", "appteka.", "apkgk.", "apkcombo.", "f-droid.",
     "91mobiles.", "androidrank.", "appbrain.", "apkpure.com",
+    # 实测第六轮（2026-10-29）：**下载平台为每个产品开的子域**。
+    # Softonic 自述"全球最受信任的软件分发平台之一"，它给每个应用开一个子域
+    # （chai.softonic.cn / character-ai.softonic.cn / talkie-soulful-ai.softonic.cn），
+    # 路径是平台自己的（/android、/windows、/mac）。这些页面是**下载页**，
+    # 不是厂商的官网——实测它们占了 6 个入选里的 4 个。
+    "softonic.", "pc6.", "downza.", "cr173.", "duote.", "skycn.", "xiazai.",
+    "onlinedown.", "gimy.", "52pojie.", "rankcc.", "52mac.", "macappstore.",
+    "windowsappstore.", "appgallery.huawei.", "f-droid.org",
+    # 实测第七轮（2026-10-29）：9na.cn 这类"下载+攻略"门户的详情页
+    # （/2271.html 是筑梦岛的下载页），路径有 id 一段但域名是下载站。
+    "9na.", "gamersky.", "3dmgame.", "ali213.", "m.ddooo.", "ddooo.",
+    "crsky.", "xiazai.zol.", "pc6.cn", "www.9na.cn",
 )
 
 # 开发者社区 / UGC 博客平台
@@ -47,6 +59,11 @@ _MEDIA_HOST_HINTS = (
     "10100.com", "dfcfw.", "gamer.com.tw", "pdf.dfcfw.", "assets.kpmg.",
     "iopn.library.", "dfcfw.com", "eeo.", "nbd.", "stcn.", "yicai.",
     "jiemian.", "huxiu.", "tmtpost.", "chinaventure.", "iyiou.", "donews.",
+    # 实测第六轮（2026-10-29）：百科/镜像站。moegirl.icu 是萌娘百科的镜像，
+    # 它的条目页（/独奏）标题是"独奏 - 萌娘百科…"，路径只有一段——
+    # 域名不认识就会当成产品官网（实测它占了整组唯一的 1 个入选）。
+    "moegirl.", "zh.moegirl.", "moegirl.icu", "wiki.biligame.",
+    "handwiki.", "wikiwand.", "everipedia.", "dbpedia.", "wikizero.",
 )
 
 # 论坛 / 社区（不是产品官网）
@@ -68,6 +85,10 @@ _DIRECTORY_HOST_HINTS = (
     "flowpixai.", "mroldcat.", "foreverse.", "legal500.", "producthunt.",
     "g2.com", "capterra.", "trustradius.", "apptopia.", "sensortower.",
     "similarweb.", "semrush.", "ahrefs.", "aiproducthub.",
+    # 实测第七轮（2026-10-29）：mg21.com（美股之家）是 AI 资源导航/收录站，
+    # 它的"某产品开发商"详情页（/character.html）路径只有一段、搜索结果标题
+    # 里也没有"百科"（那是页面完整标题才有的）→ 域名得认。
+    "mg21.", "www.mg21.",
 )
 
 # 社交 / 视频 / 社区平台（不是竞品官网）
@@ -109,6 +130,15 @@ _ARTICLE_TITLE_HINTS = (
     "心得", "分享", "记录", "复盘", "观察", "洞察", "综述", "趋势",
     "浅谈", "探索", "必备", "竞品", "同行", "演进", "闭环",
     "多款", "款免费", "入选", "亮相", "上新",
+    # 实测第六轮（2026-10-29）：百科类页面。mg21.com/character.html 的标题是
+    #「开放式对话应用程序开发商：Character.ai | 美股之家 - 港股美股开户投资百科全书」，
+    # moegirl.icu/独奏 的标题是「独奏 - 萌娘百科_万物皆可萌的百科全书」——
+    # 两个都是百科页，但域名/path 看不出来，只能靠标题里的"百科"。
+    "百科", "百科全书", "词典", "词条",
+    # 实测第七轮（2026-10-29）：门户站里"某产品的官网地址"这类文章——
+    # tuijianvpn.com/8359 的标题是「星岛梦/星梦岛(StarDream)机场官网地址」，
+    # 是 VPN 服务商的推广页，不是星岛梦的官网。
+    "官网地址", "官方网址", "地址是多少", "在哪下载",
 )
 
 SITE_PRODUCT = "product_site"

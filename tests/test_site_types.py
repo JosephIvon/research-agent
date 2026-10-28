@@ -129,6 +129,61 @@ def test_real_product_sites_stay_product_sites(url, title):
     assert st.classify_site(url, title) == st.SITE_PRODUCT, url
 
 
+@pytest.mark.parametrize("url,title", [
+    # 实测第六轮（2026-10-29）人工核对抓出来的两类漏网：
+    # ① **下载平台给每个产品开的子域**。Softonic 自述"全球最受信任的软件分发平台
+    #    之一"，chai.softonic.cn/android 这类页面是**下载页**，不是厂商官网——
+    #    实测它们占了百度搭子/task 组 6 个入选里的 4 个（人工核对占比从 17% 掉到这条）。
+    ("https://chai.softonic.cn/android", "CHAI APK Android 版"),
+    ("https://chai-chat-with-ai-friends.softonic.cn/android", "Chai"),
+    ("https://character-ai.softonic.cn/android", "Character.AI"),
+    ("https://talkie-soulful-ai.softonic.cn/android", "Talkie"),
+    ("https://mouse-launch.softonic.cn/android", "Mouse Launch Android 版- 下载"),
+    # ② **百科页/百科镜像**：域名与路径都看不出来，只能靠标题里的"百科"
+    ("https://moegirl.icu/%E7%8B%AC%E5%A5%8F", "独奏 - 萌娘百科_万物皆可萌的百科全书"),
+    ("https://www.mg21.com/character.html",
+     "开放式对话应用程序开发商：Character.ai | 美股之家 - 港股美股开户投资百科全书"),
+])
+def test_sixth_round_review_leaks_are_not_product_sites(url, title):
+    assert st.classify_site(url, title) != st.SITE_PRODUCT, url
+
+
+@pytest.mark.parametrize("url,title", [
+    # 同一批里**真的**是产品官网的，不能被上面的规则误伤
+    ("https://www.chai-research.com/", "CHAI | AI Characters & Stories"),
+    ("http://shine.xunruijie.com/", "Shine探光_沉浸式剧情_海外二次元_Shine官网"),
+    ("https://www.xingyeai.com/", "星野 - AI 智能体社区"),
+    ("https://www.duxiangai.com/", "独响 App"),
+    ("https://toos-app.com/", "Toos"),
+    ("https://www.weilanpeiban.com/", "蔚蓝陪伴平台"),
+])
+def test_sixth_round_real_sites_stay_product_sites(url, title):
+    assert st.classify_site(url, title) == st.SITE_PRODUCT, url
+
+
+@pytest.mark.parametrize("url,title", [
+    # 实测第七轮（2026-10-29）人工核对又抓出来的三类门户页：
+    # ① 搜索结果标题里**没有**"百科"（那是页面完整标题才有的），只能靠域名认
+    ("https://www.mg21.com/character.html", "开放式对话应用程序开发商：Character.ai"),
+    # ② 下载+攻略门户的详情页（筑梦岛的下载页，不是筑梦岛官网）
+    ("https://www.9na.cn/2271.html", "筑梦岛"),
+    # ③ 门户站里"某产品的官网地址"推广页（VPN 服务商的推广文章）
+    ("https://tuijianvpn.com/8359", "星岛梦/星梦岛(StarDream)机场官网地址"),
+])
+def test_seventh_round_review_leaks_are_not_product_sites(url, title):
+    assert st.classify_site(url, title) != st.SITE_PRODUCT, url
+
+
+@pytest.mark.parametrize("url,title", [
+    ("https://www.doudou.fun/", "逗逗 - AI 虚拟伴侣"),
+    ("https://character.ai/", "Character AI"),
+    ("https://replikazh.com/", "Replika 中文站"),
+    ("https://highrise.game/", "Highrise"),
+])
+def test_seventh_round_real_sites_stay_product_sites(url, title):
+    assert st.classify_site(url, title) == st.SITE_PRODUCT, url
+
+
 def test_looks_like_aggregator_accepts_title():
     assert ss.looks_like_aggregator("https://miyu-ai.com.cn/", "miyuai聊天") is False
     assert ss.looks_like_aggregator("https://miyu-ai.com.cn/blog/a", "2026 年盘点：10 款最佳") is True

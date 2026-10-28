@@ -76,6 +76,9 @@ def _title_is_exactish(title: str, name: str) -> bool:
 
     实测："星野"（AI 应用）与"星野集团"（一家酒店公司）同名，靠这个判据
     留下的是真产品那个。
+
+    比较**忽略大小写**：同一个产品的官网与移动站一个写 "Tofai" 一个写 "tofai"
+    （实测第六轮：tofaipro.cn 与 m.tofai.com.cn 各占一个名额）。
     """
     text = (title or "").strip()
     target = (name or "").strip()
@@ -83,7 +86,7 @@ def _title_is_exactish(title: str, name: str) -> bool:
         return False
     for sep in (" - ", " | ", "｜", " — ", "_", "－"):
         text = text.split(sep)[0].strip()
-    return text == target
+    return text.casefold() == target.casefold()
 
 
 def _strip_www(host: str) -> str:
@@ -304,22 +307,25 @@ class SearchStageRunner:
             # 或者是同产品的多个域名：replika.com / create.replika.com /
             # myreplika.com）。留**官网**那份；同名里若有一份标题与名字**完全
             # 一致**，它更像产品本身（"星野" vs 同名的酒店公司"星野集团"）。
-            existing = by_name.get(candidate.name)
+            # 合并键**忽略大小写**：同一产品的官网与移动站常常一个写 "Tofai"
+            # 一个写 "tofai"（实测第六轮：两个域名各占一个名额）。
+            merge_key = candidate.name.strip().casefold()
+            existing = by_name.get(merge_key)
             if existing is None:
-                by_name[candidate.name] = candidate
-                title_by_name[candidate.name] = title
+                by_name[merge_key] = candidate
+                title_by_name[merge_key] = title
             else:
                 better = False
                 if existing.is_aggregator and not candidate.is_aggregator:
                     better = True
                 elif not existing.is_aggregator and not candidate.is_aggregator:
                     if _title_is_exactish(title, candidate.name) and not _title_is_exactish(
-                        title_by_name.get(candidate.name, ""), candidate.name
+                        title_by_name.get(merge_key, ""), candidate.name
                     ):
                         better = True
                 if better:
-                    by_name[candidate.name] = candidate
-                    title_by_name[candidate.name] = title
+                    by_name[merge_key] = candidate
+                    title_by_name[merge_key] = title
         # 主体自己的官方页不是竞品。但"官方页"要判准：竞品官网的首页常提到主体
         # （"猫箱 - 与百度搭子对比"），若凡是出现在锚定结果里的 URL 都算主体页，
         # 就会把真竞品一起排掉（实测）。判准 = 标题里带主体名**且**页面就是主体页。
