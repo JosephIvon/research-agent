@@ -158,5 +158,6 @@ watcha.cn，8 个入选里只有 3 家是真官网）**正是"声明与执行脱
 ## 7.5 验证
 
 - 新增用例 21 个（`tests/test_admission_rules.py` 16 + `tests/test_admission_gate_flow.py` 5）。
-- 全量 `pytest`：946 passed / 3 skipped（闭合前 925 / 3）。
+- 全量 `pytest`：**本次闭合提交时** 946 passed / 3 skipped（闭合前 925 / 3）。
+  （此后又有两轮实跑的修复加入新用例，最新全量数字见提交记录。）
 - `evals --gate` 通过；CLI 端到端 `main.py` exit 0。
