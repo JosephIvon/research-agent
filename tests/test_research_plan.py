@@ -370,5 +370,85 @@ def test_orphan_evidence_page_is_kept_out_of_competitors():
     assert orphans and orphans[0]["evidence_page_for"] == "猫箱"
 
 
+# ----------------------------------------------------------------------
+# ReAct 工具：verify_entity / discover_competitors
+# ----------------------------------------------------------------------
+
+def test_plan_round_trips_through_dict():
+    plan = rp.build_plan_from_data(_plan_data(), "x")
+    restored = rp.ResearchPlan.from_dict(plan.to_dict())
+    assert restored.entity_name == plan.entity_name
+    assert restored.entity_type == plan.entity_type
+    assert restored.min_count == plan.min_count
+    # to_dict 的权重保留 4 位小数（展示口径），还原后允许 1e-4 的差
+    assert abs(restored.angle_weights["feature"] - plan.angle_weights["feature"]) < 1e-4
+    assert restored.queries_for("competitor_discovery") == ["百度搭子 竞品"]
+
+
+def test_verify_entity_tool_reports_plan():
+    from src.agent.tool_specs import build_default_tools
+
+    plan = rp.build_plan_from_data(_plan_data(), "x")
+    workspace = {"research_plan": plan.to_dict()}
+    registry = build_default_tools(None, workspace)
+    result = asyncio.run(registry.get("verify_entity").handler())
+    assert result["resolved"] is True
+    assert result["entity_name"] == "百度搭子"
+    assert result["competitor_criteria"]["min_count"] == 3
+    assert result["angles"][0]["label"]
+
+
+def test_verify_entity_tool_without_plan_is_honest():
+    from src.agent.tool_specs import build_default_tools
+
+    registry = build_default_tools(None, {})
+    result = asyncio.run(registry.get("verify_entity").handler())
+    assert result["resolved"] is False
+
+
+def test_discover_competitors_tool_uses_code_admission():
+    from src.agent.tool_specs import build_default_tools
+
+    plan = rp.build_plan_from_data(_plan_data(), "x")
+    workspace = {"research_plan": plan.to_dict()}
+
+    class _Stub:
+        def search(self, query, num_results=None, provider=None):
+            if "竞品" in query:
+                return [
+                    {"title": "猫箱 - AI 搭子", "url": "https://maoxiang.test/", "content": "AI 搭子"},
+                    {"title": "盘点文章", "url": "https://zhuanlan.zhihu.com/p/9", "content": "盘点"},
+                ]
+            return []
+
+    registry = build_default_tools(None, workspace, search_factory=lambda: _Stub())
+    result = asyncio.run(registry.get("discover_competitors").handler())
+    urls = [item["url"] for item in result["competitors"]]
+    assert "https://zhuanlan.zhihu.com/p/9" not in urls, "媒体页不该被当成竞品"
+    assert result["admission_rule"], "入选口径要一并返回，模型才知道边界"
+    assert workspace["discovered_competitors"] is not None, "结果应被复用"
+
+
+def test_discover_competitors_tool_caches_result():
+    from src.agent.tool_specs import build_default_tools
+
+    plan = rp.build_plan_from_data(_plan_data(), "x")
+    workspace = {"research_plan": plan.to_dict()}
+
+    calls = []
+
+    class _Stub:
+        def search(self, query, num_results=None, provider=None):
+            calls.append(query)
+            return []
+
+    registry = build_default_tools(None, workspace, search_factory=lambda: _Stub())
+    tool = registry.get("discover_competitors")
+    asyncio.run(tool.handler())
+    first = len(calls)
+    asyncio.run(tool.handler())
+    assert len(calls) == first, "第二次调用应复用缓存，不再打搜索"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

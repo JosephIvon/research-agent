@@ -225,6 +225,50 @@ class ResearchPlan:
             "error": self.error,
         }
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ResearchPlan":
+        """从 ``to_dict`` 的结果还原（ReAct 工具要用 workspace 里的计划）。
+
+        还原的是**已校验过的**计划：权重照抄（它本来就是代码算的），
+        不重新走一遍模型。
+        """
+        data = data or {}
+        entity = data.get("entity") or {}
+        criteria = data.get("competitor_criteria") or {}
+        angles = []
+        for item in data.get("angles") or []:
+            if not isinstance(item, dict):
+                continue
+            angles.append(Angle(
+                angle=str(item.get("angle") or ""),
+                priority=str(item.get("priority") or "secondary"),
+                reason=str(item.get("reason") or ""),
+                weight=float(item.get("weight") or 0.0),
+                page_hints=[str(h) for h in (item.get("page_hints") or [])],
+            ))
+        stages = []
+        for item in data.get("search_plan") or []:
+            if not isinstance(item, dict):
+                continue
+            stages.append(SearchStage(
+                stage=str(item.get("stage") or ""),
+                queries=[str(q) for q in (item.get("queries") or [])],
+                acceptance=str(item.get("acceptance") or ""),
+            ))
+        return cls(
+            entity_name=str(entity.get("name") or ""),
+            entity_type=str(entity.get("entity_type") or "unknown"),
+            what_it_is=str(entity.get("what_it_is") or ""),
+            disambiguation_candidates=[str(c) for c in (entity.get("disambiguation_candidates") or [])],
+            resolved_confidence=float(entity.get("resolved_confidence") or 0.0),
+            criteria=dict(criteria),
+            angles=angles,
+            search_plan=stages,
+            open_questions=list(data.get("open_questions") or []),
+            source=str(data.get("source") or "default"),
+            error=str(data.get("error") or ""),
+        )
+
 
 # ----------------------------------------------------------------------
 # 权重：数值一律由代码算

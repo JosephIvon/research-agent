@@ -17,10 +17,18 @@ from src.mcpserver import server as mcp_server
 # MCP 对外暴露面（需求约定：web_search / fetch_site / generate_research_report 三个）。
 MCP_EXPECTED_TOOLS = {"web_search", "fetch_site", "generate_research_report"}
 
-# 刻意不对 MCP 暴露、但必须**显式**登记在这里的两个内部工具：它们读写 Runner 的
+# 刻意不对 MCP 暴露、但必须**显式**登记在这里的内部工具：它们读写 Runner 的
 # workspace 运行期状态，而 MCP 是无状态单次调用，暴露了也没有可用的前置状态。
 # 登记的意义是让"新增工具忘了同步暴露"必然变红，而不是悄悄溜过去。
-INTERNAL_ONLY_TOOLS = {"extract_facts", "compare_competitors"}
+#
+# verify_entity / discover_competitors 同属此类：它们读的是**本次运行**的研究计划
+# （主体消歧与竞品口径）。MCP 单次调用里没有计划可读，暴露出去只能永远返回
+# "未解析"；但 ReAct 运行里计划是有的（管线前置算好并注入 workspace），
+# 所以对 ReAct 有用、对 MCP 无用——显式登记，不静默溜过去。
+INTERNAL_ONLY_TOOLS = {
+    "extract_facts", "compare_competitors",
+    "verify_entity", "discover_competitors",
+}
 
 
 async def _noop_handler():

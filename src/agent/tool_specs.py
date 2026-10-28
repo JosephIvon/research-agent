@@ -248,6 +248,107 @@ def build_default_tools(llm_client, workspace: Dict[str, Any], budget: Any = Non
         url_params=(),
     ))
 
+    # ------------------------------------------------------------------
+    # verify_entity / discover_competitors（研究计划接入）
+    # ------------------------------------------------------------------
+    # 为什么要有这两个工具：ReAct 的自主性该体现在"怎么找证据"，
+    # 而不是"研究对象是谁"。主体消歧与竞品入选是**可校验**的决策，
+    # 已经在管线前置算好（ResearchPlan），这里把它暴露给模型，
+    # 让模型不必自己猜"百度搭子到底指哪个""竞品该有几家"。
+    # 入选仍由代码裁决（admit_competitors），模型只能调用、不能宣布。
+    def _angle_labels() -> Dict[str, str]:
+        from src.workflow.research_plan import ANGLE_LABELS
+        return ANGLE_LABELS
+
+    def _plan() -> Any:
+        data = workspace.get("research_plan")
+        if not data:
+            return None
+        # 延迟导入：src.workflow 包初始化会拉起 mvp_workflow → src.agent.runner
+        # → 本模块，顶层导入会形成环（模块级 import 失败：partially initialized）
+        from src.workflow.research_plan import ResearchPlan
+        return ResearchPlan.from_dict(data)
+
+    async def _verify_entity() -> Dict[str, Any]:
+        plan = _plan()
+        if plan is None:
+            return {
+                "resolved": False,
+                "message": "本次运行没有研究计划（计划不可用时已退回默认约束）",
+            }
+        return {
+            "resolved": bool(plan.entity_name),
+            "entity_name": plan.entity_name,
+            "entity_type": plan.entity_type,
+            "what_it_is": plan.what_it_is,
+            "disambiguation_candidates": plan.disambiguation_candidates,
+            "resolved_confidence": plan.resolved_confidence,
+            "competitor_criteria": {
+                "layers": plan.layers,
+                "min_count": plan.min_count,
+                "max_count": plan.max_count,
+                "admission_rule": plan.criteria.get("admission_rule", ""),
+            },
+            "angles": [
+                {"angle": a.angle,
+                 "label": _angle_labels().get(a.angle, a.angle),
+                 "weight": round(a.weight, 3), "priority": a.priority}
+                for a in plan.angles
+            ],
+            "source": plan.source,
+        }
+
+    registry.add(Tool(
+        name="verify_entity",
+        description=(
+            "确认本次调研的研究主体与竞品口径（已消歧的主体、实体类型、"
+            "竞品数量区间与入选标准、各分析角度的权重）。"
+            "在决定抓哪些站之前先调用它，不要自行猜测研究对象。"
+        ),
+        parameters={"type": "object", "properties": {}, "required": []},
+        handler=_verify_entity,
+        timeout=10.0,
+        url_params=(),
+    ))
+
+    async def _discover_competitors() -> Dict[str, Any]:
+        plan = _plan()
+        if plan is None:
+            raise ValueError("本次运行没有研究计划，无法按口径发现竞品")
+        cached = workspace.get("discovered_competitors")
+        if cached is not None:
+            return cached
+        from src.workflow import search_stages
+        tool = search_factory()
+        runner = search_stages.SearchStageRunner(tool)
+        result = runner.run_competitor_discovery(plan)
+        payload = {
+            "entity": plan.entity_name,
+            "competitors": [
+                {"name": item.get("name"), "url": item.get("url")}
+                for item in result.selected
+            ],
+            "candidate_count": len(result.candidates),
+            "admission_rule": plan.criteria.get("admission_rule", ""),
+            "notes": result.notes,
+            "hint": "入选名单由代码按口径裁决；请用这些 URL 抓取，不要自行扩大范围",
+        }
+        workspace["discovered_competitors"] = payload
+        return payload
+
+    registry.add(Tool(
+        name="discover_competitors",
+        description=(
+            "按既定口径发现并筛选竞品，返回入选名单（名称 + 官网 URL）。"
+            "入选由系统按准入标准裁决，媒体/百科/社区页不算竞品。"
+            "在批量抓取前调用一次即可，结果会被复用。"
+        ),
+        parameters={"type": "object", "properties": {}, "required": []},
+        handler=_discover_competitors,
+        timeout=60.0,
+        url_params=(),
+    ))
+
     return registry
 
 
