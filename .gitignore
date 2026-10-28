@@ -79,6 +79,12 @@ dist/
 # ============== Output & Logs ==============
 output/*
 !output/.gitkeep
+# 决策契约第六/七轮的**绑定证据**要能回源（人工核对表 + 实跑报告），
+# 随仓库走，别人才能复核 docs/decision-contract-search-e2e-2026-10.md 里的数字。
+# 原始 run json（含全部搜索结果、几十 KB）仍只留本地。
+!output/search_e2e_*.review.json
+!output/search_e2e_*.review.md
+!output/search_e2e_*.md
 # 真跑 LLM 轨迹录制（LLM_RECORD_SCRIPT 落盘处，本地沉淀/CI artifact 用）
 recordings/*
 !recordings/.gitkeep

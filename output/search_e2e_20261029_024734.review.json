@@ -1,0 +1,1218 @@
+{
+  "_说明": "逐条判断：这个 URL 是不是该主体的真竞品官网（产品自己的站点）。把 verdict 改成 true / false，note 可写理由。填完运行：uv run python tool_e2e_search_real.py --judge-review <本文件路径>",
+  "verdicts": [
+    {
+      "subject": "百度搭子",
+      "style": "search",
+      "name": "character.ai",
+      "url": "https://character.ai/",
+      "site_type": "product_site",
+      "site_type_label": "产品官网",
+      "score": 0.5,
+      "reasons": [
+        "像产品自己的官网"
+      ],
+      "verdict": true,
+      "note": "Character.AI 自家官网"
+    },
+    {
+      "subject": "百度搭子",
+      "style": "search",
+      "name": "开放式对话应用程序开发商：Character.ai",
+      "url": "https://www.mg21.com/character.html",
+      "site_type": "product_site",
+      "site_type_label": "产品官网",
+      "score": 0.5,
+      "reasons": [
+        "像产品自己的官网"
+      ],
+      "verdict": false,
+      "note": "美股之家百科页（title 尾部：港股美股开户投资百科全书），不是官网"
+    },
+    {
+      "subject": "猫箱",
+      "style": "task",
+      "name": "Highrise",
+      "url": "https://highrise.game/",
+      "site_type": "product_site",
+      "site_type_label": "产品官网",
+      "score": 0.5,
+      "reasons": [
+        "像产品自己的官网"
+      ],
+      "verdict": false,
+      "note": "Highrise 自家官网，但**不是同赛道**（3D 虚拟世界社交 App，不是 AI 陪伴/角色扮演）"
+    },
+    {
+      "subject": "猫箱",
+      "style": "task",
+      "name": "Replika",
+      "url": "https://replikazh.com/",
+      "site_type": "product_site",
+      "site_type_label": "产品官网",
+      "score": 0.5,
+      "reasons": [
+        "像产品自己的官网"
+      ],
+      "verdict": true,
+      "note": "Replika 自家官网（title: Replika官网中文）"
+    },
+    {
+      "subject": "猫箱",
+      "style": "task",
+      "name": "星野",
+      "url": "https://www.xingyeai.com/",
+      "site_type": "product_site",
+      "site_type_label": "产品官网",
+      "score": 0.5,
+      "reasons": [
+        "像产品自己的官网"
+      ],
+      "verdict": true,
+      "note": "星野 自家官网（title: 沉浸式智能体社区_星野官网）"
+    },
+    {
+      "subject": "猫箱",
+      "style": "task",
+      "name": "星岛梦/星梦岛(StarDream)机场官网地址",
+      "url": "https://tuijianvpn.com/8359",
+      "site_type": "product_site",
+      "site_type_label": "产品官网",
+      "score": 0.5,
+      "reasons": [
+        "像产品自己的官网"
+      ],
+      "verdict": false,
+      "note": "VPN 服务商的推广文章（title: 星岛梦…机场官网地址），不是星岛梦官网"
+    },
+    {
+      "subject": "猫箱",
+      "style": "task",
+      "name": "筑梦岛",
+      "url": "https://www.9na.cn/2271.html",
+      "site_type": "product_site",
+      "site_type_label": "产品官网",
+      "score": 0.5,
+      "reasons": [
+        "像产品自己的官网"
+      ],
+      "verdict": false,
+      "note": "9na 导航网的工具库页（title: 筑梦岛…Ai工具库,9na导航网），不是筑梦岛官网"
+    },
+    {
+      "subject": "猫箱",
+      "style": "search",
+      "name": "逗逗",
+      "url": "https://www.doudou.fun/",
+      "site_type": "product_site",
+      "site_type_label": "产品官网",
+      "score": 0.5,
+      "reasons": [
+        "像产品自己的官网"
+      ],
+      "verdict": true,
+      "note": "逗逗 自家官网（title: 逗逗游戏伙伴 | 陪你游戏，伴你生活）"
+    }
+  ],
+  "records": [
+    {
+      "subject": "百度搭子",
+      "style": "task",
+      "query": "找一下百度搭子的全部竞品信息",
+      "started_at": "2026-10-29 02:13:31",
+      "entity": {
+        "name": "百度搭子",
+        "type": "app",
+        "what_it_is": "百度推出的AI角色陪伴应用，支持创建虚拟角色并进行互动对话。",
+        "confidence": 0.97,
+        "alternatives": [],
+        "source": "model",
+        "error": ""
+      },
+      "criteria": {
+        "layers": [
+          "direct",
+          "alternative",
+          "adjacent"
+        ],
+        "min_count": 4,
+        "max_count": 8,
+        "admission_rule": "同客群×同场景×同交付形态：面向个人用户的AI陪伴与角色互动；direct为角色陪伴和虚拟社交，alternative为通用AI聊天，adjacent为真人社交或虚拟人娱乐。须有可核验官方产品页。"
+      },
+      "angles": [
+        {
+          "angle": "feature",
+          "label": "功能",
+          "priority": "secondary",
+          "weight": 0.35,
+          "hints": [
+            "功能总览",
+            "角色创建",
+            "角色广场",
+            "对话模式",
+            "语音互动",
+            "记忆设置",
+            "会员定价",
+            "隐私政策"
+          ]
+        },
+        {
+          "angle": "business",
+          "label": "业务价值",
+          "priority": "secondary",
+          "weight": 0.3,
+          "hints": [
+            "商业模式",
+            "会员定价",
+            "用户定位",
+            "渠道合作",
+            "运营活动",
+            "融资信息"
+          ]
+        },
+        {
+          "angle": "engineering",
+          "label": "研发与实现",
+          "priority": "secondary",
+          "weight": 0.2,
+          "hints": [
+            "模型架构",
+            "技术架构",
+            "记忆机制",
+            "内容安全",
+            "API文档",
+            "备案信息",
+            "隐私政策"
+          ]
+        },
+        {
+          "angle": "product",
+          "label": "产品与体验",
+          "priority": "secondary",
+          "weight": 0.15,
+          "hints": [
+            "下载页",
+            "新手引导",
+            "用户评价",
+            "更新日志",
+            "社区规则",
+            "内测公告"
+          ]
+        }
+      ],
+      "stages": [
+        {
+          "stage": "entity_anchor",
+          "queries": [
+            "百度搭子 官网",
+            "百度搭子 dumate.cn",
+            "百度搭子 功能",
+            "百度搭子 App 下载"
+          ],
+          "unique_urls": 5,
+          "kept": 5,
+          "titles": [
+            "百度搭子",
+            "百度搭子",
+            "DuMate",
+            "百度搭子管理平台",
+            "什么是百度搭子个人版"
+          ]
+        },
+        {
+          "stage": "competitor_discovery",
+          "queries": [
+            "AI陪伴 App 官网",
+            "AI角色扮演 App 官网",
+            "AI社交 App 官网",
+            "<已知竞品名> 官网"
+          ],
+          "candidates": 13,
+          "selected": 0
+        },
+        {
+          "stage": "per_competitor_verify",
+          "queries": [],
+          "results": 0
+        },
+        {
+          "stage": "counter_evidence",
+          "queries": [],
+          "results": 0,
+          "titles": []
+        }
+      ],
+      "candidates": [
+        {
+          "name": "Talkie",
+          "url": "https://www.yjpoo.com/site/1505.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "talkie官网版下载",
+          "url": "https://www.52pkvr.com/app/50676.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": false
+        },
+        {
+          "name": "Talkie",
+          "url": "https://www.yumiok.com/archives/675.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "Talkie",
+          "url": "https://www.aiww.cn/aitool/talkie",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "Talkie",
+          "url": "https://openi.cn/sites/112884.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "talkie下载",
+          "url": "https://www.jz5u.com/Soft/87013.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "星野",
+          "url": "https://www.mfunz.com/soft/7820.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "talkie中文版下载",
+          "url": "https://www.18touch.com/soft/76721.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "Talkie",
+          "url": "https://talkie-soulful-ai.cn.uptodown.com/android/download",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": true
+        },
+        {
+          "name": "Talkie",
+          "url": "https://www.xitongzhijia.net/soft/223106.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": false
+        },
+        {
+          "name": "talkie官方软件下载安装",
+          "url": "http://m.baobeiy.com/azsoft/1866.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": false
+        },
+        {
+          "name": "talkie国际版官方软件下载",
+          "url": "https://market.goapk.com/pkg/talkieapp/",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "Talkie",
+          "url": "https://talkie.softonic.cn/android",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        }
+      ],
+      "selected": [],
+      "notes": [
+        "候选池里没有竞品官网（只有媒体/社区页）——按口径不入选，本轮可能找不到竞品",
+        "入选 0 家，低于计划下限 4 家"
+      ],
+      "counter_evidence": [],
+      "search_failed": false,
+      "search_failures": [],
+      "elapsed_s": 414.6,
+      "attempts": 1
+    },
+    {
+      "subject": "百度搭子",
+      "style": "search",
+      "query": "百度搭子 竞品",
+      "started_at": "2026-10-29 02:20:25",
+      "entity": {
+        "name": "百度搭子",
+        "type": "app",
+        "what_it_is": "百度推出的独立AI陪伴应用，提供角色对话、情感互动与娱乐聊天。",
+        "confidence": 0.95,
+        "alternatives": [],
+        "source": "model",
+        "error": ""
+      },
+      "criteria": {
+        "layers": [
+          "direct"
+        ],
+        "min_count": 3,
+        "max_count": 5,
+        "admission_rule": "同客群×同场景×同交付形态：面向大众用户的AI陪伴产品，以独立App或Web提供持续AI对话及角色或人格互动；仅收录可核验官网的成品。"
+      },
+      "angles": [
+        {
+          "angle": "feature",
+          "label": "功能",
+          "priority": "secondary",
+          "weight": 0.35,
+          "hints": [
+            "功能",
+            "角色广场",
+            "对话",
+            "长期记忆",
+            "多模态",
+            "定价"
+          ]
+        },
+        {
+          "angle": "business",
+          "label": "业务价值",
+          "priority": "secondary",
+          "weight": 0.3,
+          "hints": [
+            "定价",
+            "会员",
+            "用户规模",
+            "渠道合作",
+            "商店排名"
+          ]
+        },
+        {
+          "angle": "engineering",
+          "label": "研发与实现",
+          "priority": "secondary",
+          "weight": 0.2,
+          "hints": [
+            "API文档",
+            "模型",
+            "记忆机制",
+            "性能",
+            "安全"
+          ]
+        },
+        {
+          "angle": "product",
+          "label": "产品与体验",
+          "priority": "secondary",
+          "weight": 0.15,
+          "hints": [
+            "新手引导",
+            "角色创建",
+            "交互",
+            "用户评价",
+            "应用评分"
+          ]
+        }
+      ],
+      "stages": [
+        {
+          "stage": "entity_anchor",
+          "queries": [
+            "百度搭子",
+            "百度搭子 官网",
+            "dumate.cn",
+            "百度搭子 功能"
+          ],
+          "unique_urls": 5,
+          "kept": 5,
+          "titles": [
+            "百度搭子",
+            "百度搭子管理平台",
+            "什么是百度搭子个人版",
+            "百度搭子 DuMate官网 - 百度智能云",
+            "百度搭子发布多项新能力，推动AI从办公桌走上生..."
+          ]
+        },
+        {
+          "stage": "competitor_discovery",
+          "queries": [
+            "星野 官网",
+            "筑梦岛 官网",
+            "猫箱 官网",
+            "Talkie 官网"
+          ],
+          "candidates": 14,
+          "selected": 2
+        },
+        {
+          "stage": "per_competitor_verify",
+          "queries": [],
+          "results": 16
+        },
+        {
+          "stage": "counter_evidence",
+          "queries": [],
+          "results": 0,
+          "titles": []
+        }
+      ],
+      "candidates": [
+        {
+          "name": "talkie中文版下载",
+          "url": "https://www.18touch.com/soft/76721.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "Talkie",
+          "url": "https://talkie-soulful-ai.cn.uptodown.com/android/download",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": true
+        },
+        {
+          "name": "Talkie",
+          "url": "https://www.xitongzhijia.net/soft/223106.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": false
+        },
+        {
+          "name": "talkie官方软件下载安装",
+          "url": "http://m.baobeiy.com/azsoft/1866.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": false
+        },
+        {
+          "name": "talkie国际版官方软件下载",
+          "url": "https://market.goapk.com/pkg/talkieapp/",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "Talkie",
+          "url": "https://talkie.softonic.cn/android",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "character.ai",
+          "url": "https://character.ai/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "character.ai",
+          "url": "https://www.ai138.com/link/284.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "Character.AI",
+          "url": "https://zhuanlan.zhihu.com/p/635730170",
+          "aggregator": true,
+          "site_type": "ugc_platform",
+          "in_track": true
+        },
+        {
+          "name": "Character.AI",
+          "url": "https://www.banwenyu.com/ai/detail/108",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "Character AI",
+          "url": "https://www.aigc.cn/sites/1370.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "Character AI",
+          "url": "https://www.deepdhai.com/sites/2321.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "Character.AI",
+          "url": "https://characterai.aiproducthub.cn/",
+          "aggregator": true,
+          "site_type": "directory",
+          "in_track": true
+        },
+        {
+          "name": "开放式对话应用程序开发商：Character.ai",
+          "url": "https://www.mg21.com/character.html",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        }
+      ],
+      "selected": [
+        {
+          "name": "character.ai",
+          "url": "https://character.ai/",
+          "score": 0.5,
+          "reasons": [
+            "像产品自己的官网"
+          ],
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "开放式对话应用程序开发商：Character.ai",
+          "url": "https://www.mg21.com/character.html",
+          "score": 0.5,
+          "reasons": [
+            "像产品自己的官网"
+          ],
+          "site_type": "product_site",
+          "in_track": true
+        }
+      ],
+      "notes": [
+        "候选池剔除 12 个非官网页（应用商店/下载站 2 个、产品收录/比价目录 1 个、媒体/内容站 8 个、开发者社区/UGC 博客 1 个）：talkie中文版下载(https://www.18touch.com/soft/76721.html)、Talkie(https://talkie-soulful-ai.cn.uptodown.com/android/download)、Talkie(https://www.xitongzhijia.net/soft/223106.html)、talkie官方软件下载安装(http://m.baobeiy.com/azsoft/1866.html)、talkie国际版官方软件下载(https://market.goapk.com/pkg/talkieapp/)",
+        "入选 2 家，低于计划下限 3 家"
+      ],
+      "counter_evidence": [],
+      "search_failed": false,
+      "search_failures": [],
+      "elapsed_s": 921.0,
+      "attempts": 1
+    },
+    {
+      "subject": "猫箱",
+      "style": "task",
+      "query": "帮我看看猫箱这个产品的全部竞品信息",
+      "started_at": "2026-10-29 02:28:52",
+      "entity": {
+        "name": "猫箱",
+        "type": "app",
+        "what_it_is": "网易推出的AI角色扮演与陪伴应用，支持创建角色、沉浸式聊天和剧情互动。",
+        "confidence": 0.96,
+        "alternatives": [
+          "网易猫箱：AI角色扮演与陪伴应用",
+          "猫箱：宠物箱、收纳箱等实体商品的泛称"
+        ],
+        "source": "model",
+        "error": ""
+      },
+      "criteria": {
+        "layers": [
+          "direct",
+          "alternative",
+          "adjacent"
+        ],
+        "min_count": 4,
+        "max_count": 8,
+        "admission_rule": "直接竞品须满足同客群×同场景×同交付形态：面向角色扮演或情感陪伴用户，以App或网页提供角色创建、多轮对话、记忆与订阅；替代及相邻层可放宽功能或平台，但须承接同类需求。"
+      },
+      "angles": [
+        {
+          "angle": "feature",
+          "label": "功能",
+          "priority": "secondary",
+          "weight": 0.35,
+          "hints": [
+            "角色创建",
+            "多轮对话",
+            "长期记忆",
+            "语音互动",
+            "剧情玩法",
+            "多模态"
+          ]
+        },
+        {
+          "angle": "business",
+          "label": "业务价值",
+          "priority": "secondary",
+          "weight": 0.3,
+          "hints": [
+            "定价",
+            "订阅方案",
+            "用户规模",
+            "获客渠道",
+            "商业化",
+            "成本结构"
+          ]
+        },
+        {
+          "angle": "engineering",
+          "label": "研发与实现",
+          "priority": "secondary",
+          "weight": 0.2,
+          "hints": [
+            "模型架构",
+            "提示词策略",
+            "长期记忆",
+            "检索增强",
+            "生成延迟",
+            "安全过滤"
+          ]
+        },
+        {
+          "angle": "product",
+          "label": "产品与体验",
+          "priority": "secondary",
+          "weight": 0.15,
+          "hints": [
+            "角色发现",
+            "新手引导",
+            "对话体验",
+            "剧情流程",
+            "社区运营",
+            "留存机制"
+          ]
+        }
+      ],
+      "stages": [
+        {
+          "stage": "entity_anchor",
+          "queries": [
+            "猫箱 App 官网",
+            "猫箱 网易 AI 角色",
+            "猫箱 功能 订阅",
+            "猫箱 隐私 政策"
+          ],
+          "unique_urls": 0,
+          "kept": 0,
+          "titles": []
+        },
+        {
+          "stage": "competitor_discovery",
+          "queries": [
+            "AI角色陪伴 App 官网",
+            "AI角色扮演 产品 官网",
+            "星野 筑梦岛 官网",
+            "Talkie AI 官网"
+          ],
+          "candidates": 32,
+          "selected": 5
+        },
+        {
+          "stage": "per_competitor_verify",
+          "queries": [],
+          "results": 14
+        },
+        {
+          "stage": "counter_evidence",
+          "queries": [],
+          "results": 0,
+          "titles": []
+        }
+      ],
+      "candidates": [
+        {
+          "name": "筑梦岛",
+          "url": "https://www.9na.cn/2271.html",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "星野",
+          "url": "https://blog.csdn.net/X778566/article/details/139173357",
+          "aggregator": true,
+          "site_type": "ugc_platform",
+          "in_track": false
+        },
+        {
+          "name": "星野",
+          "url": "https://sj.qq.com/appdetail/com.xingye.app",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "筑梦岛",
+          "url": "https://m.51nacs.com/down/2596.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "星岛梦/星梦岛(StarDream)机场官网地址",
+          "url": "https://tuijianvpn.com/8359",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "日活百万AI陪聊软件，海外爆红，背靠国内初创企业 ...",
+          "url": "https://www.eeo.com.cn/2024/0106/625033.shtml",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "星野",
+          "url": "https://blog.csdn.net/boedi_/article/details/139299482",
+          "aggregator": true,
+          "site_type": "ugc_platform",
+          "in_track": true
+        },
+        {
+          "name": "星野",
+          "url": "https://www.xingyeai.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Replika",
+          "url": "https://www.xuezha.cn/sites/5768.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": false
+        },
+        {
+          "name": "Replika",
+          "url": "https://www.aihub.cn/tools/chatbot/replika/",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "Replika",
+          "url": "https://www.meilizixun.com/sites/7139.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "Replika",
+          "url": "https://aigc.izzi.cn/sites/52.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": false
+        },
+        {
+          "name": "Replika",
+          "url": "https://replikazh.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Replika",
+          "url": "https://www.1ai.net/9099.html",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Replika",
+          "url": "https://replika.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Replika",
+          "url": "https://replikacn.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Replika",
+          "url": "https://replika.cn.uptodown.com/android",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": true
+        },
+        {
+          "name": "Replika",
+          "url": "https://www.18touch.com/soft/78656.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "Replika",
+          "url": "https://replika-my-ai-friend.softonic.cn/android",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": true
+        },
+        {
+          "name": "Replika",
+          "url": "http://www.87g.com/az/80033.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "Replika",
+          "url": "https://ai-bot.cn/app/10422.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": false
+        },
+        {
+          "name": "Replika",
+          "url": "https://www.shouji.com.cn/down/1808844.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": false
+        },
+        {
+          "name": "Replika",
+          "url": "https://shouyou.3dmgame.com/zt/187301_game/",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": false
+        },
+        {
+          "name": "Replika",
+          "url": "https://www.cssmoban.com/app/181246.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "Nike Tanjun High Rise 女子运动鞋",
+          "url": "https://www.nike.com.cn/t/tanjun-high-rise-%E5%A5%B3%E5%AD%90%E8%BF%90%E5%8A%A8%E9%9E%8B-l22Fwb",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": false
+        },
+        {
+          "name": "HighRise游戏下载",
+          "url": "https://shouyou.3dmgame.com/android/196524.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": false
+        },
+        {
+          "name": "Highrise",
+          "url": "https://www.xudanji.cn/32861.html",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "Highrise",
+          "url": "https://www.xudanji.cn/16407.html",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "Highrise",
+          "url": "https://highrise.game/shop",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "Highrise",
+          "url": "https://heipg.cn/games/project-highrise-1-6-3.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": false
+        },
+        {
+          "name": "Highrise",
+          "url": "https://highrise.game/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "Highrise",
+          "url": "https://highrise.game/play",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        }
+      ],
+      "selected": [
+        {
+          "name": "Highrise",
+          "url": "https://highrise.game/",
+          "score": 0.5,
+          "reasons": [
+            "像产品自己的官网"
+          ],
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "Replika",
+          "url": "https://replikazh.com/",
+          "score": 0.5,
+          "reasons": [
+            "像产品自己的官网"
+          ],
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "星野",
+          "url": "https://www.xingyeai.com/",
+          "score": 0.5,
+          "reasons": [
+            "像产品自己的官网"
+          ],
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "星岛梦/星梦岛(StarDream)机场官网地址",
+          "url": "https://tuijianvpn.com/8359",
+          "score": 0.5,
+          "reasons": [
+            "像产品自己的官网"
+          ],
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "筑梦岛",
+          "url": "https://www.9na.cn/2271.html",
+          "score": 0.5,
+          "reasons": [
+            "像产品自己的官网"
+          ],
+          "site_type": "product_site",
+          "in_track": true
+        }
+      ],
+      "notes": [
+        "候选池剔除 20 个非官网页（应用商店/下载站 3 个、媒体/内容站 15 个、开发者社区/UGC 博客 2 个）：星野(https://blog.csdn.net/X778566/article/details/139173357)、星野(https://sj.qq.com/appdetail/com.xingye.app)、筑梦岛(https://m.51nacs.com/down/2596.html)、日活百万AI陪聊软件，海外爆红，背靠国内初创企业 ...(https://www.eeo.com.cn/2024/0106/625033.shtml)、星野(https://blog.csdn.net/boedi_/article/details/139299482)"
+      ],
+      "counter_evidence": [],
+      "search_failed": false,
+      "search_failures": [],
+      "elapsed_s": 1641.7,
+      "attempts": 1
+    },
+    {
+      "subject": "猫箱",
+      "style": "search",
+      "query": "猫箱 竞品",
+      "started_at": "2026-10-29 02:40:52",
+      "entity": {
+        "name": "猫箱",
+        "type": "app",
+        "what_it_is": "面向中文用户的AI角色扮演与情感陪伴应用，支持创建角色和多轮剧情对话",
+        "confidence": 0.78,
+        "alternatives": [
+          "猫箱AI：角色扮演与情感陪伴App",
+          "猫箱：网络文学或内容社区类App",
+          "猫箱：其他同名工具或游戏"
+        ],
+        "source": "model",
+        "error": ""
+      },
+      "criteria": {
+        "layers": [
+          "direct",
+          "alternative",
+          "adjacent"
+        ],
+        "min_count": 3,
+        "max_count": 5,
+        "admission_rule": "直接层＝面向中文用户的AI角色扮演或情感陪伴移动App，具备角色创建与多轮对话；替代层＝通用AI助手中的角色模式；邻接层＝AI社交、虚拟角色社区或陪伴游戏。非产品官网、榜单文章、纯模型与API工具不纳入。"
+      },
+      "angles": [
+        {
+          "angle": "feature",
+          "label": "功能",
+          "priority": "secondary",
+          "weight": 0.35,
+          "hints": [
+            "功能概览",
+            "角色创建",
+            "多轮对话",
+            "语音图片",
+            "剧情玩法",
+            "会员定价",
+            "下载页",
+            "隐私政策"
+          ]
+        },
+        {
+          "angle": "business",
+          "label": "业务价值",
+          "priority": "secondary",
+          "weight": 0.3,
+          "hints": [
+            "定价页",
+            "会员权益",
+            "下载榜单",
+            "用户规模",
+            "运营活动",
+            "商务合作",
+            "分成政策",
+            "投流素材"
+          ]
+        },
+        {
+          "angle": "engineering",
+          "label": "研发与实现",
+          "priority": "secondary",
+          "weight": 0.2,
+          "hints": [
+            "技术架构",
+            "模型说明",
+            "API文档",
+            "更新日志",
+            "安全合规",
+            "权限说明",
+            "生成质量",
+            "稳定性"
+          ]
+        },
+        {
+          "angle": "product",
+          "label": "产品与体验",
+          "priority": "secondary",
+          "weight": 0.15,
+          "hints": [
+            "首页",
+            "角色广场",
+            "对话流",
+            "剧情引导",
+            "消息页",
+            "个人中心",
+            "新手引导",
+            "用户评价"
+          ]
+        }
+      ],
+      "stages": [
+        {
+          "stage": "entity_anchor",
+          "queries": [
+            "猫箱 AI 官网",
+            "猫箱 应用商店",
+            "猫箱 功能 介绍",
+            "猫箱 角色扮演"
+          ],
+          "unique_urls": 5,
+          "kept": 5,
+          "titles": [
+            "猫箱官网 — 下载猫箱 App，和心动 AI 探索剧情宇宙",
+            "猫箱创作 - 创作 AI 角色以及 AI 故事，沉浸式聊天...",
+            "猫箱 - 小米应用商店",
+            "猫箱网页版入口、使用教程-太平洋科技AI产品库",
+            "猫箱_字节跳动开发的AI角色创建互动平台_AI角色..."
+          ]
+        },
+        {
+          "stage": "competitor_discovery",
+          "queries": [
+            "AI陪伴App官网",
+            "AI角色扮演App下载",
+            "星野筑梦岛官网",
+            "Talkie逗逗官网"
+          ],
+          "candidates": 7,
+          "selected": 1
+        },
+        {
+          "stage": "per_competitor_verify",
+          "queries": [],
+          "results": 0
+        },
+        {
+          "stage": "counter_evidence",
+          "queries": [],
+          "results": 0,
+          "titles": []
+        }
+      ],
+      "candidates": [
+        {
+          "name": "逗逗",
+          "url": "https://www.doudou.fun/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "逗逗",
+          "url": "https://www.aig123.com/sites/2703.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": false
+        },
+        {
+          "name": "AI工具集",
+          "url": "https://ai-bot.cn/",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "逗逗",
+          "url": "https://docs.doudou.fun/",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": false
+        },
+        {
+          "name": "逗逗",
+          "url": "https://www.doudou.fun/download",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "逗逗",
+          "url": "https://store.steampowered.com/app/2715220/Doudou_Companion/?l=schinese",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "逗逗",
+          "url": "https://baike.baidu.com/item/%E9%80%97%E9%80%97%E6%B8%B8%E6%88%8F%E4%BC%99%E4%BC%B4/67336879",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        }
+      ],
+      "selected": [
+        {
+          "name": "逗逗",
+          "url": "https://www.doudou.fun/",
+          "score": 0.5,
+          "reasons": [
+            "像产品自己的官网"
+          ],
+          "site_type": "product_site",
+          "in_track": true
+        }
+      ],
+      "notes": [
+        "候选池剔除 5 个非官网页（媒体/内容站 5 个）：逗逗(https://www.aig123.com/sites/2703.html)、AI工具集(https://ai-bot.cn/)、逗逗(https://docs.doudou.fun/)、逗逗(https://store.steampowered.com/app/2715220/Doudou_Companion/?l=schinese)、逗逗(https://baike.baidu.com/item/%E9%80%97%E9%80%97%E6%B8%B8%E6%88%8F%E4%BC%99%E4%BC%B4/67336879)",
+        "入选 1 家，低于计划下限 3 家"
+      ],
+      "counter_evidence": [],
+      "search_failed": false,
+      "search_failures": [],
+      "elapsed_s": 2043.2,
+      "attempts": 1
+    }
+  ]
+}

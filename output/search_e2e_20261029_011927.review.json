@@ -1,0 +1,205 @@
+{
+  "_说明": "逐条判断：这个 URL 是不是该主体的真竞品官网（产品自己的站点）。把 verdict 改成 true / false，note 可写理由。填完运行：uv run python tool_e2e_search_real.py --judge-review <本文件路径>",
+  "verdicts": [],
+  "records": [
+    {
+      "subject": "百度搭子",
+      "style": "task",
+      "query": "找一下百度搭子的全部竞品信息",
+      "entity": {
+        "name": "",
+        "type": "",
+        "what_it_is": "",
+        "confidence": 0.0,
+        "alternatives": [],
+        "source": "error",
+        "error": "AttributeError: 'Candidate' object has no attribute 'get'"
+      },
+      "criteria": {
+        "layers": [],
+        "min_count": 0,
+        "max_count": 0,
+        "admission_rule": ""
+      },
+      "angles": [],
+      "stages": [],
+      "candidates": [],
+      "selected": [],
+      "notes": [],
+      "counter_evidence": [],
+      "elapsed_s": 0
+    },
+    {
+      "subject": "百度搭子",
+      "style": "search",
+      "query": "百度搭子 竞品",
+      "started_at": "2026-10-29 01:08:48",
+      "entity": {
+        "name": "百度搭子",
+        "type": "app",
+        "what_it_is": "百度推出的AI角色陪伴与社交应用，提供角色化对话和互动体验。",
+        "confidence": 0.97,
+        "alternatives": [],
+        "source": "model",
+        "error": ""
+      },
+      "criteria": {
+        "layers": [
+          "direct",
+          "alternative"
+        ],
+        "min_count": 3,
+        "max_count": 5,
+        "admission_rule": "同客群×同场景×同交付形态：面向AI角色扮演与情感陪伴需求，以App或Web提供角色创建和持续对话；直接层为中文同类，替代层为海外同类或偏一对一陪伴产品。"
+      },
+      "angles": [
+        {
+          "angle": "feature",
+          "label": "功能",
+          "priority": "secondary",
+          "weight": 0.35,
+          "hints": [
+            "功能介绍",
+            "角色广场",
+            "模型能力",
+            "会员权益"
+          ]
+        },
+        {
+          "angle": "business",
+          "label": "业务价值",
+          "priority": "secondary",
+          "weight": 0.3,
+          "hints": [
+            "定价页",
+            "会员权益",
+            "用户规模",
+            "商业合作"
+          ]
+        },
+        {
+          "angle": "engineering",
+          "label": "研发与实现",
+          "priority": "secondary",
+          "weight": 0.2,
+          "hints": [
+            "技术博客",
+            "API文档",
+            "模型说明",
+            "安全规范"
+          ]
+        },
+        {
+          "angle": "product",
+          "label": "产品与体验",
+          "priority": "secondary",
+          "weight": 0.15,
+          "hints": [
+            "新手引导",
+            "角色详情",
+            "聊天体验",
+            "社区动态"
+          ]
+        }
+      ],
+      "stages": [
+        {
+          "stage": "entity_anchor",
+          "queries": [
+            "百度搭子 dumate.cn",
+            "百度搭子 官网",
+            "百度搭子 App",
+            "Dumate AI 陪伴"
+          ],
+          "unique_urls": 0,
+          "kept": 0,
+          "titles": []
+        },
+        {
+          "stage": "competitor_discovery",
+          "queries": [
+            "AI陪伴 App 官网",
+            "星野 官网",
+            "猫箱 官网",
+            "筑梦岛 官网"
+          ],
+          "candidates": 0,
+          "selected": 0
+        },
+        {
+          "stage": "per_competitor_verify",
+          "queries": [],
+          "results": 0
+        },
+        {
+          "stage": "counter_evidence",
+          "queries": [],
+          "results": 0,
+          "titles": []
+        }
+      ],
+      "candidates": [],
+      "selected": [],
+      "notes": [
+        "候选池里没有竞品官网（只有媒体/社区页）——按口径不入选，本轮可能找不到竞品",
+        "入选 0 家，低于计划下限 3 家"
+      ],
+      "counter_evidence": [],
+      "elapsed_s": 470.6
+    },
+    {
+      "subject": "猫箱",
+      "style": "task",
+      "query": "帮我看看猫箱这个产品的全部竞品信息",
+      "entity": {
+        "name": "",
+        "type": "",
+        "what_it_is": "",
+        "confidence": 0.0,
+        "alternatives": [],
+        "source": "error",
+        "error": "AttributeError: 'Candidate' object has no attribute 'get'"
+      },
+      "criteria": {
+        "layers": [],
+        "min_count": 0,
+        "max_count": 0,
+        "admission_rule": ""
+      },
+      "angles": [],
+      "stages": [],
+      "candidates": [],
+      "selected": [],
+      "notes": [],
+      "counter_evidence": [],
+      "elapsed_s": 0
+    },
+    {
+      "subject": "猫箱",
+      "style": "search",
+      "query": "猫箱 竞品",
+      "entity": {
+        "name": "",
+        "type": "",
+        "what_it_is": "",
+        "confidence": 0.0,
+        "alternatives": [],
+        "source": "error",
+        "error": "AttributeError: 'Candidate' object has no attribute 'get'"
+      },
+      "criteria": {
+        "layers": [],
+        "min_count": 0,
+        "max_count": 0,
+        "admission_rule": ""
+      },
+      "angles": [],
+      "stages": [],
+      "candidates": [],
+      "selected": [],
+      "notes": [],
+      "counter_evidence": [],
+      "elapsed_s": 0
+    }
+  ]
+}
