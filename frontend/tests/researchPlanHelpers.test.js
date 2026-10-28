@@ -336,3 +336,72 @@ test('the plan text used by "复制当前" survives a report with neither field'
   assert.ok(text.includes('未生成研究计划'))
   assert.ok(text.includes('未走候选发现流程'))
 })
+
+// ---------------------------------------------------------------------------
+// 可执行准入条件：计划里那句自然语言被拆成了"真的判了"与"判不了"
+// ---------------------------------------------------------------------------
+
+test('the executable rule is separated from the parts that cannot be judged', () => {
+  const plan = normalizeResearchPlan({
+    entity: { name: '百度搭子' },
+    competitor_criteria: { admission_rule: '必须有官网 + 至少 2 个维度有数据' },
+    admission_rule: {
+      source: 'model',
+      executable: ['必须有官网（必须是产品官网）', '至少 2 个维度有数据（抓后判定）'],
+      not_executable: ['直接层须满足个人用户×移动端App（层归属要语义判断，代码不据此裁决）']
+    }
+  })
+  assert.equal(plan.rule.hasRule, true)
+  assert.equal(plan.rule.executable.length, 2)
+  assert.equal(plan.rule.notExecutable.length, 1)
+  assert.ok(plan.rule.executable[0].includes('产品官网'))
+  assert.equal(plan.rule.sourceLabel, '按计划口径执行')
+})
+
+test('a plan without a parsed rule reports no executable conditions at all', () => {
+  const plan = normalizeResearchPlan({ entity: { name: 'x' } })
+  assert.equal(plan.rule.hasRule, false)
+  assert.deepEqual(plan.rule.executable, [])
+  assert.deepEqual(plan.rule.notExecutable, [])
+  assert.equal(plan.rule.sourceLabel, '')
+})
+
+test('an unparseable rule is labelled as such instead of silently ignored', () => {
+  const plan = normalizeResearchPlan({
+    entity: { name: 'x' },
+    admission_rule: { source: 'unparsed', executable: [], not_executable: [] }
+  })
+  assert.equal(plan.rule.sourceLabel, '口径无法解析，已退回默认口径')
+})
+
+// ---------------------------------------------------------------------------
+// 未采信清单：抓后数据不足被闸门剔除的竞品
+// ---------------------------------------------------------------------------
+
+test('the unverified list carries the reason each competitor was dropped', () => {
+  const discovery = normalizeDiscovery(
+    { candidates: [{ name: '猫箱', url: 'https://maoxiangai.com/' }] },
+    [{ name: '数据不足的', url: 'https://thin.test/', dimension_count: 1, reasons: ['只抽到 1 个维度'] }]
+  )
+  assert.equal(discovery.unverified.length, 1)
+  assert.equal(discovery.unverified[0].name, '数据不足的')
+  assert.equal(discovery.unverified[0].dimensionCount, 1)
+  assert.deepEqual(discovery.unverified[0].reasons, ['只抽到 1 个维度'])
+})
+
+test('the unverified list can also be read from the admission gate record', () => {
+  const discovery = normalizeDiscovery(
+    { candidates: [] },
+    null,
+    { rejected: [{ name: '补位的', url: 'https://b.test/', dimension_count: 0 }] }
+  )
+  assert.equal(discovery.unverified.length, 1)
+  assert.equal(discovery.unverified[0].name, '补位的')
+  assert.equal(discovery.unverified[0].dimensionCount, 0)
+})
+
+test('a report without a gate shows no unverified list at all', () => {
+  const discovery = normalizeDiscovery({ candidates: [{ name: 'a', url: 'https://a.test' }] })
+  assert.deepEqual(discovery.unverified, [])
+  assert.deepEqual(discovery.backfilled, [])
+})

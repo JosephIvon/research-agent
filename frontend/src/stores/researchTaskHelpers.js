@@ -450,6 +450,14 @@ export const PRIORITY_LABELS = Object.freeze({
 const PLAN_SOURCES = Object.freeze(['model', 'default', 'fallback'])
 const PRIORITY_KEYS = Object.freeze(['primary', 'secondary', 'ignore'])
 
+/** 准入规则的解析来源中文名——与后端 admission_rules.AdmissionRule.source 对齐。 */
+export const RULE_SOURCE_LABELS = Object.freeze({
+  model: '按计划口径执行',
+  partial: '部分口径可执行',
+  unparsed: '口径无法解析，已退回默认口径',
+  default: '默认口径'
+})
+
 function round4(value) {
   const num = Number(value)
   if (!Number.isFinite(num)) return 0
@@ -607,6 +615,14 @@ export function normalizeResearchPlan(raw) {
     .map(formatDisambiguationCandidate)
     .filter(Boolean)
 
+  // 可执行形态的准入规则：后端把计划里那句自然语言拆成了"代码真的判了的几条"
+  // 与"判不了的几条"。只显示原文会让人以为那句话被完整执行了。
+  const rawRule = firstObject(plan.admission_rule)
+  const ruleExecutable = stringList(rawRule.executable)
+  const ruleNotExecutable = stringList(rawRule.not_executable)
+  const ruleSource = asText(rawRule.source)
+  const ruleSourceLabel = RULE_SOURCE_LABELS[ruleSource] || ''
+
   const available = Boolean(
     asText(entity.name) ||
     asText(entity.what_it_is) ||
@@ -644,6 +660,13 @@ export function normalizeResearchPlan(raw) {
       mustExclude: stringList(criteria.must_exclude),
       admissionRule: asText(criteria.admission_rule)
     },
+    rule: {
+      source: ruleSource,
+      sourceLabel: ruleSourceLabel,
+      executable: ruleExecutable,
+      notExecutable: ruleNotExecutable,
+      hasRule: ruleExecutable.length > 0 || ruleNotExecutable.length > 0
+    },
     angles,
     weightNote: '权重由代码按优先级算（primary×1.5 / secondary×1.0 / ignore×0.5）后归一化，不是模型给的数字',
     openQuestions,
@@ -666,7 +689,7 @@ function candidateKey(item) {
  * 前端只用 candidates / selected / scored / notes；entity_pages 与 queries_run
  * 不展示（体积大、价值低），但字段本身不丢——这里只是不取。
  */
-export function normalizeDiscovery(raw) {
+export function normalizeDiscovery(raw, rawRejected, rawGate) {
   const discovery = firstObject(raw)
   const candidates = Array.isArray(discovery.candidates) ? discovery.candidates : []
   const selectedRaw = Array.isArray(discovery.selected) ? discovery.selected : []
@@ -709,6 +732,30 @@ export function normalizeDiscovery(raw) {
   const poolSize = candidates.length || scoredRaw.length || rows.length
   const selectedCount = selectedRaw.length
 
+  // 未采信清单：抓完后数据不足被淘汰的竞品。它们**不在矩阵里**（不污染结论），
+  // 但必须让用户看得见——"我们试过它，它没有数据"和"它没被考虑过"是两回事。
+  const gate = firstObject(rawGate)
+  const rejectedSource = Array.isArray(rawRejected) && rawRejected.length
+    ? rawRejected
+    : (Array.isArray(gate.rejected) ? gate.rejected : [])
+  const rejected = rejectedSource
+    .filter(item => item && typeof item === 'object')
+    .map(item => ({
+      name: asText(item.name) || asText(item.url) || '（未命名）',
+      url: asText(item.url),
+      status: asText(item.status),
+      dimensionCount: Number.isFinite(Number(item.dimension_count)) ? Number(item.dimension_count) : null,
+      reasons: stringList(item.reasons)
+    }))
+
+  const backfilled = (Array.isArray(gate.backfilled) ? gate.backfilled : [])
+    .filter(item => item && typeof item === 'object')
+    .map(item => ({
+      name: asText(item.name) || asText(item.url) || '（未命名）',
+      url: asText(item.url),
+      reasons: stringList(item.reasons)
+    }))
+
   return {
     available: Boolean(poolSource.length || notes.length),
     poolSize,
@@ -717,6 +764,8 @@ export function normalizeDiscovery(raw) {
     rows,
     selected: rows.filter(row => row.selected),
     rejected: rows.filter(row => !row.selected),
+    unverified: rejected,
+    backfilled,
     notes,
     emptyText: '本轮未走候选发现流程（没有候选池与打分明细）'
   }

@@ -993,6 +993,135 @@ def admit_competitors(
     }
 
 
+def render_plan_markdown(
+    plan_data: Optional[Dict[str, Any]] = None,
+    discovery: Optional[Dict[str, Any]] = None,
+    gate: Optional[Dict[str, Any]] = None,
+) -> str:
+    """把研究计划 + 入选轨迹渲染成 markdown（导出用）。
+
+    与前端「调研口径」tab 展示的是同一份数据、同一套口径：
+    导出件必须能独立阅读，也要能跟界面上一一对上。
+    """
+    plan_data = plan_data or {}
+    entity = plan_data.get("entity") or {}
+    criteria = plan_data.get("competitor_criteria") or plan_data.get("criteria") or {}
+    rule = plan_data.get("admission_rule") or (gate or {}).get("rule") or {}
+    lines: List[str] = ["# 调研口径", ""]
+
+    name = str(entity.get("name") or "").strip()
+    if name:
+        lines.append(f"## 研究主体：{name}")
+        what = str(entity.get("what_it_is") or "").strip()
+        if what:
+            lines.append(f"- 释义：{what}")
+        etype = str(entity.get("entity_type") or "").strip()
+        if etype:
+            lines.append(f"- 实体类型：{etype}")
+        confidence = entity.get("resolved_confidence")
+        if isinstance(confidence, (int, float)):
+            lines.append(f"- 消歧置信度：{confidence:.2f}")
+        domains = entity.get("official_domains") or []
+        if domains:
+            lines.append("- 主体官网域名：" + "、".join(str(d) for d in domains))
+        candidates = [str(c) for c in (entity.get("disambiguation_candidates") or []) if str(c).strip()]
+        if candidates:
+            lines.append("- 备选：" + "、".join(candidates[:5]))
+    source = str(plan_data.get("source") or "").strip()
+    if source and source != "model":
+        lines.append(f"- 口径来源：{source}（非模型生成）")
+    lines.append("")
+
+    lines.append("## 竞品口径")
+    layers = criteria.get("layers") or []
+    lines.append(f"- 层级：{'、'.join(str(l) for l in layers) or '未指定'}")
+    lines.append(
+        f"- 数量：{criteria.get('min_count')}-{criteria.get('max_count')} 家"
+        f"（候选池 {criteria.get('candidate_pool') or '未指定'}）"
+    )
+    lines.append(f"- 入选标准（原文）：{criteria.get('admission_rule') or '默认'}")
+    executable = [str(c) for c in (rule.get("executable") or []) if str(c).strip()]
+    if executable:
+        lines.append("- **实际执行的入选条件**：")
+        lines.extend(f"  - {c}" for c in executable)
+    not_executable = [str(c) for c in (rule.get("not_executable") or []) if str(c).strip()]
+    if not_executable:
+        lines.append("- **未能执行的条件**（代码不据此裁决）：")
+        lines.extend(f"  - {c}" for c in not_executable)
+    must_include = criteria.get("must_include") or []
+    must_exclude = criteria.get("must_exclude") or []
+    if must_include:
+        lines.append("- 必须包含：" + "、".join(str(t) for t in must_include))
+    if must_exclude:
+        lines.append("- 必须排除：" + "、".join(str(t) for t in must_exclude))
+    lines.append("")
+
+    angles = plan_data.get("angles") or []
+    if angles:
+        lines.append("## 重点角度（权重由代码按优先级计算）")
+        for angle in angles:
+            label = angle.get("label") or angle.get("angle")
+            weight = float(angle.get("weight") or 0)
+            reason = str(angle.get("reason") or "").strip()
+            lines.append(
+                f"- {label} {weight:.0%}（{angle.get('priority') or 'secondary'}）"
+                + (f"：{reason}" if reason else "")
+            )
+        lines.append("")
+
+    discovery = discovery or {}
+    selected = discovery.get("selected") or []
+    candidates = discovery.get("candidates") or []
+    if candidates or selected:
+        lines.append("## 候选池与入选")
+        lines.append(f"- 候选 {len(candidates)} 家，入选 {len(selected)} 家")
+        scored = discovery.get("scored") or []
+        selected_urls = {str(s.get("url") or "") for s in selected}
+        for item in scored or candidates:
+            url = str(item.get("url") or "")
+            mark = "✓" if url in selected_urls else "✗"
+            site_type = str(item.get("site_type") or "")
+            score = item.get("score")
+            reasons = "；".join(str(r) for r in (item.get("reasons") or []) if str(r).strip())
+            detail = f"（得分 {score}）" if isinstance(score, (int, float)) else ""
+            lines.append(
+                f"- {mark} {item.get('name') or url}"
+                + (f" · {site_type}" if site_type else "")
+                + detail
+                + (f" · {reasons}" if reasons else "")
+            )
+            lines.append(f"  - {url}")
+        notes = [str(n) for n in (discovery.get("notes") or []) if str(n).strip()]
+        if notes:
+            lines.append("")
+            lines.append("### 过程记录")
+            lines.extend(f"- {n}" for n in notes)
+        lines.append("")
+
+    rejected = (gate or {}).get("rejected") or []
+    if rejected:
+        lines.append("## 未采信（数据不足，已剔除）")
+        for item in rejected:
+            reasons = "；".join(str(r) for r in (item.get("reasons") or []) if str(r).strip())
+            lines.append(
+                f"- {item.get('name') or item.get('url')}"
+                + (f"（抽到 {item.get('dimension_count')} 个维度）" if item.get("dimension_count") is not None else "")
+                + (f"：{reasons}" if reasons else "")
+            )
+        lines.append("")
+
+    questions = plan_data.get("open_questions") or []
+    if questions:
+        lines.append("## 开放问题")
+        for item in questions:
+            question = str(item.get("question") or "").strip()
+            default = str(item.get("default") or "").strip()
+            lines.append(f"- {question}" + (f"（默认：{default}）" if default else ""))
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def _host_key(url: str) -> str:
     """去 www. 的域名（同一站点的判定键）。"""
     host = re.sub(r"^https?://", "", (url or "").strip()).split("/")[0].lower()

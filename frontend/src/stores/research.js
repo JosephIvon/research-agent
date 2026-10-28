@@ -66,6 +66,9 @@ function normalizeReport(payload, request = {}) {
     // undefined，页面才能分清"后端没给"与"值是 null"。
     research_plan: payload.research_plan || null,
     discovery: payload.discovery || null,
+    // 准入闸门：未采信清单与闸门记录（同样是旧报告没有的字段）
+    rejected_competitors: payload.rejected_competitors || null,
+    admission_gate: payload.admission_gate || null,
     raw: payload
   }, payload)
 }
@@ -328,11 +331,16 @@ export const useResearchStore = defineStore('research', () => {
         // 旧任务没有这两个字段——取不到就是 null，页面显示空态而不是白屏。
         research_plan: task?.research_plan || null,
         discovery: task?.discovery || null,
+        // 准入闸门：未采信清单（抓后数据不足被剔除的）与闸门记录
+        rejected_competitors: task?.rejected_competitors || null,
+        admission_gate: task?.admission_gate || null,
         raw: {
           ...task,
           competitors: crawlCompetitors,
           research_plan: task?.research_plan || null,
-          discovery: task?.discovery || null
+          discovery: task?.discovery || null,
+          rejected_competitors: task?.rejected_competitors || null,
+          admission_gate: task?.admission_gate || null
         }
       }
 

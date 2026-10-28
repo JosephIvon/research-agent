@@ -288,6 +288,8 @@
             v-else-if="activeTab === 'plan'"
             :research-plan="researchPlan"
             :discovery="discovery"
+            :rejected-competitors="rejectedCompetitors"
+            :admission-gate="admissionGate"
           />
 
           <section class="chart-panel" v-if="activeTab === 'report' && chartData">
@@ -408,6 +410,10 @@ const sourceRows = computed(() => buildSourceRows(report.value || {}))
 // 「调研口径」tab 会显示空态，而不是白屏。
 const researchPlan = computed(() => getReportResearchPlan(report.value || {}))
 const discovery = computed(() => getReportDiscovery(report.value || {}))
+// 准入闸门的两件东西：被淘汰的竞品（未采信清单）与闸门记录。
+// 它们与 research_plan / discovery 一样只随任务终态落库。
+const rejectedCompetitors = computed(() => report.value?.rejected_competitors || report.value?.raw?.rejected_competitors || null)
+const admissionGate = computed(() => report.value?.admission_gate || report.value?.raw?.admission_gate || null)
 const injectionFindingsCount = computed(() => Number(report.value?.injection_findings_count) || 0)
 // SSE 实时收集的注入发现带来源 URL，终态计数只有一个总数。这里展示来源维度。
 const injectionSources = computed(() => {
@@ -571,10 +577,11 @@ async function handleExportFormat(format) {
     return
   }
   try {
-    // 后端导出只认 report / prd 两种内容（content_type 的取值范围是写死的正则）。
-    // 「调研口径」tab 走 report——它导出的仍是报告正文；要导出口径本身，
-    // 得后端加一种 content_type，那是另一个量级的改动。
-    const contentType = activeTab.value === 'prd' ? 'prd' : 'report'
+    // 后端导出认 report / prd / plan 三种内容。口径 tab 要导出**口径本身**
+    // ——点的是 A 导出的是 B，这种不一致比"不支持导出"更让人怀疑。
+    const contentType = activeTab.value === 'prd'
+      ? 'prd'
+      : (activeTab.value === 'plan' ? 'plan' : 'report')
     const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || '/api'}/research/export`, {
       method: 'POST',
       headers: {

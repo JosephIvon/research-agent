@@ -366,7 +366,10 @@ class CredentialRequest(BaseModel):
 class ExportRequest(BaseModel):
     report_id: str = Field(..., pattern=REPORT_ID_RE.pattern)
     format: str = Field(..., pattern="^(pdf|word|html)$")
-    content_type: Optional[str] = Field(default="report", pattern="^(report|prd)$")
+    # plan = 导出「调研口径」本身（研究计划 + 候选池轨迹 + 未采信清单）。
+    # 此前只有 report / prd 两种，界面上的口径 tab 点导出拿到的是报告正文——
+    # 点的是 A 导出的是 B，这种不一致比"不支持"更让人怀疑。
+    content_type: Optional[str] = Field(default="report", pattern="^(report|prd|plan)$")
 
 
 class ReportFeedbackRequest(StrictModel):
@@ -1291,6 +1294,13 @@ async def _task_meta_for_report(report_id: str) -> Dict[str, Any]:
                 # 换浏览器或清缓存后重新打开历史报告，"内容不完整"的提示会整个消失——
                 # 一份半截的报告就这么被当成完整结论读了。和成本卡是同一类断链。
                 "incomplete": task.status == TaskStatus.PARTIAL,
+                # 研究计划与候选池轨迹同理：它们只随**任务终态**落库，
+                # 历史报告冷加载（换浏览器/清缓存）时若不补回来，
+                # "调研口径"tab 就只剩空态——用户看到的结论没有口径可查。
+                "research_plan": getattr(task, "research_plan", None),
+                "discovery": getattr(task, "discovery", None),
+                "rejected_competitors": getattr(task, "rejected_competitors", None),
+                "admission_gate": getattr(task, "admission_gate", None),
             }
     # 找不到归属任务（比如任务存储已过期、或报告来自文件兜底）：如实给空值。
     # 用 report_id 拼一个假的 trace 链接只会让用户点进一个必然 404 的页面。
@@ -1299,6 +1309,10 @@ async def _task_meta_for_report(report_id: str) -> Dict[str, Any]:
         "injection_findings_count": 0,
         "trace_url": None,
         "incomplete": False,
+        "research_plan": None,
+        "discovery": None,
+        "rejected_competitors": None,
+        "admission_gate": None,
     }
 
 
@@ -1335,6 +1349,29 @@ def compare_reports(request: Request, report_id1: str, report_id2: str):
     return diff
 
 
+async def _plan_markdown_for_report(report_id: str) -> str:
+    """取某份报告对应的「调研口径」并渲染成 markdown。
+
+    口径来自任务终态落库的结构化字段（research_plan / discovery / admission_gate），
+    渲染逻辑与后端同一套（``render_plan_markdown``）——导出件与界面必须对得上。
+    """
+    from src.workflow.research_plan import render_plan_markdown
+
+    store = get_task_store()
+    for task in await store.list_tasks():
+        if task.report_id != report_id:
+            continue
+        plan = getattr(task, "research_plan", None)
+        if not plan:
+            return ""
+        return render_plan_markdown(
+            plan,
+            getattr(task, "discovery", None),
+            getattr(task, "admission_gate", None),
+        )
+    return ""
+
+
 @limiter.limit(RATE_LIMIT_PER_TOKEN)
 @app.post("/research/export")
 async def export_report(request: Request, req: ExportRequest):
@@ -1350,7 +1387,15 @@ async def export_report(request: Request, req: ExportRequest):
     # Report content is stored on the file system (authoritative source)
     # Fall back to DB only if the file does not exist
     report_path = _report_path(req.report_id)
-    if report_path.exists():
+    if req.content_type == "plan":
+        # 口径导出：内容来自任务终态落库的结构化字段，不来自报告正文
+        content = await _plan_markdown_for_report(req.report_id)
+        if not content:
+            raise HTTPException(
+                status_code=404,
+                detail="该报告没有调研口径数据（可能是更早的运行）",
+            )
+    elif report_path.exists():
         content = report_path.read_text(encoding="utf-8")
     else:
         db = get_report_db()
@@ -1386,6 +1431,8 @@ async def export_report(request: Request, req: ExportRequest):
         export_to_html(content, tmp_path)
 
     filename = f"report_{req.report_id}{suffix}"
+    if req.content_type == "plan":
+        filename = f"research_plan_{req.report_id}{suffix}"
     response = FileResponse(tmp_path, media_type=mime, filename=filename)
 
     # Schedule temp file cleanup after response is fully sent
