@@ -231,3 +231,23 @@ def test_entity_anchor_first_product_site_is_treated_as_the_subject_site():
     result = runner.run_competitor_discovery(plan)
     urls = [c["url"] for c in result.selected]
     assert not any("dumate.cn" in u for u in urls), urls
+
+
+def test_same_site_counts_once():
+    """同一站点的两个页面只算一家——否则白占一个竞品名额。"""
+    plan = rp.build_default_plan("猫箱")
+    candidates = [
+        {"name": "character.ai", "url": "https://character.ai/", "site_type": st.SITE_PRODUCT},
+        {"name": "About Character.AI", "url": "https://character.ai/about", "site_type": st.SITE_PRODUCT},
+        {"name": "LumiChat", "url": "https://www.lumichat.ink/zh", "site_type": st.SITE_PRODUCT},
+    ]
+    result = rp.admit_competitors(candidates, plan)
+    urls = [item["url"] for item in result["selected"]]
+    assert len(urls) == 2, urls
+    # 同一站点里取**首页**（路径最浅）那一份
+    assert "https://character.ai/" in urls
+
+
+def test_blog_subdomain_is_not_a_product_site():
+    assert st.classify_site("https://blog.character.ai/", "character.ai blog") != st.SITE_PRODUCT
+    assert st.classify_site("https://character.ai/", "character.ai") == st.SITE_PRODUCT

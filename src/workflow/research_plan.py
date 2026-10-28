@@ -908,23 +908,35 @@ def admit_competitors(
     抓完之后的完整性由矩阵层把关（content_complete 要求有效证据）。
     """
     scored = [score_candidate(c, plan) for c in candidates]
-    scored.sort(key=lambda item: (-item["score"], item["name"]))
+    scored.sort(key=lambda item: (-item["score"], _path_depth(item["url"]), item["name"]))
     must_include = [t for t in (plan.criteria.get("must_include") or []) if t]
     selected: List[Dict[str, Any]] = []
+    # 同一站点只算一家：character.ai/ 与 character.ai/about 是同一个竞品，
+    # 算两家会白占一个名额（实测：8 个入选里有 2 个是同一站点的两个页面）。
+    selected_hosts = set()
     for item in scored:
         if len(selected) >= plan.max_count:
             break
+        host = _host_key(item["url"])
+        if host and host in selected_hosts:
+            continue
         if any(token and token in item["name"] for token in must_include):
-            if item not in selected:
-                selected.append(item)
+            selected.append(item)
+            if host:
+                selected_hosts.add(host)
     for item in scored:
         if len(selected) >= plan.max_count:
             break
         if item in selected:
             continue
+        host = _host_key(item["url"])
+        if host and host in selected_hosts:
+            continue
         if item["score"] < MIN_ADMISSION_SCORE:
             continue
         selected.append(item)
+        if host:
+            selected_hosts.add(host)
     return {
         "selected": selected[:plan.max_count],
         "scored": scored,
@@ -933,3 +945,15 @@ def admit_competitors(
         "met_minimum": len(selected) >= plan.min_count,
         "pool_size": len(candidates),
     }
+
+
+def _host_key(url: str) -> str:
+    """去 www. 的域名（同一站点的判定键）。"""
+    host = re.sub(r"^https?://", "", (url or "").strip()).split("/")[0].lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def _path_depth(url: str) -> int:
+    """路径段数——首页最浅（0 段或 1 段）。"""
+    path = re.sub(r"^https?://[^/]+", "", (url or "").strip())
+    return len([s for s in path.split("/") if s])

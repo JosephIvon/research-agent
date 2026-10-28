@@ -159,6 +159,9 @@ def classify_site(url: str, title: str = "") -> str:
         return SITE_MEDIA
     if any(hint in host for hint in _DIRECTORY_HOST_HINTS):
         return SITE_DIRECTORY
+    # 博客/新闻子域：blog.character.ai 是 character.ai 的博客，不是产品首页
+    if host.startswith(("blog.", "news.", "docs.", "help.")):
+        return SITE_MEDIA
     if any(hint in path for hint in _MEDIA_PATH_HINTS):
         return SITE_MEDIA
     # **路径深度**：产品自己的官网，首页就是根路径或一层（/zh、/en、/zh-cn）。
