@@ -1,5 +1,6 @@
 """搜索工具模块 - 封装搜索引擎API"""
 import re
+import time
 
 import requests
 from typing import List, Dict, Optional
@@ -15,6 +16,20 @@ from src.config.settings import (
     SEARCH_FALLBACK_PROVIDERS,
 )
 from src.security.url_validation import validate_fetch_url, UnsafeURL
+
+
+class SearchBackendError(RuntimeError):
+    """搜索**后端**没给出结果（引擎超时、被限流），不是"没搜到"。
+
+    实测（2026-10-29）：SearXNG 偶尔整轮返回 0 条，JSON 里的
+    ``unresponsive_engines`` 写着 ``duckduckgo timeout``、
+    ``google cse Suspended: too many requests``。
+    这种 0 与"这个查询真的没有结果"在调用方眼里一模一样，
+    于是候选池归零、整组结论作废——**把后端抖动说成了"没找到竞品"**。
+
+    所以这里把它变成一种**可区分的失败**：调用方能说"本轮搜索后端失败"，
+    而不是报一个假的"0 家竞品"。
+    """
 
 
 class SearchTool:
@@ -39,6 +54,10 @@ class SearchTool:
 
         Returns:
             搜索结果列表
+
+        Raises:
+            SearchBackendError: 后端整轮没给出结果且引擎无响应（重试一次仍如此）。
+                与"查询确实没有结果"是两回事，调用方要能分开处理。
         """
         url = f"{self.searxng_url}/search"
         params = {
@@ -49,10 +68,18 @@ class SearchTool:
             "limit": num_results or self.max_results
         }
 
-        try:
-            response = requests.get(url, params=params, timeout=self.timeout)
-            response.raise_for_status()
-            data = response.json()
+        last_error = ""
+        for attempt in range(2):  # 引擎抖动是暂时的：重试一次
+            try:
+                response = requests.get(url, params=params, timeout=self.timeout)
+                response.raise_for_status()
+                data = response.json()
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+                if attempt == 0:
+                    time.sleep(2.0)
+                    continue
+                raise SearchBackendError(f"SearXNG 请求失败（{last_error}）") from exc
 
             results = []
             for result in data.get("results", []):
@@ -64,10 +91,21 @@ class SearchTool:
                         "source_type": "searxng"
                     })
 
-            return results[:num_results or self.max_results]
+            if results:
+                return results[:num_results or self.max_results]
 
-        except Exception as exc:
-            raise RuntimeError("SearXNG search failed") from exc
+            # 0 条：先看引擎是不是集体罢工了
+            unresponsive = data.get("unresponsive_engines") or []
+            if not unresponsive:
+                # 所有引擎都正常应答，只是这个查询没有结果——那是真的没有
+                return []
+            last_error = "、".join(str(item) for item in unresponsive)
+            if attempt == 0:
+                time.sleep(2.0)
+                continue
+            raise SearchBackendError(f"搜索引擎无响应（{last_error}）")
+
+        raise SearchBackendError(f"搜索引擎无响应（{last_error}）")
 
     def search_with_serpapi(self, query: str, num_results: int = None) -> List[Dict[str, str]]:
         """

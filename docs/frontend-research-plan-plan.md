@@ -1,7 +1,7 @@
-# 前端方案：把"研究计划"与"入选轨迹"显示出来（待审，未执行）
+# 前端方案：把"研究计划"与"入选轨迹"显示出来（已执行）
 
-> 状态：**方案稿**。本文件只描述要做什么、改哪些文件、怎么验收，**代码未动**。
-> 审完再决定是否执行。执行时按第 6 节的步骤逐条做，每步可独立回滚。
+> 状态：**已执行（2026-10-29）**。第 1–8 节是执行前的方案稿，保留原文；
+> 第 9 节是执行记录：实际做了什么、方案与实现有出入的地方、还没做的。
 
 ## 1. 为什么要做（对应本轮暴露的三个问题）
 
@@ -186,3 +186,59 @@
 - **候选池里有多少、入了哪几家、每家凭什么入、其余为什么被剔（媒体站/应用商店/文章页/主体自身）？**
 
 第 4 条就是本轮实测暴露的问题——它现在是**不可见的**，这是要补的洞。
+
+---
+
+# 9. 执行记录（2026-10-29）
+
+第 6 节的 6 步全部做完，另加 4 处方案里没写的修正（见 9.3）。
+
+## 9.1 落地的东西
+
+| 位置 | 文件 | 内容 |
+|---|---|---|
+| helpers | `frontend/src/stores/researchTaskHelpers.js`（**追加**） | `normalizeResearchPlan()` / `normalizeDiscovery()` / `normalizeAngleWeights()` / `siteTypeLabel()` / `getReportResearchPlan()` / `getReportDiscovery()` / `buildResearchPlanText()` + 五张中文标签表（对齐后端枚举） |
+| 组件 | `frontend/src/components/ResearchPlanPanel.vue` | 主体 / 口径 / 提名候选 / 开放问题 |
+| 组件 | `frontend/src/components/AngleWeightBars.vue` | 四维权重条 + 优先级 + 理由 + "权重由代码算" |
+| 组件 | `frontend/src/components/DiscoveryTrail.vue` | 候选池表格（名称/站点类型/入选✓✗/得分/理由），入选的排前面 |
+| 视图 | `frontend/src/views/ReportPlanTab.vue` | 组装三组件 + 空态 + 降级态（"默认口径"提示） |
+| 视图 | `frontend/src/views/ReportView.vue` | 第 4 个 tab「调研口径」放最右；「复制当前」在该 tab 复制口径文本 |
+| store | `frontend/src/stores/research.js` | `research_plan` / `discovery` / `rejected_competitors` / `admission_gate` 显式取（缺失写 `null`） |
+| 后端 | `server.py` | 终态落库 `discovery`；历史冷加载补回 4 个字段；导出新增 `content_type=plan` |
+| 后端 | `src/workflow/research_plan.py` | `render_plan_markdown()`：口径导出的渲染 |
+
+**数据流**：`server.py` 终态 → `store.update()` → task 记录 → `stores/research.js`
+→ helpers 归一化 → `ReportPlanTab.vue`（只渲染）→ 三个子组件。
+零 i18n（跟随现有视图的硬编码中文）、无新 UI 依赖、样式走主题变量。
+
+## 9.2 验收（真实输出）
+
+- `cd frontend && npm test`：**80 passed**（改动前 51，新增 29）。
+- `cd frontend && npm run build`：✓ built，无报错。
+- **SSR 真渲染校验**（vite `ssrLoadModule` + `@vue/server-renderer` + 真实 Element Plus）：
+  三种场景（有计划+候选池 / 旧报告两个字段都没有 / `source=default` 降级）全部渲染成功。
+  build 只证明模板能编译，SSR 才证明运行时不炸。
+- 后端：`tests/test_plan_export.py` 4 例（渲染 + 直接调 handler + **真走 HTTP** 的导出与历史冷加载）。
+
+## 9.3 方案与实现有出入的地方（都改了，理由在括号里）
+
+1. **字段名**：方案写 `research_plan.criteria`，后端 `ResearchPlan.to_dict()` 实际是
+   `competitor_criteria`（`src/workflow/research_plan.py:335`）。
+   → 前端两个都认；**方案文档第 4.1 节已改正**（口径不一致的源头在这）。
+2. **历史冷加载没有口径**（方案 §5 只写了 1 行，隐含假设"前端总能拿到"）：
+   `research_plan`/`discovery` 只随**任务终态**落库，而 `/research/history/{report_id}`
+   只 enrich 了成本/注入数/trace/不完整四个字段。
+   → **从历史列表重新打开或换浏览器时只剩空态**。后端补了 4 个字段（`research_plan` /
+   `discovery` / `rejected_competitors` / `admission_gate`），并补了真走 HTTP 的回归测试。
+3. **导出的口径 tab 导出的是报告正文**（点的是 A 导出的是 B）：
+   → 后端 `/research/export` 新增 `content_type=plan`，导出的是口径本身
+   （文件名 `research_plan_<id>.*`，内容由后端 `render_plan_markdown()` 渲染）。
+4. **方案里的四区块没包含准入闸门的新数据**（当时还没有）：
+   → 口径区加「实际执行的入选条件 / 判不了的条件」，候选区加「未采信（N）」清单。
+
+## 9.4 没做的（按方案排除，仍然不做）
+
+- 用户改计划/改口径后重跑（要后端支持计划参数化与重跑接口）。
+- 计划生成过程的流式展示。
+- 删掉 markdown 里已有的主体段（报告要能独立阅读；UI 侧重复是可接受的，已按此保留）。
+- 全局 i18n 化（跟随现有视图的硬编码中文）。

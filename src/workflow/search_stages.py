@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 from src.workflow.research_plan import ResearchPlan, admit_competitors
+from src.tools.search_tool import SearchBackendError
 from src.workflow.site_types import (  # noqa: F401  (转出以兼容既有引用)
     SITE_APP_STORE,
     SITE_DIRECTORY,
@@ -150,6 +151,12 @@ class DiscoveryResult:
     scored: List[Dict[str, Any]] = field(default_factory=list)
     queries_run: List[Dict[str, Any]] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
+    # 本轮搜索后端是否失败过（引擎集体超时/被限流）。
+    # 它与"这个查询真的没有结果"必须分开：前者是**本轮数据无效**，
+    # 后者才是"没找到竞品"。实测（2026-10-29）两者混为一谈，
+    # 整组结论作废还看不出原因。
+    search_failed: bool = False
+    search_failures: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -159,6 +166,8 @@ class DiscoveryResult:
             "scored": self.scored,
             "queries_run": self.queries_run,
             "notes": self.notes,
+            "search_failed": self.search_failed,
+            "search_failures": self.search_failures,
         }
 
 
@@ -175,12 +184,21 @@ class SearchStageRunner:
         # AI 智能体），名字跟主体名**完全不一样**——按名字排不掉，只能靠"锚定阶段
         # 排第一的产品官网就是主体自己"这个结构事实来排。
         self._entity_official_host: str = ""
+        # 搜索后端的失败记录（引擎集体超时/限流）——见 DiscoveryResult.search_failed
+        self.search_failures: List[Dict[str, Any]] = []
 
     # -- 单次查询 --------------------------------------------------------
     def _search(self, query: str, stage: str) -> List[Dict[str, Any]]:
         try:
             results = self.search_tool.search(query, num_results=self.num_results)
-        except Exception:  # noqa: BLE001 —— 搜索失败不该拖垮链路
+        except SearchBackendError as exc:
+            # 后端整轮没给出结果（引擎超时/限流）：这是**本轮数据无效**，
+            # 不是"这个查询没找到"。记下来，别让它伪装成 0 家竞品。
+            self.search_failures.append({
+                "stage": stage, "query": query, "error": str(exc),
+            })
+            return []
+        except Exception:  # noqa: BLE001 —— 其它搜索失败不该拖垮链路
             return []
         clean: List[Dict[str, Any]] = []
         for item in results or []:
@@ -369,6 +387,15 @@ class SearchStageRunner:
         if not admission["met_minimum"]:
             result.notes.append(
                 f"入选 {len(admission['selected'])} 家，低于计划下限 {admission['min_count']} 家"
+            )
+        # 搜索后端失败过的这一轮：**数据无效**，不能当成"没找到竞品"。
+        if self.search_failures:
+            result.search_failed = True
+            result.search_failures = list(self.search_failures)
+            stages = sorted({f["stage"] for f in self.search_failures})
+            result.notes.append(
+                f"⚠ 本轮有 {len(self.search_failures)} 次搜索后端失败（阶段：{'、'.join(stages)}）"
+                f"——候选池不完整，本轮数据不能当作『没找到竞品』"
             )
         return result
 
