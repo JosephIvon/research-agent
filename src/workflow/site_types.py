@@ -60,6 +60,18 @@ _DIRECTORY_HOST_HINTS = (
     # 实测补的：工具收录/榜单/评测目录
     "aitoollab.", "aitop100.", "boardmix.", "hub.baai.ac.cn", "similaritylabs.",
     "similarlabs.", "fly63.", "ai-bot.cn",
+    # 实测第二轮补的：AI 工具榜单站（英文目录最容易被当成"竞品官网"）
+    "top.aibase.", "aibase.", "usefulai.", "aimultiple.", "sourceforge.net",
+    "flowpixai.", "mroldcat.", "foreverse.", "legal500.", "producthunt.",
+    "g2.com", "capterra.", "trustradius.", "apptopia.", "sensortower.",
+    "similarweb.", "semrush.", "ahrefs.",
+)
+
+# 社交 / 视频 / 社区平台（不是竞品官网）
+_SOCIAL_HOST_HINTS = (
+    "douyin.", "kuaishou.", "tiktok.", "instagram.", "facebook.",
+    "twitter.", "x.com", "linkedin.", "reddit.", "youtube.",
+    "bilibili.", "xiaohongshu.", "weibo.", "zhihu.", "tieba.",
 )
 
 # 文件直链：不是网站（实测：pdf.dfcfw.com 的研报 PDF 被当成了竞品官网）
@@ -141,11 +153,19 @@ def classify_site(url: str, title: str = "") -> str:
         return SITE_UGC
     if any(hint in host for hint in _FORUM_HOST_HINTS):
         return SITE_UGC
+    if any(hint in host for hint in _SOCIAL_HOST_HINTS):
+        return SITE_UGC
     if any(hint in host for hint in _MEDIA_HOST_HINTS):
         return SITE_MEDIA
     if any(hint in host for hint in _DIRECTORY_HOST_HINTS):
         return SITE_DIRECTORY
     if any(hint in path for hint in _MEDIA_PATH_HINTS):
+        return SITE_MEDIA
+    # **路径深度**：产品自己的官网，首页就是根路径或一层（/zh、/en、/zh-cn）。
+    # 两层以上的是站内子页——榜单页、厂商案例页、功能介绍页、目录详情页、
+    # 视频页（实测第二轮的漏网之鱼几乎全是这一类）。
+    segments = [s for s in path.split("/") if s]
+    if len(segments) > 1:
         return SITE_MEDIA
     text = (title or "").lower()
     if text and any(hint in text for hint in _ARTICLE_TITLE_HINTS):

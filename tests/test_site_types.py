@@ -95,6 +95,29 @@ def test_real_pages_that_are_not_product_sites(url, title):
 
 
 @pytest.mark.parametrize("url,title", [
+    # 实测第二轮：漏网的目录/厂商子页/视频页/搜索页
+    ("https://usefulai.com/tools/ai-agent-builders", "16 Best AI Agent Builders for 2026"),
+    ("https://aimultiple.com/ai-agent-builders", "20+ AI Agent Builders: Microsoft, CrewAI"),
+    ("https://sourceforge.net/software/ai-agent-builders/", "Best AI Agent Builders of 2026"),
+    ("https://www.mroldcat.top/detail/1853", "15人研发团队做出了AI情感陪伴类订阅榜第一的APP"),
+    ("https://www.sensetime.com/cn/case-detail?categoryId=51134683", "IP角色定制"),
+    ("https://top.aibase.com/tool/yollo-ai", "Yollo AI : 无限制的AI 聊天与角色扮演平台。"),
+    ("https://top.aibase.com/tool/rubii", "Rubii : 发现AI角色社区，与虚拟角色互动"),
+    ("https://www.legal500.com/intelligence/china/technology/x", "当AI成为“陪伴者”：合规边界与实务建议"),
+    ("https://picsart.com/zh/persona/", "AI网红生成器"),
+    ("https://www.xfyun.cn/services/AI_personality", "角色模拟"),
+    ("https://www.flowpixai.com/ai-tools/ai-companion-app-comparison.html",
+     "AI情感陪伴App横评：Character.AI/星野/筑梦岛/Talkie谁更"),
+    ("https://www.douyin.com/video/7600756702586272499", "3000万!假扮千金!"),
+    ("https://www.douyin.com/search/%E7%AD%91%E6%A2%A6%E5%B2%9B", "筑梦岛豆包猫箱星野哪个更好玩"),
+    ("https://support.microsoft.com/zh-hk/viva/learning/learning-agent-role-play", "學習代理中的角色扮演"),
+    ("https://foreverse.cn/zh/ai-roleplay-apps", "AI 角色扮演 App 横评 2026"),
+])
+def test_second_round_leak_pages_are_not_product_sites(url, title):
+    assert st.classify_site(url, title) != st.SITE_PRODUCT, url
+
+
+@pytest.mark.parametrize("url,title", [
     ("https://www.lumichat.ink/zh", "LumiChat云梦伴聊"),
     ("https://miyu-ai.com.cn/", "miyuai聊天"),
     ("https://www.aijuqingapp.com/", "AI剧情: AI 角色聊天与多角色互动剧本"),
