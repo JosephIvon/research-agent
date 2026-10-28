@@ -29,39 +29,25 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 from src.workflow.research_plan import ResearchPlan, admit_competitors
-
-# 候选页里常见的"不是竞品官网"的域名特征（媒体/百科/社区/聚合站）。
-# 这不是行业知识，是**站点类型**——竞品官网 vs 内容站，与做什么无关。
-_AGGREGATOR_HOST_HINTS = (
-    "zhihu.", "baijiahao.", "sohu.", "163.com", "qq.com", "weibo.",
-    "wikipedia.", "baike.", "douban.", "xiaohongshu.", "bilibili.",
-    "toutiao.", "cnki.", "csdn.", "jianshu.", "medium.com", "youtube.",
-    "facebook.com", "twitter.com", "x.com", "linkedin.com", "reddit.com",
+from src.workflow.site_types import (  # noqa: F401  (转出以兼容既有引用)
+    SITE_APP_STORE,
+    SITE_DIRECTORY,
+    SITE_MEDIA,
+    SITE_PRODUCT,
+    SITE_UGC,
+    SITE_UNKNOWN,
+    classify_site,
+    host_of,
+    looks_like_aggregator,
+    site_type_label,
 )
 
-_MEDIA_PATH_HINTS = ("/article", "/news", "/blog", "/post", "/topic", "/wiki", "/comment")
+# ---- 站点类型分类 ----------------------------------------------------
+# 实现见 src/workflow/site_types.py（独立模块，避免 research_plan ↔ search_stages
+# 循环导入）。上面已转出 classify_site / looks_like_aggregator 等符号。
 
 # 逐家验证/反证阶段，每家每阶段最多发几条查询（词数会乘上竞品数与阶段数）
 MAX_QUERIES_PER_STAGE = 2
-
-
-def _host(url: str) -> str:
-    try:
-        return urlparse(url or "").netloc.lower()
-    except ValueError:
-        return ""
-
-
-def looks_like_aggregator(url: str) -> bool:
-    """看起来是媒体/百科/社区/聚合站——大概率不是竞品官网。"""
-    host = _host(url)
-    if not host:
-        return True
-    if any(hint in host for hint in _AGGREGATOR_HOST_HINTS):
-        return True
-    path = (urlparse(url).path or "").lower()
-    return any(hint in path for hint in _MEDIA_PATH_HINTS)
-
 
 # 模型有时会写**占位符**而不是真词（实测："{竞品名} 官网"）。
 # 直接拿去搜索就是在搜字面量——必须先填成真的竞品名。
@@ -81,13 +67,31 @@ def _expand_placeholder(query: str, competitor: str) -> str:
     return text.strip()
 
 
+def _is_subject_itself(candidate_name: str, entity_name: str) -> bool:
+    """候选是不是主体自己。
+
+    实测：主体"百度搭子"在候选里以"百度搭子 DuMate"（同一产品的另一个叫法）
+    出现，精确相等判不出来 → 主体被当成自己的竞品进了入选名单。
+    规则：候选名**以主体名开头**（允许后接空格后的补充说明）即为自身；
+    不做子串包含（"美菜" vs "美菜网"是同一家公司但**是**竞品口径上的另一个产品，
+    按包含判会把真竞品排掉）。
+    """
+    name = (candidate_name or "").strip()
+    subject = (entity_name or "").strip()
+    if not name or not subject:
+        return False
+    if name == subject:
+        return True
+    return name.startswith(subject + " ") or name.startswith(subject + "-")
+
+
 def clean_candidate_name(title: str, url: str) -> str:
     """从搜索结果标题里粗提候选名（去站点后缀、去噪声）。"""
     name = (title or "").strip()
     name = re.split(r"\s*[-|｜–—_]\s*", name)[0].strip()
     name = re.sub(r"\s*[-—_]?\s*(官网|首页|官方网站|中文站)$", "", name).strip()
     if not name:
-        host = _host(url)
+        host = host_of(url)
         name = host.split(".")[0] if host else url
     return name[:40]
 
@@ -100,6 +104,7 @@ class Candidate:
     dimension_count: int = 0
     source_stage: str = ""
     is_aggregator: bool = False
+    site_type: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -109,6 +114,7 @@ class Candidate:
             "dimension_count": self.dimension_count,
             "source_stage": self.source_stage,
             "is_aggregator": self.is_aggregator,
+            "site_type": self.site_type,
         }
 
 
@@ -216,7 +222,10 @@ class SearchStageRunner:
                 url=url,
                 description=item["content"],
                 source_stage="competitor_discovery",
-                is_aggregator=looks_like_aggregator(url),
+                # 站点类型要连**标题**一起判：中文搜索结果里文章页的决定性
+                # 特征在标题里（盘点/对比/哪个好），域名未必看得出来。
+                site_type=classify_site(url, item["title"]),
+                is_aggregator=classify_site(url, item["title"]) != SITE_PRODUCT,
             )
             result.candidates.append(candidate)
             # 同名去重：同一个产品常在多个页面里出现（官网 + 媒体盘点页）。
@@ -238,17 +247,24 @@ class SearchStageRunner:
         result.candidates = [
             c for c in result.candidates
             if c.url not in self_page_urls
-            and not (entity_name and c.name.strip() == entity_name)
+            and not _is_subject_itself(c.name, entity_name)
         ]
         dropped_self = before - len(result.candidates)
         if dropped_self:
             result.notes.append(f"排除主体自身的 {dropped_self} 个页面（主体不是自己的竞品）")
-        # 媒体/百科/社区页不是竞品官网：剔掉（但保留在候选里以备人工查看）
+        # 媒体/百科/社区/应用商店/开发者平台/收录目录/文章页都不是竞品官网：
+        # 剔掉（但保留在候选里以备人工查看）
         official = [c for c in result.candidates if not c.is_aggregator]
         if official:
             dropped = [c for c in result.candidates if c.is_aggregator]
+            by_type: Dict[str, int] = {}
+            for c in dropped:
+                by_type[c.site_type or SITE_UNKNOWN] = by_type.get(c.site_type or SITE_UNKNOWN, 0) + 1
+            type_desc = "、".join(
+                f"{site_type_label(t)} {n} 个" for t, n in sorted(by_type.items())
+            )
             result.notes.append(
-                f"候选池剔除 {len(dropped)} 个媒体/社区页："
+                f"候选池剔除 {len(dropped)} 个非官网页（{type_desc}）："
                 + "、".join(f"{c.name}({c.url})" for c in dropped[:5])
             )
             pool = official

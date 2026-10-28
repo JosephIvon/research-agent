@@ -469,6 +469,9 @@ class CoordinatorAgent:
 # 但 `finish_reason="length"` 是服务端给出的硬信号，不是推断出来的。
 # 真正确认失败模式的是 smoke4 那次「正文为空」，频率低于本次 12 次采样的检出下限。
 REPORT_MAX_TOKENS = 16384
+# 正文为空时的重试上限：推理块可能把 16384 吃光（实测 2026-10-28，13 家竞品的
+# 真实轮次报告输出为空）。空 → 加预算重试一次 → 还空才算失败。
+REPORT_MAX_TOKENS_RETRY = 32768
 
 # 任务分解：输出是短 JSON，但推理模型会把同一份预算花在 <think> 上。
 # 客户端默认 4096 实测会把分解结果截断在字符 ~3059，_parse_json_response
@@ -626,6 +629,25 @@ class CopywriterAgent:
             # 剥离层于是返回 None。这里必须显式失败而不是让空字符串流下去：
             # 空报告会被 verify_report 平凡判为"四指标全过"（claims=[] → coverage=1.0），
             # 然后顶着"引用校验通过"的标签交付给用户——静默失败比报错危险得多。
+            #
+            # 但**先给一次更大的预算再判死**：实测（2026-10-28，13 家竞品的真实轮次）
+            # 报告输出为空，原因是推理块把 16384 的预算吃完了——正文根本没开始写。
+            # 竞品一多、证据块一大就更容易撞上。所以：空 → 加预算重试一次；
+            # 还是空 → 才判定失败（那一轮已经跑了 17 分钟，不能就这么丢掉）。
+            retry_budget = min(
+                (max_tokens or REPORT_MAX_TOKENS) * 2, REPORT_MAX_TOKENS_RETRY
+            )
+            if retry_budget > call_kwargs["max_tokens"]:
+                logger.warning(
+                    "[copywriter] 报告输出为空，按推理截断处理：max_tokens %d → %d 重试一次",
+                    call_kwargs["max_tokens"], retry_budget,
+                )
+                response = await asyncio.to_thread(
+                    self.llm_client.stream_completion,
+                    prompt, **{**call_kwargs, "max_tokens": retry_budget},
+                )
+
+        if not response or not str(response).strip():
             raise LLMError(
                 "报告生成返回空内容：模型输出只有推理块（可能被 max_tokens 截断），"
                 "没有得到正文"

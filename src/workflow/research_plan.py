@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from src.agent.citations import make_evidence_id
+from src.workflow.site_types import SITE_PRODUCT, classify_site, site_type_label
 
 PLAN_INTENT = "plan"
 PLAN_MAX_TOKENS = 16384
@@ -112,9 +113,9 @@ DEFAULT_MIN_COMPETITORS = 3
 DEFAULT_MAX_COMPETITORS = 5
 DEFAULT_CANDIDATE_POOL = 10   # 候选池先抓 8–12，取打分前 N
 DEFAULT_ADMISSION_RULE = "必须有官网 + 至少 2 个维度有数据"
-# 入选分数线：0.3 = "有自己的站点"。发现阶段没有维度数据可看，
-# 门槛只能定在**发现阶段拿得到**的那一层。
-MIN_ADMISSION_SCORE = 0.3
+# 入选分数线：0.5 = "像产品自己的官网"。发现阶段没有维度数据可看，
+# 门槛只能定在**发现阶段拿得到**的那一层（站点类型 + 词面相关）。
+MIN_ADMISSION_SCORE = 0.5
 COMPETITOR_LAYERS = ("direct", "alternative", "adjacent")
 DEFAULT_LAYERS = ("direct",)
 
@@ -686,7 +687,8 @@ def build_plan_from_data(data: Dict[str, Any], user_query: str) -> ResearchPlan:
         entity_type=fold_entity_type(entity.get("entity_type")),
         what_it_is=str(entity.get("what_it_is") or "").strip(),
         disambiguation_candidates=[
-            str(c).strip() for c in (entity.get("disambiguation_candidates") or []) if str(c).strip()
+            _candidate_label(c) for c in (entity.get("disambiguation_candidates") or [])
+            if _candidate_label(c)
         ],
         resolved_confidence=confidence,
         criteria=criteria,
@@ -695,6 +697,31 @@ def build_plan_from_data(data: Dict[str, Any], user_query: str) -> ResearchPlan:
         open_questions=questions,
         source="model",
     )
+
+
+def _candidate_label(candidate: Any) -> str:
+    """消歧候选的展示文本。
+
+    模型有时给字符串（"百度App内搭子功能"），有时给**对象**
+    （实测：{"name": "百度搭子独立App", "description": ..., "confidence": 0.62}）。
+    两种都要变成一行人能读的文本——直接把 dict 转成字符串会得到
+    "{'name': '百度搭子独立App', 'description': ...}" 这种噪音。
+    """
+    if isinstance(candidate, dict):
+        name = str(candidate.get("name") or candidate.get("candidate") or "").strip()
+        description = str(candidate.get("description") or "").strip()
+        confidence = candidate.get("confidence") or candidate.get("likelihood")
+        if name and description:
+            label = f"{name}（{description}）"
+        else:
+            label = name or description
+        if confidence not in (None, ""):
+            try:
+                label += f"（置信度 {float(confidence):.2f}）"
+            except (TypeError, ValueError):
+                pass
+        return label
+    return str(candidate).strip()
 
 
 async def build_research_plan(
@@ -741,7 +768,9 @@ def score_candidate(candidate: Dict[str, Any], plan: ResearchPlan) -> Dict[str, 
     """给候选竞品打分并说明理由（可解释，不黑箱）。
 
     维度（全部结构化，与行业无关）：
-    - 官网证据：有没有自己的站点（候选池里的媒体/百科/社区页面会被压分）
+    - 站点类型：像不像**产品自己的官网**（媒体/应用商店/开发者平台/收录目录/
+      文章页都拿不到这一分——实测 2026-10-28，媒体站、应用商店、开发者博客
+      因为"有独立域名"而拿到"有独立站点"的分，混进入选名单）
     - 数据完整度：已抽到的维度数
     - 与主体相似度：名称/描述与主体的词面重合（代理指标，不是语义判断）
     - 惩罚：命中 must_exclude
@@ -754,14 +783,16 @@ def score_candidate(candidate: Dict[str, Any], plan: ResearchPlan) -> Dict[str, 
     reasons: List[str] = []
     score = 0.0
 
-    host = re.sub(r"^https?://", "", url).split("/")[0].lower()
-    if host:
-        score += 0.3
-        reasons.append("有独立站点")
+    site_type = candidate.get("site_type")
+    if not site_type:
+        site_type = classify_site(url, name)
+    if site_type == SITE_PRODUCT:
+        score += 0.5
+        reasons.append("像产品自己的官网")
     else:
-        reasons.append("无独立站点（疑似媒体/社区页）")
+        reasons.append(f"站点类型是{site_type_label(site_type)}，不是产品官网")
 
-    score += min(0.3, dimensions * 0.06)
+    score += min(0.2, dimensions * 0.06)
     if dimensions:
         reasons.append(f"已抽到 {dimensions} 个维度")
 
@@ -783,6 +814,7 @@ def score_candidate(candidate: Dict[str, Any], plan: ResearchPlan) -> Dict[str, 
         "url": url,
         "score": round(max(0.0, score), 4),
         "dimensions": dimensions,
+        "site_type": site_type,
         "reasons": reasons,
     }
 
