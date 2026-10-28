@@ -177,6 +177,11 @@ _SYSTEM_PROMPT = (
     "3. competitor_criteria 给出竞品的判定标准（写「同客群×同场景×同交付形态」"
     "这类可判定条件），layers 只能取 direct/alternative/adjacent，"
     "count 落在 2–8 之间。\n"
+    "3b. competitor_candidates 列出你**知道的**、可能与主体同赛道的竞品名称"
+    "（最多 8 个，拿不准的也可以列）。它们只是**候选**：系统会自己去搜它的官网、"
+    "判断是不是真的产品官网，**你说了不算数**。但这一步很有用——"
+    "搜索框里搜「猫箱 竞品」回来的全是榜单文章，而你其实知道同赛道是谁"
+    "（星野、筑梦岛、Talkie、Character.AI）。\n"
     "4. angles：分析角度的**优先级**（primary/secondary/ignore）、理由，"
     "以及该角度值得看的**站内页面关键词** page_hints（如定价页、功能页、API 文档）。"
     "angle 只能取 " + " / ".join(ANGLE_ORDER) + "（"
@@ -206,6 +211,7 @@ _SYSTEM_PROMPT = (
     '"official_domains":[]},'
     '"competitor_criteria":{"layers":["direct"],"must_include":[],'
     '"must_exclude":[],"min_count":3,"max_count":5,"admission_rule":""},'
+    '"competitor_candidates":[],'
     '"angles":[{"angle":"feature","priority":"secondary","reason":"",'
     '"page_hints":["定价","功能"]}],'
     '"search_plan":[{"stage":"entity_anchor","queries":[""],"acceptance":""}],'
@@ -265,6 +271,9 @@ class ResearchPlan:
     # （"百度搭子" = dumate.cn），有域名才能把主体从竞品里排掉。
     official_domains: List[str] = field(default_factory=list)
     criteria: Dict[str, Any] = field(default_factory=dict)
+    # 模型**提名**的竞品（只是候选，代码会搜它的官网并核验是不是产品官网）。
+    # 作用：搜索框搜"猫箱 竞品"回来的全是榜单文章，而模型其实知道同赛道是谁。
+    competitor_candidates: List[str] = field(default_factory=list)
     angles: List[Angle] = field(default_factory=list)
     search_plan: List[SearchStage] = field(default_factory=list)
     open_questions: List[Dict[str, str]] = field(default_factory=list)
@@ -320,6 +329,7 @@ class ResearchPlan:
                 "official_domains": list(self.official_domains),
             },
             "competitor_criteria": dict(self.criteria),
+            "competitor_candidates": list(self.competitor_candidates),
             "angles": [a.to_dict() for a in self.angles],
             "search_plan": [s.to_dict() for s in self.search_plan],
             "open_questions": list(self.open_questions),
@@ -368,6 +378,10 @@ class ResearchPlan:
                 for d in (entity.get("official_domains") or []) if str(d).strip()
             ],
             criteria=dict(criteria),
+            competitor_candidates=[
+                str(c).strip() for c in (data.get("competitor_candidates") or [])
+                if str(c).strip()
+            ][:12],
             angles=angles,
             search_plan=stages,
             open_questions=list(data.get("open_questions") or []),
@@ -768,6 +782,10 @@ def build_plan_from_data(data: Dict[str, Any], user_query: str) -> ResearchPlan:
             if str(d).strip()
         ],
         criteria=criteria,
+        competitor_candidates=[
+            str(c).strip() for c in (data.get("competitor_candidates") or [])
+            if isinstance(c, str) and str(c).strip()
+        ][:12],
         angles=angles,
         search_plan=stages,
         open_questions=questions,

@@ -49,6 +49,9 @@ from src.workflow.site_types import (  # noqa: F401  (转出以兼容既有引�
 # 逐家验证/反证阶段，每家每阶段最多发几条查询（词数会乘上竞品数与阶段数）
 MAX_QUERIES_PER_STAGE = 2
 
+# 模型提名的竞品最多核实几个（每个要发 2 条查询，词数会乘上去）
+MAX_MODEL_CANDIDATES = 8
+
 # 模型有时会写**占位符**而不是真词（实测："{竞品名} 官网"）。
 # 直接拿去搜索就是在搜字面量——必须先填成真的竞品名。
 _PLACEHOLDER_PATTERNS = (
@@ -227,22 +230,40 @@ class SearchStageRunner:
         result = DiscoveryResult()
         result.entity_pages = list(self._entity_pages)
         results = self._run_stage(plan, "competitor_discovery")
+        # 模型提名的竞品：它们只是**候选**，要自己去搜官网、判是不是产品官网。
+        # 为什么需要这一步（实测 2026-10-28）：搜索框搜「猫箱 竞品」回来的
+        # 全是榜单文章，判完一个不剩；而模型其实知道同赛道是谁
+        # （星野/筑梦岛/Talkie/Character.AI）。**模型提名，代码裁决。**
+        for name in (plan.competitor_candidates or [])[:MAX_MODEL_CANDIDATES]:
+            for query in (f"{name} 官网", f"{name} 下载"):
+                for item in self._search(query, "competitor_discovery"):
+                    results.append(item)
         seen = set()
         by_name: Dict[str, Candidate] = {}
+        model_names = [n.strip() for n in (plan.competitor_candidates or []) if n.strip()]
         for item in results:
             url = item["url"]
             if url in seen:
                 continue
             seen.add(url)
+            title = item["title"]
+            # 候选名优先用**模型提名**的名字：搜索结果的标题常是文章标题
+            # （"Lovie 常見問題：AI 角色陪伴、AI 聊天與角色扮演"），
+            # 拿它当竞品名会让后续的验证/反证查询全跑偏。
+            name = clean_candidate_name(title, url)
+            for proposed in model_names:
+                if proposed and (proposed in title or title.startswith(proposed)):
+                    name = proposed
+                    break
             candidate = Candidate(
-                name=clean_candidate_name(item["title"], url),
+                name=name,
                 url=url,
                 description=item["content"],
                 source_stage="competitor_discovery",
                 # 站点类型要连**标题**一起判：中文搜索结果里文章页的决定性
                 # 特征在标题里（盘点/对比/哪个好），域名未必看得出来。
-                site_type=classify_site(url, item["title"]),
-                is_aggregator=classify_site(url, item["title"]) != SITE_PRODUCT,
+                site_type=classify_site(url, title),
+                is_aggregator=classify_site(url, title) != SITE_PRODUCT,
             )
             result.candidates.append(candidate)
             # 同名去重：同一个产品常在多个页面里出现（官网 + 媒体盘点页）。

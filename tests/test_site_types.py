@@ -251,3 +251,39 @@ def test_same_site_counts_once():
 def test_blog_subdomain_is_not_a_product_site():
     assert st.classify_site("https://blog.character.ai/", "character.ai blog") != st.SITE_PRODUCT
     assert st.classify_site("https://character.ai/", "character.ai") == st.SITE_PRODUCT
+
+
+def test_model_named_competitors_are_verified_by_search():
+    """模型提名的竞品：代码去搜它的官网并判是不是产品官网。"""
+    plan = rp.build_default_plan("猫箱")
+    plan.competitor_candidates = ["星野", "筑梦岛"]
+    stub = _StubSearch({
+        "猫箱 竞品": [
+            {"title": "某盘点文章", "url": "https://zhuanlan.zhihu.com/p/1", "content": "盘点"},
+        ],
+        "星野 官网": [
+            {"title": "星野 - AI 角色扮演", "url": "https://www.xingyeai.com/", "content": "星野官网"},
+        ],
+        "筑梦岛 官网": [
+            {"title": "筑梦岛 - 角色社区", "url": "https://www.zhumengdao.com/", "content": "筑梦岛官网"},
+        ],
+    })
+    runner = ss.SearchStageRunner(stub)
+    result = runner.run_competitor_discovery(plan)
+    names = [c["name"] for c in result.selected]
+    assert "星野" in names and "筑梦岛" in names, names
+
+
+def test_model_named_candidate_must_still_pass_the_site_type_check():
+    """模型提名不等于入选：不是产品官网的照样剔掉。"""
+    plan = rp.build_default_plan("猫箱")
+    plan.competitor_candidates = ["某榜单"]
+    stub = _StubSearch({
+        "猫箱 竞品": [],
+        "某榜单 官网": [
+            {"title": "某榜单 - 盘点", "url": "https://zhuanlan.zhihu.com/p/2", "content": "盘点"},
+        ],
+    })
+    runner = ss.SearchStageRunner(stub)
+    result = runner.run_competitor_discovery(plan)
+    assert result.selected == []
