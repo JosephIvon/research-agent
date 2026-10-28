@@ -137,7 +137,10 @@ _SYSTEM_PROMPT = (
     "entity.entity_type 只能取 "
     + " / ".join(ENTITY_TYPES) + " 之一。\n"
     "2. 若主体名有歧义（同名不同物），列出 disambiguation_candidates，"
-    "resolved_confidence 给 0–1 的置信度，不要假装确定。\n"
+    "resolved_confidence 给 0–1 的置信度，不要假装确定。"
+    "如果知道主体自己的官网域名，写进 entity.official_domains（可为空数组）——"
+    "主体的产品名常常和用户说的名字不一样（如「百度搭子」= dumate.cn），"
+    "有域名才能把它从竞品里排掉。\n"
     "3. competitor_criteria 给出竞品的判定标准（写「同客群×同场景×同交付形态」"
     "这类可判定条件），layers 只能取 direct/alternative/adjacent，"
     "count 落在 2–8 之间。\n"
@@ -160,7 +163,8 @@ _SYSTEM_PROMPT = (
     "每阶段 queries ≤ 4 条、每条 ≤ 20 字。\n\n"
     "输出严格 JSON，不要 markdown 代码块：\n"
     '{"entity":{"name":"","entity_type":"","what_it_is":"",'
-    '"disambiguation_candidates":[],"resolved_confidence":0.0},'
+    '"disambiguation_candidates":[],"resolved_confidence":0.0,'
+    '"official_domains":[]},'
     '"competitor_criteria":{"layers":["direct"],"must_include":[],'
     '"must_exclude":[],"min_count":3,"max_count":5,"admission_rule":""},'
     '"angles":[{"angle":"feature","priority":"secondary","reason":"",'
@@ -218,6 +222,9 @@ class ResearchPlan:
     what_it_is: str = ""
     disambiguation_candidates: List[str] = field(default_factory=list)
     resolved_confidence: float = 0.0
+    # 主体自己的官网域名（模型给的，可为空）。主体的产品名常与用户说法不同
+    # （"百度搭子" = dumate.cn），有域名才能把主体从竞品里排掉。
+    official_domains: List[str] = field(default_factory=list)
     criteria: Dict[str, Any] = field(default_factory=dict)
     angles: List[Angle] = field(default_factory=list)
     search_plan: List[SearchStage] = field(default_factory=list)
@@ -271,6 +278,7 @@ class ResearchPlan:
                 "what_it_is": self.what_it_is,
                 "disambiguation_candidates": list(self.disambiguation_candidates),
                 "resolved_confidence": round(self.resolved_confidence, 3),
+                "official_domains": list(self.official_domains),
             },
             "competitor_criteria": dict(self.criteria),
             "angles": [a.to_dict() for a in self.angles],
@@ -316,6 +324,10 @@ class ResearchPlan:
             what_it_is=str(entity.get("what_it_is") or ""),
             disambiguation_candidates=[str(c) for c in (entity.get("disambiguation_candidates") or [])],
             resolved_confidence=float(entity.get("resolved_confidence") or 0.0),
+            official_domains=[
+                str(d).strip().lower().lstrip(".")
+                for d in (entity.get("official_domains") or []) if str(d).strip()
+            ],
             criteria=dict(criteria),
             angles=angles,
             search_plan=stages,
@@ -691,6 +703,11 @@ def build_plan_from_data(data: Dict[str, Any], user_query: str) -> ResearchPlan:
             if _candidate_label(c)
         ],
         resolved_confidence=confidence,
+        official_domains=[
+            str(d).strip().lower().lstrip(".")
+            for d in (entity.get("official_domains") or [])
+            if str(d).strip()
+        ],
         criteria=criteria,
         angles=angles,
         search_plan=stages,

@@ -10,6 +10,21 @@ from src.workflow import search_stages as ss
 from src.workflow import research_plan as rp
 
 
+class _StubSearch:
+    """按查询词里的关键词返回固定结果（不联网）。"""
+
+    def __init__(self, mapping):
+        self.mapping = mapping
+        self.queries = []
+
+    def search(self, query, num_results=None, provider=None):
+        self.queries.append(query)
+        for key, results in self.mapping.items():
+            if key in query:
+                return list(results)
+        return []
+
+
 def test_app_store_is_not_a_product_site():
     assert st.classify_site("https://apps.apple.com/us/app/id6468766519", "卿卿我我") == st.SITE_APP_STORE
 
@@ -119,3 +134,41 @@ def test_subject_alias_page_is_not_a_competitor():
 def test_subject_prefix_without_space_is_not_the_subject():
     """"美菜网"是另一家公司的产品，不是"美菜"自己——按包含判会排掉真竞品。"""
     assert ss._is_subject_itself("美菜网", "美菜") is False
+
+
+def test_subject_official_domain_is_excluded_from_the_pool():
+    """主体的产品名常与用户说法不同（"百度搭子"=dumate.cn）——按域名排才对。"""
+    plan = rp.build_default_plan("百度搭子")
+    plan.entity_name = "百度搭子"
+    plan.official_domains = ["dumate.cn"]
+    stub = _StubSearch({
+        "百度搭子 竞品": [
+            {"title": "DuMate", "url": "https://www.dumate.cn/", "content": "百度通用桌面AI智能体"},
+            {"title": "LumiChat", "url": "https://www.lumichat.ink/zh", "content": "AI 角色扮演"},
+        ],
+    })
+    runner = ss.SearchStageRunner(stub)
+    result = runner.run_competitor_discovery(plan)
+    urls = [c["url"] for c in result.selected]
+    assert "https://www.dumate.cn/" not in urls, "主体自己的官网不能入选"
+    assert any("dumate.cn" in c.url for c in result.candidates) is False
+
+
+def test_entity_anchor_first_product_site_is_treated_as_the_subject_site():
+    """锚定阶段排第一的产品官网 = 主体自己的官网（名字对不上也能排掉）。"""
+    plan = rp.build_default_plan("百度搭子")
+    stub = _StubSearch({
+        "百度搭子 官网": [
+            {"title": "DuMate - 百度通用桌面AI智能体", "url": "https://www.dumate.cn/", "content": "官方"},
+            {"title": "某盘点文章", "url": "https://zhuanlan.zhihu.com/p/1", "content": "盘点"},
+        ],
+        "百度搭子 竞品": [
+            {"title": "DuMate", "url": "https://www.dumate.cn/product", "content": "产品页"},
+            {"title": "LumiChat", "url": "https://www.lumichat.ink/zh", "content": "AI 角色扮演"},
+        ],
+    })
+    runner = ss.SearchStageRunner(stub)
+    runner.run_entity_anchor(plan)
+    result = runner.run_competitor_discovery(plan)
+    urls = [c["url"] for c in result.selected]
+    assert not any("dumate.cn" in u for u in urls), urls

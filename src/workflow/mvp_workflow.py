@@ -1000,10 +1000,15 @@ class MVPWorkflow:
                     search_urls = [item["url"] for item in discovery.selected]
                 else:
                     # 计划没产出候选：退回旧行为（把任务描述当搜索词），
-                    # 但仍走 SSRF 校验与"媒体页不算竞品"的口径，
-                    # 行为不比以前差（以前媒体页会直接进矩阵）
+                    # 但仍走 SSRF 校验与"非官网不算竞品"的口径，
+                    # 行为不比以前差（以前媒体页会直接进矩阵）。
+                    # 退路也要**按标题判站点类型**：只看域名判不出文章页
+                    # （lumichat.ink 既是产品官网也发博客）。
                     fallback_urls = await self.coordinator.search_topics(user_query)
-                    kept = [u for u in fallback_urls if not search_stages.looks_like_aggregator(u)]
+                    kept = [
+                        u for u in fallback_urls
+                        if not search_stages.looks_like_aggregator(u)
+                    ]
                     dropped = len(fallback_urls) - len(kept)
                     search_urls = list(kept)
                     discovery.notes.append(

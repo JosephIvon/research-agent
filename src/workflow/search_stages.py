@@ -67,6 +67,12 @@ def _expand_placeholder(query: str, competitor: str) -> str:
     return text.strip()
 
 
+def _strip_www(host: str) -> str:
+    """去掉 www. 前缀——官网域名常写成 www.dumate.cn，模型给的可能是 dumate.cn。"""
+    host = (host or "").split(":")[0].lower()
+    return host[4:] if host.startswith("www.") else host
+
+
 def _is_subject_itself(candidate_name: str, entity_name: str) -> bool:
     """候选是不是主体自己。
 
@@ -146,6 +152,11 @@ class SearchStageRunner:
         self.num_results = num_results
         # 主体锚定的结果缓存：竞品发现阶段要据此排除"主体自己的官方页"
         self._entity_pages: List[Dict[str, Any]] = []
+        # 主体自己官网的域名：按"实体锚定阶段排名最高的官网"判定。
+        # 实测（2026-10-28）：主体"百度搭子"的产品官网叫 dumate.cn（百度通用桌面
+        # AI 智能体），名字跟主体名**完全不一样**——按名字排不掉，只能靠"锚定阶段
+        # 排第一的产品官网就是主体自己"这个结构事实来排。
+        self._entity_official_host: str = ""
 
     # -- 单次查询 --------------------------------------------------------
     def _search(self, query: str, stage: str) -> List[Dict[str, Any]]:
@@ -203,6 +214,12 @@ class SearchStageRunner:
 
         pages.sort(key=_key)
         self._entity_pages = pages[:5]
+        # 排名最高的**产品官网**就是主体自己的官网（锚定阶段问的就是"主体是什么/
+        # 官网"，媒体页已排在前面的除外）
+        for page in self._entity_pages:
+            if classify_site(page["url"], page["title"]) == SITE_PRODUCT:
+                self._entity_official_host = host_of(page["url"]).split(":")[0]
+                break
         return self._entity_pages
 
     # -- 阶段 2：竞品发现 + 入选 ------------------------------------------
@@ -244,10 +261,22 @@ class SearchStageRunner:
             if entity_name and entity_name in str(p.get("title") or "")
         }
         before = len(result.candidates)
+        # 主体自己的官网域名：模型给的（entity.official_domains）+ 锚定阶段
+        # 排第一的产品官网。主体的产品名常与用户说法不同（"百度搭子"=dumate.cn），
+        # 只按名字排不掉，必须按域名排。
+        subject_hosts = set(
+            [_strip_www(self._entity_official_host)] if self._entity_official_host else []
+        )
+        subject_hosts.update(
+            _strip_www(host_of(f"https://{d}")) for d in (plan.official_domains or [])
+        )
+        subject_hosts.discard("")
         result.candidates = [
             c for c in result.candidates
             if c.url not in self_page_urls
             and not _is_subject_itself(c.name, entity_name)
+            # 主体自己官网域名下的页面：主体不跟自己的竞品并列
+            and _strip_www(host_of(c.url)) not in subject_hosts
         ]
         dropped_self = before - len(result.candidates)
         if dropped_self:
