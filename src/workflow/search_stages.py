@@ -41,6 +41,9 @@ _AGGREGATOR_HOST_HINTS = (
 
 _MEDIA_PATH_HINTS = ("/article", "/news", "/blog", "/post", "/topic", "/wiki", "/comment")
 
+# 逐家验证/反证阶段，每家每阶段最多发几条查询（词数会乘上竞品数与阶段数）
+MAX_QUERIES_PER_STAGE = 2
+
 
 def _host(url: str) -> str:
     try:
@@ -208,12 +211,18 @@ class SearchStageRunner:
         return queries
 
     def run_verification(self, plan: ResearchPlan, competitors: Sequence[str]) -> List[Dict[str, Any]]:
-        """对已入选竞品做站外补充检索（逐家验证 + 反证）。"""
+        """对已入选竞品做站外补充检索（逐家验证 + 反证）。
+
+        每家每阶段**只发有限几条查询**：竞品数 × 阶段 × 词数会放大成几十次
+        搜索（5 家 × 2 阶段 × 4 词 = 40 次），延迟与配额都扛不住。
+        先发最能定位的词，够用就停。
+        """
         pages: List[Dict[str, Any]] = []
         seen = set()
         for competitor in competitors:
             for stage in ("per_competitor_verify", "counter_evidence"):
-                for query in self.site_scoped_queries(plan, competitor, stage):
+                queries = self.site_scoped_queries(plan, competitor, stage)
+                for query in queries[:MAX_QUERIES_PER_STAGE]:
                     for item in self._search(query, stage):
                         if item["url"] in seen:
                             continue

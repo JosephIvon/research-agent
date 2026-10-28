@@ -324,6 +324,11 @@ def build_default_plan(user_query: str) -> ResearchPlan:
     ——what_it_is 留空，由后续实体锚定阶段补。
     """
     name = _entity_name_from_query(user_query)
+    # 默认查询词：没有模型出计划时，搜索**不能因此没有查询词**。
+    # 此前默认计划的 search_plan 是空的 → 竞品发现阶段无查询可跑 →
+    # 整段退回"把整句任务描述当搜索词"（实测正是官方介绍页与盘点页被丢、
+    # 媒体页被当成竞品的那条路）。
+    queries = _default_search_queries(name)
     return ResearchPlan(
         entity_name=name,
         entity_type="unknown",
@@ -338,9 +343,42 @@ def build_default_plan(user_query: str) -> ResearchPlan:
             "admission_rule": DEFAULT_ADMISSION_RULE,
         },
         angles=build_default_angles(),
-        search_plan=[],
+        search_plan=queries,
         source="default",
     )
+
+
+def _default_search_queries(entity_name: str) -> List[SearchStage]:
+    """默认查询规划：按主体名生成四段式的查询词。
+
+    主体名为空（连主体都没抽出来）时返回空列表——此时退回旧行为也不失真，
+    硬编一个查询词反而会去搜"未知实体"。
+    """
+    name = (entity_name or "").strip()
+    if not name:
+        return []
+    return [
+        SearchStage(
+            stage="entity_anchor",
+            queries=[f"{name} 是什么", f"{name} 官网"],
+            acceptance="命中主体官方源，用于确认主体是什么",
+        ),
+        SearchStage(
+            stage="competitor_discovery",
+            queries=[f"{name} 竞品", f"{name} 类似产品", f"{name} 替代方案"],
+            acceptance="产出候选池，媒体/百科页会被剔除",
+        ),
+        SearchStage(
+            stage="per_competitor_verify",
+            queries=[],
+            acceptance="每家至少 2 个维度有数据",
+        ),
+        SearchStage(
+            stage="counter_evidence",
+            queries=[],
+            acceptance="补齐限制与评价",
+        ),
+    ]
 
 
 def _entity_name_from_query(user_query: str) -> str:

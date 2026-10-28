@@ -385,6 +385,27 @@ def test_plan_round_trips_through_dict():
     assert restored.queries_for("competitor_discovery") == ["百度搭子 竞品"]
 
 
+def test_default_plan_has_search_queries():
+    """默认计划也得有查询词——否则退回"整句任务描述当搜索词"那条老路。"""
+    plan = rp.build_default_plan("找一下百度搭子的全部竞品信息")
+    assert plan.queries_for("entity_anchor")
+    assert plan.queries_for("competitor_discovery")
+    assert "百度搭子 竞品" in plan.queries_for("competitor_discovery")
+
+
+def test_default_plan_without_entity_has_no_queries():
+    plan = rp.build_default_plan("")
+    assert plan.queries_for("competitor_discovery") == []
+
+
+def test_verification_queries_are_bounded():
+    plan = rp.build_plan_from_data(_plan_data(), "x")
+    stub = _StubSearch({"": []})
+    runner = ss.SearchStageRunner(stub)
+    runner.run_verification(plan, ["猫箱", "Talkie"])
+    assert len(stub.queries) <= 2 * 2 * ss.MAX_QUERIES_PER_STAGE
+
+
 def test_verify_entity_tool_reports_plan():
     from src.agent.tool_specs import build_default_tools
 
