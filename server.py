@@ -703,6 +703,10 @@ async def competitive_research(request: Request, req: ResearchRequest):
             "competitors": result.get("competitors", []),
             # 结构化竞品矩阵：调用方可以直接渲染那张速览表，不必解析报告正文
             "competitor_matrix": result.get("competitor_matrix"),
+            # 研究计划（澄清与定界）：主体消歧、竞品口径、重点角度权重。
+            # 前端要显示"系统认的是哪个主体、按什么口径选的竞品"就靠它。
+            "research_plan": result.get("research_plan"),
+            "discovery": result.get("discovery"),
             "errors": result.get("errors", []),
             "output_files": result.get("sync_results", {}),
             "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -1011,6 +1015,8 @@ async def _run_research_task(task_id: str, req: TaskRequest, user_id: Optional[s
         # 结构化竞品矩阵随终态落库：报告正文里的速览表由它渲染，
         # 前端要拿结构化行时不必再解析 markdown
         "competitor_matrix": result.get("competitor_matrix"),
+        # 研究计划随终态落库：复盘"这轮为什么选了这些竞品"要靠它
+        "research_plan": result.get("research_plan"),
     }
 
     if result["status"] in ("completed", "partial"):

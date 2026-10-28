@@ -188,6 +188,10 @@ class CompetitorMatrix:
         default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
     )
     schema_version: str = SCHEMA_VERSION
+    # 研究计划摘要（主体/口径/重点角度）——报告必须让人看出
+    # "系统认的是哪个主体、按什么口径选的竞品、重点看什么"，
+    # 否则读者无从判断这张表该不该信。
+    subject: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def completeness(self) -> Dict[str, Any]:
@@ -218,6 +222,7 @@ class CompetitorMatrix:
             "generated_at": self.generated_at,
             "rows": [row.to_dict() for row in self.rows],
             "completeness": self.completeness,
+            "subject": dict(self.subject),
         }
 
 
@@ -533,6 +538,7 @@ def build_matrix(
     extracted_data: Optional[Sequence[Dict[str, Any]]] = None,
     competitors: Optional[Sequence[Dict[str, Any]]] = None,
     derived_by_platform: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    subject: Optional[Dict[str, Any]] = None,
 ) -> CompetitorMatrix:
     """从抽取结果构造矩阵；competitors 保留“一家竞品一行”的边界。
 
@@ -567,6 +573,7 @@ def build_matrix(
     matrix = CompetitorMatrix(
         query=query,
         rows=[_row_from(comp, items, _derived_for(comp)) for comp, items in groups],
+        subject=dict(subject or {}),
     )
     validate(matrix)
     return matrix
@@ -631,9 +638,44 @@ def render_report_section(matrix: CompetitorMatrix) -> str:
         "## 竞品模式速览\n\n"
         "> 本节由 `competitor_matrix` 结构化结果渲染，不是模型自由撰写；"
         "可借鉴点是推断而非官方事实，缺证据/日期或证据外数字标“未核实”。\n\n"
-        f"{markdown(matrix)}\n"
+        + _render_subject(matrix.subject)
+        + f"{markdown(matrix)}\n"
         "<!--/machine-appendix-->\n"
     )
+
+
+def _render_subject(subject: Dict[str, Any]) -> str:
+    """研究计划摘要行：主体是谁、按什么口径、重点看什么。"""
+    if not subject:
+        return ""
+    parts: List[str] = []
+    name = str(subject.get("entity_name") or "").strip()
+    what = str(subject.get("what_it_is") or "").strip()
+    if name:
+        parts.append(f"**研究主体**：{name}" + (f"（{what}）" if what else ""))
+    entity_type = str(subject.get("entity_type") or "").strip()
+    if entity_type and entity_type != "unknown":
+        parts.append(f"实体类型：{entity_type}")
+    confidence = subject.get("resolved_confidence")
+    if isinstance(confidence, (int, float)):
+        parts.append(f"消歧置信度：{confidence:.2f}")
+    candidates = [str(c) for c in (subject.get("disambiguation_candidates") or []) if str(c).strip()]
+    if candidates:
+        parts.append("备选：" + "、".join(candidates[:3]))
+    layers = subject.get("layers") or []
+    if layers:
+        parts.append("竞品口径：" + "、".join(str(l) for l in layers))
+    if subject.get("min_count") or subject.get("max_count"):
+        parts.append(f"数量口径：{subject.get('min_count')}-{subject.get('max_count')} 家")
+    angles = subject.get("angles") or []
+    if angles:
+        parts.append("重点角度：" + "、".join(
+            f"{a.get('label') or a.get('angle')} {round(float(a.get('weight') or 0) * 100)}%"
+            for a in angles[:4]
+        ))
+    if not parts:
+        return ""
+    return "> " + "｜".join(parts) + "\n\n"
 
 
 _SECTION_RE = re.compile(
@@ -643,7 +685,21 @@ _SECTION_RE = re.compile(
 )
 
 
-def inject_section(report: str, matrix: CompetitorMatrix) -> str:
-    """幂等替换同名章节（含机器附录边界），再插入结构化固定章节。"""
+def inject_section(
+    report: str,
+    matrix: CompetitorMatrix,
+    position: str = "start",
+) -> str:
+    """幂等替换同名章节（含机器附录边界），再插入结构化固定章节。
+
+    ``position``：
+    - ``start``（legacy 默认）：速览表在前——读者先看结论表再看叙述
+    - ``end``（ReAct 用）：速览表在后——ReAct 的报告正文是模型终答，
+      合同是"报告以模型交付物开头"（低可信前缀都不能加在它前面），
+      机器生成的快照跟在后面，与机器附录标记的语义一致
+    """
     body = _SECTION_RE.sub("", report or "")
-    return render_report_section(matrix) + "\n" + body.lstrip()
+    section = render_report_section(matrix)
+    if position == "end":
+        return body.rstrip() + "\n\n" + section
+    return section + "\n" + body.lstrip()

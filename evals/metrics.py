@@ -9,7 +9,7 @@ v1 指标集（实施草案 M4）：
 事实抽取 F1 属 v2（需半自动标注流程），刻意不在此文件出现。
 """
 import re
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Sequence, Tuple
 
 from src.agent.citations import strip_machine_appendices
 from src.tools.quality_scorer import QualityScorer
@@ -148,6 +148,95 @@ def competitor_matrix_metrics(state: Dict[str, Any]) -> Dict[str, Any]:
         "matrix_as_of_rows": as_of_rows,
         "matrix_complete": total >= 2 and complete == total,
     }
+
+
+def research_plan_metrics(state: Dict[str, Any], report: str = "") -> Dict[str, Any]:
+    """澄清与定界层的可测项（计划是否成立、竞品是否按口径入选、角度是否覆盖）。
+
+    这一层此前无法评测，于是"针对性"只能靠人看。现在有三把尺子：
+    - 计划本身是否**结构成立**（主体/口径/角度齐备且合法）
+    - 入选的竞品是否**符合口径**（数量在区间内、每家至少 2 个维度有数据）
+    - 报告是否**覆盖了计划里权重最高的两个角度**（角度覆盖度）
+    """
+    plan = state.get("research_plan") or {}
+    entity = plan.get("entity") or {}
+    criteria = plan.get("competitor_criteria") or {}
+    angles = plan.get("angles") or []
+    discovery = state.get("discovery") or {}
+    selected = discovery.get("selected") or []
+    candidates = discovery.get("candidates") or []
+    matrix = state.get("competitor_matrix") or {}
+    rows = matrix.get("rows") or []
+
+    weights = [float(a.get("weight") or 0) for a in angles]
+    top_angles = [
+        a.get("angle") for a in sorted(
+            angles, key=lambda a: -float(a.get("weight") or 0)
+        )[:2]
+    ]
+
+    # 入选符合度：每行证据至少覆盖 2 个不同维度（= 计划的"至少 2 个维度"口径）
+    conform = 0
+    for row in rows:
+        keys = {str(ev.get("key") or "") for ev in (row.get("evidence") or [])}
+        keys.discard("")
+        if len(keys) >= 2:
+            conform += 1
+
+    min_count = criteria.get("min_count")
+    max_count = criteria.get("max_count")
+    counts_valid = (
+        isinstance(min_count, int) and isinstance(max_count, int)
+        and 2 <= min_count <= max_count <= 8
+    )
+
+    metrics = {
+        "plan_present": bool(plan),
+        "plan_source": plan.get("source") or "",
+        "plan_entity_resolved": bool(str(entity.get("name") or "").strip()),
+        "plan_confidence": entity.get("resolved_confidence"),
+        "plan_angle_count": len(angles),
+        "plan_top_angles": top_angles,
+        "plan_weights_sum": round(sum(weights), 3),
+        "plan_criteria_valid": counts_valid,
+        "plan_min_count": min_count,
+        "plan_max_count": max_count,
+        "discovery_candidates": len(candidates),
+        "discovery_selected": len(selected),
+        # 没有候选池 = 本轮没走竞品发现（调用方直接给了 URL），此时"是否在区间内"
+        # 无从谈起——报 None 而不是 false，否则读数会被误当成"超出区间"。
+        "admission_within_bounds": (
+            bool(counts_valid and min_count <= len(selected) <= max_count)
+            if candidates else None
+        ),
+        "admission_conformity": round(conform / len(rows), 3) if rows else 0.0,
+    }
+    if report:
+        metrics["angle_coverage"] = angle_coverage(report, top_angles)
+    return metrics
+
+
+# 角度 → 报告里该角度的**表现词**（与站内选页意图同类：结构化关键词，
+# 不是行业知识表）。用于测"报告有没有真的写到计划里权重最高的两个角度"。
+ANGLE_REPORT_MARKERS: Dict[str, Tuple[str, ...]] = {
+    "feature": ("功能", "特性", "feature", "capabilit", "能力"),
+    "business": ("定价", "价格", "收费", "商业模式", "pricing", "客群", "客户", "毛利"),
+    "engineering": ("技术", "架构", "api", "集成", "部署", "私有化", "接口", "源码"),
+    "product": ("体验", "界面", "交互", "上手", "易用", "用户路径"),
+}
+
+
+def angle_coverage(report: str, angles: Sequence[str]) -> float:
+    """计划里权重最高的两个角度，有多少真的在报告里被写到了。"""
+    if not angles:
+        return 0.0
+    text = (report or "").lower()
+    hit = 0
+    for angle in angles:
+        markers = ANGLE_REPORT_MARKERS.get(angle, ())
+        if any(marker.lower() in text for marker in markers):
+            hit += 1
+    return round(hit / len(angles), 3)
 
 
 def aggregate(case_results: List[Dict[str, Any]]) -> Dict[str, Any]:

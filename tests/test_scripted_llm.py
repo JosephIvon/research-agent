@@ -90,7 +90,7 @@ def test_calls_record_intent_step_messages_and_tools():
 
 def test_unknown_intent_fails_loud_with_available_intents():
     client = ScriptedLLMClient(script={"extract": ["a"]})
-    with pytest.raises(ValueError, match="decompose, extract, prd, report"):
+    with pytest.raises(ValueError, match="borrowable, decompose, extract, plan, prd, report"):
         client.chat_completion(_msgs("完全未知的提示词"))
     with pytest.raises(ValueError, match="custom"):
         client.chat_completion(_msgs("<!--intent:custom-->"))
@@ -227,7 +227,11 @@ def test_full_legacy_workflow_runs_offline_with_fake_llm(tmp_path, monkeypatch):
     assert pricing_cite in state["report_final"]
 
     intents = [call["intent"] for call in client.calls]
-    assert intents[0] == "decompose", "流程必须先做任务分解"
+    # 澄清与定界（plan）先于任务分解：先定研究对象，再拆维度
+    assert intents[0] == "plan", "流程必须先澄清研究对象（plan）"
+    assert intents[1] == "decompose", "plan 之后必须做任务分解"
+    assert intents.index("decompose") < intents.index("extract"), \
+        "分解必须先于抽取"
     assert intents.count("extract") == 1
     assert "report" in intents
 

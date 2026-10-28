@@ -124,6 +124,10 @@ def _build_scripted_llm(case: Dict[str, Any], llm_spec: Dict[str, Any]):
     script: Dict[str, List[Any]] = {
         "report": [resolve_citations(r, case, llm_spec) for r in reports],
     }
+    # 研究计划（澄清与定界）：夹具可脚本化模型的计划输出。
+    # 不给就用缺省脚本（默认约束）→ 计划仍成立，但主体/角度是默认值。
+    if llm_spec.get("plan"):
+        script["plan"] = [json.dumps(llm_spec["plan"], ensure_ascii=False)]
     # 借鉴点推导（域无关路径）：夹具可脚本化模型的锚定推导输出。
     # 不给就用缺省脚本（空 rows）→ 推导无产出 → 矩阵退回规则表兜底。
     if llm_spec.get("borrowable"):
@@ -403,6 +407,18 @@ def collect_metrics(case: Dict[str, Any], run_out: Dict[str, Any],
         result["matrix_min_completeness"] = float(
             matrix_expectation.get("min_completeness", 1.0)
         )
+    plan_expectation = expected.get("research_plan") or {}
+    if plan_expectation or state.get("research_plan"):
+        report_text = state.get("report_final") or ""
+        result.update(M.research_plan_metrics(state, report_text))
+    if plan_expectation:
+        result["plan_gate_required"] = True
+        result["plan_min_angle_coverage"] = float(
+            plan_expectation.get("min_angle_coverage", 0.0)
+        )
+        result["plan_require_entity_resolved"] = bool(
+            plan_expectation.get("require_entity_resolved", True)
+        )
 
     return result
 
@@ -560,6 +576,25 @@ def gate_check(summary: Dict[str, Any], case_results: List[Dict[str, Any]],
             failures.append(
                 f"{case['id']} 竞品矩阵有效完整度 {completeness} < "
                 f"{min_completeness}（占位/缺证据/缺日期/无据数字不计完整）"
+            )
+
+    # 研究计划（澄清与定界）是独立硬门槛：只对 manifest 预先声明的 case 生效。
+    # 判的是"这轮研究有没有先把研究对象定下来"——主体认错、口径越界、
+    # 重点角度一个没写，报告再漂亮也是答非所问。
+    for case in case_results:
+        metrics = case.get("metrics") or {}
+        if not metrics.get("plan_gate_required"):
+            continue
+        if metrics.get("plan_require_entity_resolved") and not metrics.get("plan_entity_resolved"):
+            failures.append(f"{case['id']} 研究计划未解析出研究主体")
+        if not metrics.get("plan_criteria_valid"):
+            failures.append(f"{case['id']} 研究计划的竞品口径区间非法")
+        min_coverage = metrics.get("plan_min_angle_coverage", 0.0)
+        coverage = metrics.get("angle_coverage")
+        if coverage is not None and coverage < min_coverage:
+            failures.append(
+                f"{case['id']} 重点角度覆盖度 {coverage} < {min_coverage}"
+                f"（计划权重最高的两个角度没写到）"
             )
 
     # 软性趋势提示：不红，但必须喊出来

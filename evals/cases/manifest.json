@@ -745,6 +745,46 @@
           "min_completeness": 1.0
         }
       }
+    },
+    {
+      "id": "plan_clarify",
+      "category": "research_plan",
+      "mode": "legacy",
+      "query": "帮我看看猫箱这个产品的全部竞品信息",
+      "sites": [
+        {
+          "key": "xingye",
+          "url": "https://xingye.test/",
+          "pages": [
+            "index.html"
+          ]
+        },
+        {
+          "key": "talkie",
+          "url": "https://talkie.test/",
+          "pages": [
+            "index.html"
+          ]
+        }
+      ],
+      "expected": {
+        "dimensions": [
+          "pricing",
+          "features",
+          "target_users",
+          "integrations",
+          "limitations",
+          "reviews"
+        ],
+        "competitor_matrix": {
+          "min_rows": 2,
+          "min_completeness": 1.0
+        },
+        "research_plan": {
+          "min_angle_coverage": 0.5,
+          "require_entity_resolved": true
+        }
+      }
     }
   ],
   "fixture_digests": {
@@ -803,6 +843,9 @@
     "miss_api/sites/saas/index.html": "a1274cddd6e86996af0eca24124a7d611f63001fbff592dfd37fbe00bb860de2",
     "miss_enterprise/llm.json": "cad0402185d45cefe880aebd6988499a672a50410cbe2e1a225139457b33093b",
     "miss_enterprise/sites/tool1/index.html": "8e852666b536b724e433364123567260d5a1d6da8a6276b57cce147956ba4636",
+    "plan_clarify/llm.json": "5faad09a04068341cc545058a81355476eba0b596fdbf3c8a8bbfa9cdf332f60",
+    "plan_clarify/sites/talkie/index.html": "1cc775800e0b3e8274301a53e591a574e849ff983f3477b81ef390af89629d41",
+    "plan_clarify/sites/xingye/index.html": "71b03ff949a10a39f4aef82905861767a5ec3e348030c380223a0c0ecb065cc2",
     "react_pagesel/llm.json": "e5bd78873c1f04f78f3bb4c2dd727e4ec34b5d74cefd0110aaf85c7eff30963d",
     "react_pagesel/sites/ra/index.html": "97b1cb0e97e3d133a1f04f0ab6257cd201426dfe9cb725d88e0157913d37a89b",
     "react_pagesel/sites/ra/pricing.html": "8ef8d76393e6f1e349e3a0af657e54a487124b18f727a267ce77d8a4b79ff3d3",

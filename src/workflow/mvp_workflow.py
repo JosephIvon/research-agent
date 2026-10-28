@@ -1,6 +1,6 @@
 """MVP工作流模块 - 2-agent简化版本：协调者 + 文案撰写员"""
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 from datetime import datetime, timezone
 from uuid import uuid4
 from src.llm import get_llm_client, strip_thinking, LLMClient, LLMError
@@ -50,6 +50,9 @@ from src.workflow.competitor_matrix import (
     inject_section,
 )
 from src.workflow import borrowable_derivation
+from src.workflow import research_plan
+from src.workflow import search_stages
+from src.workflow.research_plan import ANGLE_LABELS
 import asyncio
 import contextlib
 import json
@@ -61,6 +64,12 @@ from src.crawler.concurrency import get_concurrency_controller
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# 反证页（缺点/评价）抓取封顶：每家最多几页、整批最多几页。
+# 反证页是**外站**，抓一个页就是爬一个站；不封顶的话一次调研能变成
+# 几十个站点的爬取，预算与墙钟都扛不住。
+MAX_COUNTER_EVIDENCE_PER_COMPETITOR = 2
+MAX_COUNTER_EVIDENCE_TOTAL = 5
 
 
 
@@ -909,12 +918,32 @@ class MVPWorkflow:
         state["custom_selectors"] = custom_selectors
         self.state = state
 
+        # 澄清与定界前置：先定"主体是谁、竞品怎么算、重点看什么"，
+        # 再决定去搜什么、抓谁。没有这一步，系统把整句任务描述当搜索词，
+        # 搜索引擎返回什么就分析什么（实测：官方介绍页与竞品盘点页
+        # 都会被相关性过滤丢掉，而媒体/百科页会被当成竞品）。
+        # 两种模式共用同一份计划：legacy 拿它做查询规划与选页优先级，
+        # react 拿它做任务边界（注入 prompt + workspace）。
+        plan = await research_plan.build_research_plan(
+            self.llm_client, user_query, str(state.get("self_context") or ""),
+        )
+        state["research_plan"] = plan.to_dict()
+        state["page_tiers"] = research_plan.angle_priority_tiers(plan)
+        self._emit(
+            "search", "search", "running",
+            f"研究计划已生成：主体「{plan.entity_name or '未识别'}」，"
+            f"竞品 {plan.min_count}-{plan.max_count} 家，"
+            f"重点角度 {('、'.join(ANGLE_LABELS.get(a, a) for a in plan.top_angles)) or '默认'}",
+        )
+        if plan.error:
+            logger.info(f"研究计划不可用，退回默认约束：{plan.error}")
+
         # AGENT_MODE=react：切换到 ReAct 工具循环（模型自主规划抓取/抽取/对比），
         # 以下是 legacy 固定管线，路径保持不动。env 运行时读取，方便部署侧切换；
         # 评测用 agent_mode="react" 显式注入，不再借道环境变量。
         mode = self._agent_mode if self._agent_mode is not None else os.getenv("AGENT_MODE", "legacy")
         if mode.lower() == "react":
-            return await self._run_react_mode(state, user_query, state["target_urls"])
+            return await self._run_react_mode(state, user_query, state["target_urls"], plan=plan)
 
         try:
             state["status"] = "decomposing"
@@ -935,17 +964,52 @@ class MVPWorkflow:
                     payload={"degraded": True, "reason": state["decompose_fallback_reason"]},
                 )
 
+            # 澄清与定界前置（计划已在模式分支之前生成，两种模式共用）
             if enable_search and not state["target_urls"]:
                 state["status"] = "researching"
-                self._emit("search", "search", "running", "正在搜索竞品范围和公开资料")
-                search_urls = await self.coordinator.search_topics(user_query)
+                runner = search_stages.SearchStageRunner(self.search_tool)
+                entity_pages = runner.run_entity_anchor(plan)
+                state["entity_pages"] = entity_pages
+                discovery = runner.run_competitor_discovery(plan)
+                state["discovery"] = discovery.to_dict()
+
+                search_urls: List[str] = []
+                if discovery.selected:
+                    search_urls = [item["url"] for item in discovery.selected]
+                else:
+                    # 计划没产出候选：退回旧行为（把任务描述当搜索词），
+                    # 但仍走 SSRF 校验，行为不比以前差
+                    fallback_urls = await self.coordinator.search_topics(user_query)
+                    search_urls = list(fallback_urls)
+                    discovery.notes.append("竞品发现无结果，已退回任务描述直接搜索")
+                    state["discovery"] = discovery.to_dict()
+
                 search_target_sites = [
                     {"url": url, "auth_credentials": None, "login_url": None}
                     for url in self._filter_search_urls(search_urls)
                 ]
                 state["target_sites"].extend(search_target_sites)
                 state["target_urls"].extend([site["url"] for site in search_target_sites])
-                logger.info(f"自动搜索补充了 {len(search_urls)} 个URL")
+
+                # 阶段 3/4：逐家验证与反证。反证（缺点/评价）最容易被漏掉，
+                # 于是报告里 limitations/reviews 常年空着——而那恰是采购与
+                # 评审最想看的。反证页**不是竞品本身**，必须挂到它所验证的
+                # 那家竞品行下（parent_platform），否则会自成一行，把
+                # "App Store 上的猫箱页面"变成一个叫"猫箱"的假竞品行。
+                verification_pages = runner.run_verification(
+                    plan, [item.get("name") or "" for item in discovery.selected]
+                )
+                state["verification"] = verification_pages
+                evidence_sites = self._counter_evidence_sites(
+                    verification_pages, state["target_urls"]
+                )
+                state["target_sites"].extend(evidence_sites)
+                state["target_urls"].extend(site["url"] for site in evidence_sites)
+                logger.info(
+                    f"自动搜索补充了 {len(search_urls)} 个URL"
+                    f"（候选池 {len(discovery.candidates)}，入选 {len(discovery.selected)}，"
+                    f"反证页 {len(evidence_sites)}）"
+                )
 
             state["status"] = "crawling"
             self._emit("crawl_start", "crawl", "running", f"开始登录/抓取 {len(state['target_sites'])} 个竞品网站")
@@ -953,7 +1017,11 @@ class MVPWorkflow:
                 state["target_sites"],
                 auth_credentials,
                 login_url,
-                custom_selectors
+                custom_selectors,
+                page_tiers=state.get("page_tiers"),
+            )
+            state["competitors"], state["evidence_orphans"] = self._merge_evidence_pages(
+                state["target_sites"], state["competitors"]
             )
 
             for comp in state["competitors"]:
@@ -1349,6 +1417,7 @@ class MVPWorkflow:
         state: Dict[str, Any],
         user_query: str,
         target_urls: List[str],
+        plan: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """AGENT_MODE=react：ReAct 工具循环替代 legacy 固定管线。
 
@@ -1366,6 +1435,15 @@ class MVPWorkflow:
                 max_usd=self._usd_budget if self._usd_budget is not None else AGENT_USD_BUDGET,
             )
             workspace: Dict[str, Any] = {}
+            # 研究计划注入两处：workspace（工具可读，供 fetch/extract 选页与聚焦）
+            # 与任务描述（模型看得见"研究对象与重点角度"）。
+            # 为什么放在**前置**而不是让模型自己在循环里 define：
+            # 计划要被代码校验（实体置信、竞品标准、数量约束），让模型在
+            # 对话里自由写 JSON 就没法校验；ReAct 的自主性该体现在
+            # "怎么找证据"，而不是"研究对象是谁"这种一次性决策。
+            if plan is not None:
+                workspace["research_plan"] = plan.to_dict()
+            react_query = self._plan_aware_query(user_query, plan)
 
             def _on_step(step) -> None:
                 # 每轮工具调用实时外发进度，SSE 订阅者据此看到模型正在做什么
@@ -1415,7 +1493,7 @@ class MVPWorkflow:
                 wall_clock_budget=self._wall_clock_budget,
                 on_step=_on_step,
             )
-            result = await runner.run(user_query, target_urls=target_urls)
+            result = await runner.run(react_query, target_urls=target_urls)
 
             state["cost_report"] = result.cost_report
 
@@ -1431,7 +1509,20 @@ class MVPWorkflow:
                 state["report_final"] = answer
                 if facts:
                     store = EvidenceStore.from_extracted_data(facts)
-                    citation_result = await asyncio.to_thread(verify_report, answer, store)
+                    # ReAct 也走同一条交付链：矩阵 + 锚定借鉴点 + 固定速览章节。
+                    # 此前 react 模式只交模型终答，竞品矩阵与可借鉴点这两项
+                    # 结构化能力在 react 下完全缺席——同一条产品能力两种模式
+                    # 两种结果，是最难解释的一种不一致。
+                    state["competitors"] = self._competitors_from_facts(facts)
+                    matrix_obj = await self._derive_and_build_matrix(state, user_query)
+                    if matrix_obj is not None and matrix_obj.rows:
+                        # 位置放"后"：ReAct 报告正文是模型终答，合同是报告以
+                        # 模型交付物开头（连低可信前缀都不能加在它前面）；
+                        # 机器生成的速览表跟在后面，与机器附录标记语义一致
+                        state["report_final"] = inject_section(
+                            state["report_final"], matrix_obj, position="end",
+                        )
+                    citation_result = await asyncio.to_thread(verify_report, state["report_final"], store)
                     state["citation_report"] = {
                         k: v for k, v in citation_result.items() if k != "violations"
                     }
@@ -1588,6 +1679,10 @@ class MVPWorkflow:
             "competitors": [],
             "competitor_matrix": None,
             "borrowable_derivation": None,
+            "research_plan": None,
+            "entity_pages": [],
+            "discovery": None,
+            "page_tiers": None,
             "self_context": self_context,
             "comparison_matrix": None,
             "comparison_passed": None,
@@ -1606,7 +1701,8 @@ class MVPWorkflow:
         sites: List[Any],
         auth_credentials: Optional[Dict[str, str]] = None,
         login_url: Optional[str] = None,
-        custom_selectors: Optional[Dict[str, List[str]]] = None
+        custom_selectors: Optional[Dict[str, List[str]]] = None,
+        page_tiers: Optional[tuple] = None
     ) -> List[Dict[str, Any]]:
         """并行抓取多个竞品页面，限制并发数（动态调整）"""
         site_configs = [
@@ -1645,11 +1741,19 @@ class MVPWorkflow:
                 async with semaphore:
                     # Rate limiting per site
                     await asyncio.sleep(CRAWL_REQUEST_INTERVAL)
+                    # page_tiers 只在真有时才传：保持既有调用形状不变
+                    # （不少测试用替身替掉 _fetch_single_competitor）
+                    extra: Dict[str, Any] = {}
+                    if page_tiers is not None:
+                        extra["page_tiers"] = page_tiers
+                    if site.get("max_pages") is not None:
+                        extra["max_pages"] = site["max_pages"]
                     return await self._fetch_single_competitor(
                         site["url"],
                         site.get("auth_credentials"),
                         site.get("login_url"),
                         custom_selectors,
+                        **extra,
                     )
 
             try:
@@ -1853,6 +1957,144 @@ class MVPWorkflow:
                 comp.setdefault("extracted_data", []).extend(items)
                 return
 
+    def _plan_aware_query(self, user_query: str, plan: Optional[Any]) -> str:
+        """把研究计划写进任务描述：模型看得见"研究对象与重点角度"。
+
+        只在计划**确实带来了新信息**时才追加——默认计划（无模型消歧结果）
+        追加进去只是噪声，反而稀释了用户的原始诉求。
+        """
+        if plan is None or plan.source != "model":
+            return user_query
+        lines = [f"【已确定的研究计划】", f"研究主体：{plan.entity_name}（{plan.what_it_is or '未说明'}）"]
+        criteria = plan.criteria or {}
+        layers = "、".join(criteria.get("layers") or [])
+        lines.append(
+            f"竞品口径：{layers}；数量 {criteria.get('min_count')}-{criteria.get('max_count')} 家；"
+            f"入选标准：{criteria.get('admission_rule') or '默认'}"
+        )
+        weights = "、".join(
+            f"{ANGLE_LABELS.get(a.angle, a.angle)}{round(a.weight * 100)}%"
+            for a in sorted(plan.angles, key=lambda x: -x.weight)
+        )
+        lines.append(f"重点角度（权重）：{weights}")
+        for stage in plan.search_plan:
+            if stage.queries:
+                lines.append(f"{stage.stage} 查询：{'；'.join(stage.queries[:4])}")
+        lines.append("请按此边界取证；找不到证据就如实写明，不要用行业常识补。")
+        return user_query + "\n\n" + "\n".join(lines)
+
+    @staticmethod
+    def _competitors_from_facts(facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """把 ReAct 抓到的 facts 按来源站点还原成"竞品"条目。
+
+        ReAct 的产出是 {url: [facts]}，没有"一家竞品一条"的边界；
+        矩阵要按竞品成行，就得在这里把同一站点的证据归到一行。
+        """
+        by_url: Dict[str, List[Dict[str, Any]]] = {}
+        for item in facts or []:
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("source_url", "") or "").strip()
+            if not url:
+                continue
+            by_url.setdefault(url, []).append(item)
+        competitors = []
+        for url, items in by_url.items():
+            name = next(
+                (str(i.get("value", "")).strip()
+                 for i in items
+                 if str(i.get("key", "")).strip().lower() == "name" and str(i.get("value", "")).strip()),
+                url.split("//")[-1].split("/")[0],
+            )
+            competitors.append({
+                "name": name,
+                "url": url,
+                "status": "success",
+                "extracted_data": items,
+            })
+        return competitors
+
+    @staticmethod
+    def _counter_evidence_sites(
+        verification_pages: List[Dict[str, Any]],
+        existing_urls: List[str],
+    ) -> List[Dict[str, Any]]:
+        """从反证结果里挑出要抓的证据页（每家封顶、总数封顶）。
+
+        封顶的原因：反证页是**外站**，抓一次就是抓一个站。放开会让
+        一次调研变成几十个站点的爬取，预算与时间都扛不住。
+        """
+        seen = set(existing_urls or [])
+        per_competitor: Dict[str, int] = {}
+        sites: List[Dict[str, Any]] = []
+        for page in verification_pages or []:
+            if page.get("stage") != "counter_evidence":
+                continue
+            name = str(page.get("competitor") or "").strip()
+            url = str(page.get("url") or "").strip()
+            if not name or not url or url in seen:
+                continue
+            if per_competitor.get(name, 0) >= MAX_COUNTER_EVIDENCE_PER_COMPETITOR:
+                continue
+            if len(sites) >= MAX_COUNTER_EVIDENCE_TOTAL:
+                break
+            per_competitor[name] = per_competitor.get(name, 0) + 1
+            seen.add(url)
+            sites.append({
+                "url": url,
+                "auth_credentials": None,
+                "login_url": None,
+                "parent_platform": name,
+                # 只取这一页：反证页是证据来源，不是要建站的竞品
+                "max_pages": 1,
+            })
+        return sites
+
+    @staticmethod
+    def _merge_evidence_pages(
+        sites: List[Dict[str, Any]],
+        competitors: List[Dict[str, Any]],
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """把反证/验证页归并进它所属的竞品条目。
+
+        不归并的话，这些外站页面会各自成为矩阵里的一行——一行叫
+        "快驴进货 App"、一行叫"知乎"，它们根本不是竞品。
+        返回 (归并后的竞品条目, 无主证据页)。无主证据页**不进竞品列表**
+        （它们不是竞品），单独留档备查。
+        """
+        if not sites or len(sites) != len(competitors):
+            return competitors, []
+        parents = {
+            str(comp.get("name") or "").strip(): comp
+            for comp, site in zip(competitors, sites)
+            if not site.get("parent_platform")
+        }
+        merged: List[Dict[str, Any]] = []
+        orphans: List[Dict[str, Any]] = []
+        for site, comp in zip(sites, competitors):
+            parent = str(site.get("parent_platform") or "").strip()
+            if not parent:
+                merged.append(comp)
+                continue
+            target = parents.get(parent)
+            if target is None:
+                # 父竞品没抓到（抓取失败）：证据页不是竞品，不能自成一行
+                orphans.append({
+                    "url": site.get("url"),
+                    "evidence_page_for": parent,
+                    "extracted_data": comp.get("extracted_data") or [],
+                    "error_message": comp.get("error_message"),
+                })
+                continue
+            target.setdefault("extracted_data", []).extend(comp.get("extracted_data") or [])
+            if comp.get("raw_search_results"):
+                target.setdefault("raw_search_results", []).extend(comp["raw_search_results"])
+            target.setdefault("evidence_pages", []).append({
+                "url": site.get("url"),
+                "stage": "counter_evidence",
+            })
+        return merged, orphans
+
     async def _derive_and_build_matrix(
         self,
         state: Dict[str, Any],
@@ -1890,9 +2132,30 @@ class MVPWorkflow:
             user_query,
             competitors=state.get("competitors") or [],
             derived_by_platform=derived_map,
+            subject=self._plan_subject(state.get("research_plan")),
         )
         state["competitor_matrix"] = matrix_obj.to_dict()
         return matrix_obj
+
+    @staticmethod
+    def _plan_subject(plan_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """从研究计划里取"主体/口径/角度"摘要，供矩阵章节展示。"""
+        if not plan_data:
+            return {}
+        entity = plan_data.get("entity") or {}
+        criteria = plan_data.get("competitor_criteria") or {}
+        angles = plan_data.get("angles") or []
+        return {
+            "entity_name": entity.get("name", ""),
+            "entity_type": entity.get("entity_type", ""),
+            "what_it_is": entity.get("what_it_is", ""),
+            "resolved_confidence": entity.get("resolved_confidence", 0),
+            "disambiguation_candidates": entity.get("disambiguation_candidates") or [],
+            "layers": criteria.get("layers") or [],
+            "min_count": criteria.get("min_count"),
+            "max_count": criteria.get("max_count"),
+            "angles": angles,
+        }
 
     def _refresh_quality_report(self, state: Dict[str, Any]):
         """按当前竞品数据重算数据完整度（补抓后必须重算）。

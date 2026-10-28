@@ -1,0 +1,243 @@
+{
+  "plan": {
+    "entity": {
+      "name": "猫箱",
+      "entity_type": "app",
+      "what_it_is": "面向年轻人的 AI 角色扮演与陪伴应用",
+      "disambiguation_candidates": [
+        "猫箱App",
+        "猫箱网页版"
+      ],
+      "resolved_confidence": 0.86
+    },
+    "competitor_criteria": {
+      "layers": [
+        "direct"
+      ],
+      "must_include": [],
+      "must_exclude": [],
+      "min_count": 2,
+      "max_count": 3,
+      "admission_rule": "必须有官网 + 至少 2 个维度有数据"
+    },
+    "angles": [
+      {
+        "angle": "feature",
+        "priority": "primary",
+        "reason": "功能差异是 AI 陪伴赛道的核心",
+        "page_hints": [
+          "功能",
+          "玩法"
+        ]
+      },
+      {
+        "angle": "business",
+        "priority": "secondary",
+        "reason": "定价与变现方式决定商业可行性",
+        "page_hints": [
+          "定价",
+          "会员"
+        ]
+      },
+      {
+        "angle": "engineering",
+        "priority": "secondary",
+        "reason": "模型与部署方式影响成本",
+        "page_hints": [
+          "技术",
+          "接口"
+        ]
+      },
+      {
+        "angle": "product",
+        "priority": "ignore",
+        "reason": "本轮不深挖体验",
+        "page_hints": []
+      }
+    ],
+    "search_plan": [
+      {
+        "stage": "entity_anchor",
+        "queries": [
+          "猫箱 是什么"
+        ],
+        "acceptance": "命中官方源"
+      },
+      {
+        "stage": "competitor_discovery",
+        "queries": [
+          "猫箱 竞品",
+          "AI 陪伴 类似产品"
+        ],
+        "acceptance": "产出候选池"
+      },
+      {
+        "stage": "per_competitor_verify",
+        "queries": [
+          "定价",
+          "功能"
+        ],
+        "acceptance": "每家至少 2 个维度"
+      },
+      {
+        "stage": "counter_evidence",
+        "queries": [
+          "缺点",
+          "评价"
+        ],
+        "acceptance": "补齐限制与评价"
+      }
+    ],
+    "open_questions": [
+      {
+        "question": "是否包含网页端？",
+        "default": "否"
+      }
+    ]
+  },
+  "extract_sequence": [
+    [
+      {
+        "key": "name",
+        "value": "星野",
+        "confidence": 0.9
+      },
+      {
+        "key": "positioning",
+        "value": "AI 陪伴与角色扮演应用，面向年轻用户",
+        "confidence": 0.9
+      },
+      {
+        "key": "business_model",
+        "value": [
+          "免费对话 + 会员订阅解锁更多回合",
+          "角色广场提供 UGC 内容"
+        ],
+        "confidence": 0.9
+      },
+      {
+        "key": "pricing",
+        "value": "免费对话，订阅会员按月付费",
+        "confidence": 0.9
+      },
+      {
+        "key": "features",
+        "value": [
+          "角色广场",
+          "多轮对话",
+          "语音互动"
+        ],
+        "confidence": 0.9
+      },
+      {
+        "key": "target_users",
+        "value": "18-30 岁年轻用户与二次元人群",
+        "confidence": 0.9
+      },
+      {
+        "key": "integrations",
+        "value": "提供开放 API 供第三方接入",
+        "confidence": 0.9
+      },
+      {
+        "key": "limitations",
+        "value": "高峰时段响应慢",
+        "confidence": 0.9
+      },
+      {
+        "key": "reviews",
+        "value": "用户评价角色丰富但订阅价格偏高",
+        "confidence": 0.9
+      },
+      {
+        "key": "as_of",
+        "value": "2026-10-28",
+        "confidence": 0.9
+      }
+    ],
+    [
+      {
+        "key": "name",
+        "value": "Talkie",
+        "confidence": 0.9
+      },
+      {
+        "key": "positioning",
+        "value": "全球 AI 角色扮演平台，主打多语种",
+        "confidence": 0.9
+      },
+      {
+        "key": "business_model",
+        "value": [
+          "免费 + 订阅 + 广告混合变现",
+          "创作者分成激励内容生态"
+        ],
+        "confidence": 0.9
+      },
+      {
+        "key": "pricing",
+        "value": "订阅分档，含免费层",
+        "confidence": 0.9
+      },
+      {
+        "key": "features",
+        "value": [
+          "角色广场",
+          "语音通话",
+          "多语种对话"
+        ],
+        "confidence": 0.9
+      },
+      {
+        "key": "target_users",
+        "value": "海外年轻用户与内容创作者",
+        "confidence": 0.9
+      },
+      {
+        "key": "integrations",
+        "value": "开放 API 与第三方客户端接入",
+        "confidence": 0.9
+      },
+      {
+        "key": "limitations",
+        "value": "中文本地化不足",
+        "confidence": 0.9
+      },
+      {
+        "key": "reviews",
+        "value": "评价创意丰富但订阅体系复杂",
+        "confidence": 0.9
+      },
+      {
+        "key": "as_of",
+        "value": "2026-10-28",
+        "confidence": 0.9
+      }
+    ]
+  ],
+  "borrowable": {
+    "rows": [
+      {
+        "platform": "星野",
+        "items": [
+          {
+            "anchor_key": "business_model",
+            "anchor_span": "角色广场提供 UGC 内容",
+            "take": "内容生态：让用户产角色而非只消费，分发成本降下来"
+          }
+        ]
+      },
+      {
+        "platform": "Talkie",
+        "items": [
+          {
+            "anchor_key": "business_model",
+            "anchor_span": "创作者分成激励内容生态",
+            "take": "分成机制：创作者拿分成，内容供给才可持续"
+          }
+        ]
+      }
+    ]
+  },
+  "report": "## 一、概述\n\n星野是面向年轻人的 AI 陪伴与角色扮演应用 {{cite:xingye:1}}；Talkie 是主打多语种的全球 AI 角色扮演平台 {{cite:talkie:1}}。\n\n## 二、功能\n\n星野的核心功能是角色广场、多轮对话与语音互动 {{cite:xingye:4}}；Talkie 提供角色广场、语音通话与多语种对话 {{cite:talkie:4}}。\n\n## 三、定价与商业模式\n\n星野免费对话加会员订阅解锁更多回合 {{cite:xingye:2}}，按月付费 {{cite:xingye:3}}；Talkie 采用订阅分档与创作者分成 {{cite:talkie:2}}{{cite:talkie:3}}。\n\n## 四、目标用户\n\n星野面向 18-30 岁年轻用户与二次元人群 {{cite:xingye:5}}；Talkie 面向海外年轻用户与内容创作者 {{cite:talkie:5}}。\n\n## 五、集成生态\n\n星野提供开放 API 供第三方接入 {{cite:xingye:6}}；Talkie 开放 API 与第三方客户端接入 {{cite:talkie:6}}。\n\n## 六、限制与评价\n\n星野高峰时段响应慢 {{cite:xingye:7}}，用户评价角色丰富但订阅价格偏高 {{cite:xingye:8}}；Talkie 的中文本地化不足 {{cite:talkie:7}}，评价创意丰富但订阅体系复杂 {{cite:talkie:8}}。\n"
+}

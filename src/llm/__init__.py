@@ -737,6 +737,18 @@ DEFAULT_FAKE_SCRIPT = {
     "prd": ["（脚本化 PRD 占位。）"],
     # 借鉴点推导：默认不给行——没有证据锚定时宁缺毋滥
     "borrowable": ['{"rows": []}'],
+    # 研究计划（澄清与定界）：默认按产品默认约束走，主体名由用户原话补
+    "plan": ['{"entity":{"name":"","entity_type":"unknown","what_it_is":"",'
+             '"disambiguation_candidates":[],"resolved_confidence":0.0},'
+             '"competitor_criteria":{"layers":["direct"],"must_include":[],'
+             '"must_exclude":[],"min_count":3,"max_count":5,'
+             '"admission_rule":"必须有官网 + 至少 2 个维度有数据"},'
+             '"angles":[{"angle":"feature","priority":"secondary","reason":"默认",'
+             '"page_hints":[]},{"angle":"business","priority":"secondary",'
+             '"reason":"默认","page_hints":[]},{"angle":"engineering",'
+             '"priority":"secondary","reason":"默认","page_hints":[]},'
+             '{"angle":"product","priority":"secondary","reason":"默认",'
+             '"page_hints":[]}],"search_plan":[],"open_questions":[]}'],
 }
 
 
