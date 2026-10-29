@@ -85,6 +85,11 @@ output/*
 !output/search_e2e_*.review.json
 !output/search_e2e_*.review.md
 !output/search_e2e_*.md
+# 发现召回测量的实跑报告（漏斗表 + 归因表）——结论要能回源。
+# 原始 run json（含全部候选池、几十 KB）仍只留本地。
+!output/recall_*.md
+# 计划稳定性实测报告（查询词 Jaccard 证据）——同样是能回源的证据。
+!output/plan_variance_*.md
 # 真跑 LLM 轨迹录制（LLM_RECORD_SCRIPT 落盘处，本地沉淀/CI artifact 用）
 recordings/*
 !recordings/.gitkeep
@@ -164,7 +169,8 @@ evals/results/
 
 # 共享记忆的项目层变体：内容里硬编码了本机绝对路径（C:\Users\<本机用户>\...），
 # 且属于个人工具配置而非项目文档。若要入库，先把路径改成相对路径
-AGENTS.md
+# AGENTS.md 不再忽略：它是跨工具的项目约定与规则引用入口，不随 clone 走的话，
+# 别人拿到的仓就没有约定。里面的路径已改成 $QCHECK_HOME 形态（QR-15 不再命中）。
 .trae/
 
 # ============== 个人材料（不进仓库） ==============

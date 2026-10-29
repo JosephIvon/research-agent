@@ -13,9 +13,9 @@
       "golden": [
         {
           "name": "星野",
-          "hosts": ["xingyeai.com", "m.xingyeai.com"],
+          "hosts": ["xingyeai.com", "m.xingyeai.com", "ai-xingye.cn"],
           "aliases": ["星野"],
-          "evidence": "title「星野_沉浸式智能体社区_星野官网_星野app」",
+          "evidence": "title「星野_沉浸式智能体社区_星野官网_星野app」；备用域名 title「星野 - 可定制 AI 角色设定的 AI 陪伴应用」（2026-10-29 复测时按同产品多域名约定补入）",
           "verified_at": "2026-10-29"
         },
         {
@@ -41,9 +41,9 @@
         },
         {
           "name": "Replika",
-          "hosts": ["replika.com", "create.replika.com", "replikazh.com"],
+          "hosts": ["replika.com", "create.replika.com", "replikazh.com", "replika.ai"],
           "aliases": ["Replika"],
-          "evidence": "title「Replika is the AI Friend to Do Life With」/「Replika官网中文」",
+          "evidence": "title「Replika is the AI Friend to Do Life With」/「Replika官网中文」；备用域名 replika.ai 的 title 同为「Replika | The AI Friend to do Life With」（2026-10-29 复测时按同产品多域名约定补入；replika-ai.app 疑似仿冒站，未采信）",
           "verified_at": "2026-10-29"
         },
         {
