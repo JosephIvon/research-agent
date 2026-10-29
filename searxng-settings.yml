@@ -11,23 +11,46 @@ search:
     - html
     - json
 
+# 引擎清单（2026-10-29 调整）
+#
+# 为什么禁用这几个：实测 2026-10-29 上午，本机到 duckduckgo 的 TLS 校验失败
+# （curl_cffi SSLError）、google 返回 403、brave 与 google cse 集体限流。
+# 这些引擎每次都要耗掉超时预算（还带重试），**把整次请求的时间吃光**，
+# 于是排在后面的 yahoo 根本没机会返回——表现是"搜索全部 0 条"，
+# 而 raw 响应里的 unresponsive_engines 只列那 3 个挂掉的，看不出真凶。
+#
+# 注意：覆盖默认引擎**只写 name + disabled**；写 engine: 会被当成自定义引擎
+# （实测报 "google cse: can't register engine (loading engine failed)"）。
 engines:
   - name: google
-    engine: google
-    weight: 2
-  - name: bing
-    engine: bing
-    weight: 1
+    disabled: true
+  - name: google cse
+    disabled: true
   - name: duckduckgo
-    engine: duckduckgo
-    weight: 1
-  - name: wikipedia
-    engine: wikipedia
-    weight: 1
+    disabled: true
+  - name: brave
+    disabled: true
+  - name: qwant
+    disabled: true
+  - name: mojeek
+    disabled: true
+  - name: startpage
+    disabled: true
+  - name: google images
+    disabled: true
+  - name: google videos
+    disabled: true
+  - name: google news
+    disabled: true
+  # yahoo 在默认配置里是 disabled: true（实测 2026-10-29），
+  # 但它是本机唯一还能用的引擎——显式启用。
+  - name: yahoo
+    disabled: false
 
 outgoing:
-  request_timeout: 10
-  max_request_timeout: 15
+  # 超时压到 6 秒：单条查询里若还有慢引擎，别让它把整次请求的预算耗光
+  request_timeout: 6
+  max_request_timeout: 12
   useragent_suffix: "research-agent"
 
 server:

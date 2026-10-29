@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "track": "AI 陪伴 / 角色扮演（AI companion / role-play apps）",
+  "applies_to": ["猫箱", "百度搭子"],
+  "note": "金标准 = **人核对过的真实产品官网**。每条都要有 evidence（抓到的页面标题），没有证据的条目不算数。判定线与口径见 docs/discovery-recall-measurement.md。",
+  "known_bias": [
+    "这是真实竞品集合的**下界**：只含核实过的产品 → recall_L0 测出来的值偏保守（真实召回 ≥ 测出的值）；precision 测出来的值偏宽松（真实精确率 ≤ 测出的值）。",
+    "核实过程用中文搜索，**海外产品漏得多**。",
+    "同一产品的多个域名算**一条**（分母偏小，召回率略偏高）。"
+  ],
+  "subjects": {
+    "猫箱": {
+      "golden": [
+        {
+          "name": "星野",
+          "hosts": ["xingyeai.com", "m.xingyeai.com"],
+          "aliases": ["星野"],
+          "evidence": "title「星野_沉浸式智能体社区_星野官网_星野app」",
+          "verified_at": "2026-10-29"
+        },
+        {
+          "name": "筑梦岛",
+          "hosts": ["zhumengdao.com", "m.zhumengdao.com"],
+          "aliases": ["筑梦岛"],
+          "evidence": "title「筑梦岛_筑梦岛ai_筑梦岛app_筑梦岛官网_AI聊天_智能ai」",
+          "verified_at": "2026-10-29"
+        },
+        {
+          "name": "Talkie",
+          "hosts": ["talkie-ai.com"],
+          "aliases": ["Talkie", "Talkie AI"],
+          "evidence": "title「Talkie | Free AI Character Chat」（注意：talkie.ai 是 AI 医疗预约，是**同名不同物**）",
+          "verified_at": "2026-10-29"
+        },
+        {
+          "name": "Character.AI",
+          "hosts": ["character.ai"],
+          "aliases": ["Character.AI", "Character AI"],
+          "evidence": "title「character.ai | AI Chat, Reimagined–Your Words. Your World.」",
+          "verified_at": "2026-10-29"
+        },
+        {
+          "name": "Replika",
+          "hosts": ["replika.com", "create.replika.com", "replikazh.com"],
+          "aliases": ["Replika"],
+          "evidence": "title「Replika is the AI Friend to Do Life With」/「Replika官网中文」",
+          "verified_at": "2026-10-29"
+        },
+        {
+          "name": "AI剧情",
+          "hosts": ["aijuqingapp.com", "aistoryapp.com"],
+          "aliases": ["AI剧情", "Ai剧情"],
+          "evidence": "title「AI 角色聊天与多角色互动剧本 | AI剧情」（两个域名同一产品）",
+          "verified_at": "2026-10-29"
+        },
+        {
+          "name": "SoulAI",
+          "hosts": ["soulai.me"],
+          "aliases": ["SoulAI", "Soul AI"],
+          "evidence": "title「SoulAI官网 - 从角色设定到故事共创 | 中文AI对话指南」",
+          "verified_at": "2026-10-29"
+        },
+        {
+          "name": "AI风月",
+          "hosts": ["fengyueai.cn", "aifengyue.net", "fyueai.com"],
+          "aliases": ["风月AI", "AI风月", "Ai风月"],
+          "evidence": "title「风月AI官网 - AI角色广场与创作入口」/「AI风月 - 中文AI角色扮演网站」",
+          "verified_at": "2026-10-29"
+        },
+        {
+          "name": "OMate",
+          "hosts": ["omate.org"],
+          "aliases": ["OMate"],
+          "evidence": "title「OMate — AI 角色扮演 App｜兼容 SillyTavern 角色卡·世界书·预设」（注意：www.omate.com 是可穿戴设备公司，不同物）",
+          "verified_at": "2026-10-29"
+        },
+        {
+          "name": "Saylo",
+          "hosts": ["sayloai.com", "saylostudio.com"],
+          "aliases": ["Saylo", "Saylo AI", "Saylo Studio"],
+          "evidence": "title「Saylo | Free AI Character Story Chat」/「Saylo 官网 - 免费 AI 角色故事聊天中文版」",
+          "verified_at": "2026-10-29"
+        },
+        {
+          "name": "夜色AI",
+          "hosts": ["ai-yese.cn"],
+          "aliases": ["夜色ai", "夜色AI"],
+          "evidence": "title「夜色ai - 可自定义角色的沉浸式AI陪伴对话应用」",
+          "verified_at": "2026-10-29"
+        },
+        {
+          "name": "独响",
+          "hosts": ["duxiangai.com", "ring.duxiangai.com"],
+          "aliases": ["独响"],
+          "evidence": "title「独响App」/「响梦环 - 独响」",
+          "verified_at": "2026-10-29"
+        },
+        {
+          "name": "FeelinAI",
+          "hosts": ["feelinai.net.cn"],
+          "aliases": ["FeelinAI", "feelinai"],
+          "evidence": "title「FeelinAI聊天app官网 - 你的专属AI陪伴伙伴」",
+          "verified_at": "2026-10-29"
+        },
+        {
+          "name": "Shine探光",
+          "hosts": ["shine.xunruijie.com"],
+          "aliases": ["Shine", "Shine探光"],
+          "evidence": "title「Shine探光_沉浸式剧情_海外二次元_Shine官网」",
+          "verified_at": "2026-10-29"
+        },
+        {
+          "name": "Tofai",
+          "hosts": ["tofaipro.cn", "tofai.com.cn", "m.tofai.com.cn"],
+          "aliases": ["Tofai", "tofai"],
+          "evidence": "title「Tofai官网 - AI虚拟社交与情感陪伴智能聊天软件」/「tofai官网 - 感受近在咫尺的AI陪伴」",
+          "verified_at": "2026-10-29"
+        },
+        {
+          "name": "蔚蓝陪伴",
+          "hosts": ["weilanpeiban.com", "momotalk.top"],
+          "aliases": ["蔚蓝陪伴", "蔚蓝陪伴平台", "Momotalk"],
+          "evidence": "title「蔚蓝陪伴平台- AI跨次元聊天| 官网」/「蔚蓝陪伴- 跨次元聊天平台|Momotalk桃信蔚蓝档案ai对话」",
+          "verified_at": "2026-10-29"
+        },
+        {
+          "name": "逗逗",
+          "hosts": ["doudou.fun", "lynksoul.com", "docs.doudou.fun"],
+          "aliases": ["逗逗", "逗逗游戏伙伴"],
+          "evidence": "title「逗逗游戏伙伴| 陪你游戏，伴你生活」/「关于我们- 逗逗游戏伙伴| 懂游戏，更懂你」",
+          "verified_at": "2026-10-29"
+        },
+        {
+          "name": "CHAI",
+          "hosts": ["chai-ai.com", "chai-research.com"],
+          "aliases": ["CHAI", "Chai", "Chai AI"],
+          "evidence": "title「Chai AI — Chat with 25 Million AI Characters」/「CHAI | AI Characters & Stories」",
+          "verified_at": "2026-10-29"
+        }
+      ]
+    }
+  },
+  "negatives": [
+    {
+      "name": "星梦岛",
+      "hosts": ["xingdaomengvpn.com", "xdmgw.top"],
+      "why": "是 VPN 服务（「机场」），不是 AI 陪伴产品——第七轮实测误选过",
+      "verified_at": "2026-10-29"
+    },
+    {
+      "name": "Talkie(医疗)",
+      "hosts": ["talkie.ai"],
+      "why": "同名不同物：AI 医疗预约接待，不是 AI 陪伴（真站点是 talkie-ai.com）",
+      "verified_at": "2026-10-29"
+    },
+    {
+      "name": "Highrise",
+      "hosts": ["highrise.game"],
+      "why": "3D 虚拟世界社交 App，不是 AI 陪伴/角色扮演——第七轮实测误选过",
+      "verified_at": "2026-10-29"
+    },
+    {
+      "name": "小爱同学",
+      "hosts": ["xiaoai.mi.com"],
+      "why": "通用语音助手，不是同赛道——第七轮人工核对判否",
+      "verified_at": "2026-10-29"
+    }
+  ]
+}

@@ -113,6 +113,60 @@ def test_a_normal_empty_search_is_not_marked_as_a_backend_failure(monkeypatch):
     assert result.candidates == []
 
 
+def test_the_unified_search_entry_propagates_the_backend_error(monkeypatch):
+    """**回归**：统一入口 search() 曾经用 `except Exception: continue`
+    把 SearchBackendError 吞掉——信号出不去，"后端挂了"就被写成了"没搜到"。
+
+    实测事故（2026-10-29 召回测量）：SearXNG 三个引擎集体超时/限流，
+    原始响应里 unresponsive_engines 明明有值，但 search() 返回 []，
+    这一轮候选池为 0 却被当成**有效数据**记进了召回指标。
+    """
+    tool, _ = _tool_with(monkeypatch, [{
+        "results": [],
+        "unresponsive_engines": [["brave", "Suspended: too many requests"],
+                                 ["duckduckgo", "timeout"]],
+    }])
+    with pytest.raises(SearchBackendError):
+        tool.search("ChatGPT 官网")
+
+
+def test_the_unified_search_entry_still_returns_empty_when_engines_are_fine(monkeypatch):
+    """引擎都正常、只是这个查询没结果 → 正常返回空，不报错。"""
+    tool, _ = _tool_with(monkeypatch, [{"results": [], "unresponsive_engines": []}])
+    assert tool.search("asdkjhaskdjh") == []
+
+
+def test_nested_unresponsive_engines_shape_is_understood(monkeypatch):
+    """SearXNG 实际返回的是嵌套列表 [["brave", "Suspended..."], ...]，
+    错误信息里要能看到引擎名（实测 2026-10-29：真实响应就是这个形状）。"""
+    tool, _ = _tool_with(monkeypatch, [{
+        "results": [],
+        "unresponsive_engines": [["brave", "Suspended: too many requests"],
+                                 ["duckduckgo", "timeout"]],
+    }])
+    with pytest.raises(SearchBackendError) as excinfo:
+        tool.search_with_searxng("猫箱 竞品")
+    assert "brave" in str(excinfo.value)
+    assert "duckduckgo" in str(excinfo.value)
+
+
+def test_empty_candidate_pool_says_so_instead_of_blaming_media_pages(monkeypatch):
+    """候选池为空的措辞要与"搜到的全是媒体页"分开——不能把故障说成没竞品。"""
+    from src.workflow import search_stages as ss
+
+    class _EmptySearch:
+        def search(self, query, num_results=None):
+            return []
+
+    runner = ss.SearchStageRunner(_EmptySearch())
+    plan = _stub_plan()
+    runner.run_entity_anchor(plan)
+    result = runner.run_competitor_discovery(plan)
+    assert result.candidates == []
+    assert any("一条候选都没搜到" in note for note in result.notes)
+    assert not any("只有媒体/社区页" in note for note in result.notes)
+
+
 def _stub_plan():
     from src.workflow.research_plan import ResearchPlan, SearchStage
 

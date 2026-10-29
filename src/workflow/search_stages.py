@@ -95,6 +95,28 @@ def _strip_www(host: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
+def _canonical_product_url(url: str) -> str:
+    """把产品官网的子页归一到**首页**（根路径）。
+
+    实测（2026-10-29 召回测量）：搜"星野"回来的常常是
+    `xingyeai.com/create/login` 这类子页，而"产品官网首页是根路径或一层"
+    的判定会把子页当成非官网 → **产品明明找到了却被丢掉**（实测丢失了
+    星野、筑梦岛等好几个金标准产品）。归一后 URL 才是那条判定能认的形态。
+    """
+    raw = (url or "").strip()
+    if not raw or "//" not in raw:
+        return url
+    try:
+        parsed = urlparse(raw)
+    except ValueError:
+        return url
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return url
+    scheme = parsed.scheme or "https"
+    return f"{scheme}://{host}/"
+
+
 def _is_subject_itself(candidate_name: str, entity_name: str) -> bool:
     """候选是不是主体自己。
 
@@ -271,7 +293,11 @@ class SearchStageRunner:
         # 全是榜单文章，判完一个不剩；而模型其实知道同赛道是谁
         # （星野/筑梦岛/Talkie/Character.AI）。**模型提名，代码裁决。**
         for name in (plan.competitor_candidates or [])[:MAX_MODEL_CANDIDATES]:
-            for query in (f"{name} 官网", f"{name} 下载"):
+            # 查询词：实测（2026-10-29）"<名> 下载"几乎搜不到官网——
+            # "筑梦岛 下载" 0 条，"星野 下载" 只回下载站，而 "<名> 官方网站"
+            # 能捞到官网首页（星野官方网站 → xingyeai.com）。下载站页面一律
+            # 被站点类型判定剔掉，所以这一路查询**只有污染没有贡献**。
+            for query in (f"{name} 官网", f"{name} 官方网站"):
                 for item in self._search(query, "competitor_discovery"):
                     results.append(item)
         seen = set()
@@ -288,10 +314,20 @@ class SearchStageRunner:
             # （"Lovie 常見問題：AI 角色陪伴、AI 聊天與角色扮演"），
             # 拿它当竞品名会让后续的验证/反证查询全跑偏。
             name = clean_candidate_name(title, url)
+            matched_model_name = ""
             for proposed in model_names:
                 if proposed and (proposed in title or title.startswith(proposed)):
                     name = proposed
+                    matched_model_name = proposed
                     break
+            # 搜到的常常是产品官网的**子页**（星野 → xingyeai.com/create/login），
+            # 而"产品官网首页"是根路径或一层 → 子页会被判成非官网，**产品就此丢掉**。
+            # 实测（2026-10-29 召回测量）：星野/筑梦岛被找到的次数不少，
+            # 但每次都以子页形态出现，于是永远进不了候选池。
+            # 归一化只在这一种情况下做：页面标题**正好就是**模型提名的那个名字
+            # （下载站页面的标题是"星野下载-…"，不是"星野"，所以不会被误归一）。
+            if matched_model_name and _title_is_exactish(title, matched_model_name):
+                url = _canonical_product_url(url)
             candidate = Candidate(
                 name=name,
                 url=url,
@@ -382,10 +418,18 @@ class SearchStageRunner:
         else:
             # 一个官网都没剩：按口径**不拿媒体页充数**。宁可空手回去说
             # "没找到竞品官网"，也不把知乎/百科写成竞品。
-            result.notes.append(
-                "候选池里没有竞品官网（只有媒体/社区页）——按口径不入选，"
-                "本轮可能找不到竞品"
-            )
+            # 注意区分两种空：**一条候选都没搜到**（后端抖动或查询无效）
+            # 与"搜到了但全是媒体页"——措辞不能混，否则把故障说成"没竞品"。
+            if not result.candidates:
+                result.notes.append(
+                    "本轮搜索一条候选都没搜到（候选池为空）——"
+                    "这一轮没有可用数据，不能当成『没找到竞品』"
+                )
+            else:
+                result.notes.append(
+                    "候选池里没有竞品官网（只有媒体/社区页）——按口径不入选，"
+                    "本轮可能找不到竞品"
+                )
             pool = []
         admission = admit_competitors([c.to_dict() for c in pool], plan)
         result.selected = admission["selected"]

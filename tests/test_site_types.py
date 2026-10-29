@@ -378,3 +378,44 @@ def test_same_name_different_industry_keeps_the_exact_title_match():
     result = runner.run_competitor_discovery(plan)
     assert len(result.selected) == 1, result.selected
     assert "xingyeai" in result.selected[0]["url"], result.selected
+
+
+def test_a_subpage_of_the_official_site_is_canonicalized_to_the_homepage():
+    """搜到的官网**子页**要归一到首页，否则产品明明找到了却被丢掉。
+
+    实测（2026-10-29 召回测量）：搜"星野"回来的常常是
+    `xingyeai.com/create/login`，而"产品官网首页是根路径或一层"的判定
+    会把子页当成非官网 → 星野、筑梦岛等**金标准产品就这么丢了**
+    （那一轮 12 次运行里，18 个金标准产品平均 15 个没被发现）。
+    """
+    plan = rp.build_default_plan("猫箱")
+    plan.competitor_candidates = ["星野"]
+    stub = _StubSearch({
+        "猫箱 竞品": [],
+        "星野 官网": [
+            {"title": "星野", "url": "https://www.xingyeai.com/create/login", "content": "登录"},
+        ],
+    })
+    runner = ss.SearchStageRunner(stub)
+    result = runner.run_competitor_discovery(plan)
+    urls = [item["url"] for item in result.selected]
+    assert urls, "官网子页归一后应当能入选"
+    assert urls[0] == "https://www.xingyeai.com/", urls
+
+
+def test_a_download_page_title_is_not_canonicalized():
+    """归一只在**标题正好是那个名字**时做——下载站页面的标题是
+    "星野下载-…"，不能把它归一成下载站的首页（那会把门户洗成官网）。"""
+    plan = rp.build_default_plan("猫箱")
+    plan.competitor_candidates = ["星野"]
+    stub = _StubSearch({
+        "猫箱 竞品": [],
+        "星野 官网": [
+            {"title": "星野下载-某某下载站", "url": "https://dl.example.com/xingye/123.html",
+             "content": "下载"},
+        ],
+    })
+    runner = ss.SearchStageRunner(stub)
+    result = runner.run_competitor_discovery(plan)
+    urls = [item["url"] for item in result.selected]
+    assert "dl.example.com" not in " ".join(urls), urls

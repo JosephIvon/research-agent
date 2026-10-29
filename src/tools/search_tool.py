@@ -218,6 +218,7 @@ class SearchTool:
 
         tried = []
         safe_results: List[Dict[str, str]] = []
+        backend_error: Optional[SearchBackendError] = None
         for name in [selected_provider] + [
             p for p in SEARCH_FALLBACK_PROVIDERS if p != selected_provider
         ]:
@@ -227,6 +228,12 @@ class SearchTool:
             tried.append(name)
             try:
                 raw_results = fn(query, num_results)
+            except SearchBackendError as exc:
+                # 后端整体不可用（引擎集体超时/限流）——**不是"这个查询没有结果"**。
+                # 这个信号必须传出去：吞掉它就等于把"后端挂了"写成"没找到竞品"
+                # （实测 2026-10-29：召回测量里有一轮候选 0 被当成有效数据）。
+                backend_error = exc
+                continue
             except Exception:
                 continue
             safe_results = self._filter_results(raw_results, query)
@@ -234,6 +241,10 @@ class SearchTool:
                 break
 
         if tried and not safe_results:
+            if backend_error is not None:
+                # 所有后端都没给出可用结果，且主后端报的是"后端不可用"→
+                # 抛出去，让调用方把这一轮标成**数据无效**（而不是"没找到"）。
+                raise backend_error
             # 明确返回空（而不是把污染结果硬塞下去）：调用方会走
             # “搜索无结果”的分支，不会拿无关页面生成假报告。
             return []
