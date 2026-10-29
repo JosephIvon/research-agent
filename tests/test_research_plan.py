@@ -201,7 +201,8 @@ def test_build_plan_from_model_output():
     assert plan.entity_name == "百度搭子"
     assert plan.entity_type == "app"
     assert plan.min_count == 3 and plan.max_count == 5
-    assert plan.queries_for("competitor_discovery") == ["百度搭子 竞品"]
+    # 发现阶段的查询词由**代码**拼装，不看模型写的（见 test_discovery_queries_are_deterministic）
+    assert plan.queries_for("competitor_discovery") == ["百度搭子 竞品", "百度搭子 类似应用"]
     assert plan.top_angles[0] == "feature"
 
 
@@ -409,8 +410,9 @@ def test_paraphrased_stage_names_still_yield_queries():
         {"stage": "anchor", "queries": ["百度搭子 官网"]},
     ]
     plan = rp.build_plan_from_data(data, "找一下百度搭子的全部竞品信息")
-    assert plan.queries_for("competitor_discovery") == ["百度搭子 竞品"]
-    assert plan.queries_for("entity_anchor") == ["百度搭子 官网"]
+    # 发现/锚定两个阶段的查询词由代码拼装（不采信模型写的）
+    assert plan.queries_for("competitor_discovery") == ["百度搭子 竞品", "百度搭子 类似应用"]
+    assert plan.queries_for("entity_anchor") == ["百度搭子 官网", "百度搭子 App 官网"]
 
 
 def test_every_stage_always_has_queries():
@@ -422,6 +424,71 @@ def test_every_stage_always_has_queries():
     plan = rp.build_plan_from_data(data, "找一下百度搭子的全部竞品信息")
     assert plan.queries_for("competitor_discovery"), "竞品发现阶段不能没有查询词"
     assert plan.queries_for("entity_anchor")
+
+
+# ----------------------------------------------------------------------
+# 发现阶段的查询词：代码拼装，不由模型自由发挥
+# ----------------------------------------------------------------------
+
+def test_discovery_queries_are_deterministic_across_different_model_output():
+    """同一主体，模型每次写的查询词都不同 → 候选池整个换掉。
+
+    实测（2026-10-29，`tool_e2e_plan_variance.py`）：同一主体「猫箱」连生成
+    5 次计划，查询词两两 Jaccard 只有 0.097，10 对计划无一对逐字相同；
+    百度搭子 0.125。计划抽签 → 候选池抽签 → 稳定性线（S1）测的是抽签。
+
+    口径：**模型提名（找谁），代码拼装（怎么搜）**——同主体必得同查询。
+    """
+    variants = []
+    for model_queries in (
+        ["百度搭子 AI 官网", "百度搭子 是什么"],
+        ["百度搭子 App 官网", "百度搭子 字节"],
+        ["百度搭子 官网"],
+    ):
+        data = _plan_data()
+        data["search_plan"] = [
+            {"stage": "entity_anchor", "queries": model_queries},
+            {"stage": "competitor_discovery", "queries": model_queries},
+        ]
+        variants.append(rp.build_plan_from_data(data, "找一下百度搭子的全部竞品信息"))
+    assert variants[0].queries_for("competitor_discovery") == \
+        variants[1].queries_for("competitor_discovery") == \
+        variants[2].queries_for("competitor_discovery")
+    assert variants[0].queries_for("entity_anchor") == \
+        variants[1].queries_for("entity_anchor") == \
+        variants[2].queries_for("entity_anchor")
+
+
+def test_discovery_queries_ignore_what_the_model_wrote():
+    """模型给这两个阶段写的查询词**一律不采信**——靠提示词"请别写"是软约束。"""
+    data = _plan_data()
+    data["search_plan"] = [
+        {"stage": "entity_anchor", "queries": ["百度搭子 AI 官网"]},
+        {"stage": "competitor_discovery", "queries": ["百度搭子 字节", "百度搭子 开发者"]},
+    ]
+    plan = rp.build_plan_from_data(data, "x")
+    assert plan.queries_for("entity_anchor") == ["百度搭子 官网", "百度搭子 App 官网"]
+    assert plan.queries_for("competitor_discovery") == ["百度搭子 竞品", "百度搭子 类似应用"]
+
+
+def test_verify_and_counter_stages_keep_the_model_templates():
+    """逐家验证/反证的查询词是**按竞品展开的意图词**，仍用模型模板。"""
+    data = _plan_data()
+    data["search_plan"] = [
+        {"stage": "per_competitor_verify", "queries": ["{竞品名} 定价"]},
+        {"stage": "counter_evidence", "queries": ["{竞品名} 差评"]},
+    ]
+    plan = rp.build_plan_from_data(data, "x")
+    assert plan.queries_for("per_competitor_verify") == ["{竞品名} 定价"]
+    assert plan.queries_for("counter_evidence") == ["{竞品名} 差评"]
+
+
+def test_nominees_are_deduplicated_and_sorted():
+    """提名名单：去重 + 排序——顺序不该带随机性（同一份名单要走同一条路）。"""
+    data = _plan_data()
+    data["competitor_candidates"] = ["筑梦岛", "星野", "星野", "Talkie", "星野 "]
+    plan = rp.build_plan_from_data(data, "x")
+    assert plan.competitor_candidates == ["Talkie", "星野", "筑梦岛"]
 
 
 # ----------------------------------------------------------------------
@@ -471,7 +538,8 @@ def test_discovery_filters_aggregators_and_admits_official_sites():
 def test_entity_anchor_prefers_official_pages():
     plan = rp.build_plan_from_data(_plan_data(), "x")
     stub = _StubSearch({
-        "百度搭子 是什么": [
+        # 锚定阶段的查询词由代码拼装（"百度搭子 官网" / "百度搭子 App 官网"）
+        "百度搭子 官网": [
             {"title": "盘点文", "url": "https://zhuanlan.zhihu.com/p/2", "content": "介绍"},
             {"title": "百度搭子官网", "url": "https://dazi.test/", "content": "官方"},
         ],
@@ -575,7 +643,7 @@ def test_plan_round_trips_through_dict():
     assert restored.min_count == plan.min_count
     # to_dict 的权重保留 4 位小数（展示口径），还原后允许 1e-4 的差
     assert abs(restored.angle_weights["feature"] - plan.angle_weights["feature"]) < 1e-4
-    assert restored.queries_for("competitor_discovery") == ["百度搭子 竞品"]
+    assert restored.queries_for("competitor_discovery") == ["百度搭子 竞品", "百度搭子 类似应用"]
 
 
 def test_default_plan_has_search_queries():

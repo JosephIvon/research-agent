@@ -57,6 +57,25 @@ def _discovery_queries(plan: Any) -> List[str]:
     return out
 
 
+def _nominee_queries(plan: Any) -> List[str]:
+    """发现阶段**实际会发**的竞品官网查询词（由代码按模板拼，见 search_stages.py）。"""
+    out: List[str] = []
+    for name in (plan.competitor_candidates or []):
+        out.append(f"{name} 官网")
+        out.append(f"{name} 官方网站")
+    return out
+
+
+def _pool_queries(plan: Any) -> List[str]:
+    """决定候选池的**全部**输入：发现阶段的品类词 + 提名竞品的官网词。"""
+    out: List[str] = []
+    for stage in (plan.search_plan or []):
+        if str(getattr(stage, "stage", "")) == "competitor_discovery":
+            out.extend(stage.queries or [])
+    out.extend(_nominee_queries(plan))
+    return out
+
+
 def run(subject: str, repeats: int) -> Dict[str, Any]:
     llm = get_llm_client()
     plans: List[Dict[str, Any]] = []
@@ -71,6 +90,8 @@ def run(subject: str, repeats: int) -> Dict[str, Any]:
             "candidates": list(plan.competitor_candidates or []),
             "queries": _plan_queries(plan),
             "discovery_queries": _discovery_queries(plan),
+            "nominee_queries": _nominee_queries(plan),
+            "pool_queries": _pool_queries(plan),
         })
     return {"subject": subject, "repeats": repeats, "plans": plans}
 
@@ -81,27 +102,39 @@ def analyze(result: Dict[str, Any]) -> Dict[str, Any]:
     for i in range(len(plans)):
         for j in range(i + 1, len(plans)):
             a, b = plans[i], plans[j]
+            same_nominees = a["candidates"] == b["candidates"]
             pairs.append({
                 "pair": f"{i+1}-{j+1}",
                 "query_jaccard": round(_jaccard(a["queries"], b["queries"]), 4),
                 "discovery_query_jaccard": round(_jaccard(a["discovery_queries"], b["discovery_queries"]), 4),
                 "candidate_jaccard": round(_jaccard(a["candidates"], b["candidates"]), 4),
+                "pool_query_jaccard": round(_jaccard(a["pool_queries"], b["pool_queries"]), 4),
+                "same_nominee_set": same_nominees,
                 "identical_plan": a["queries"] == b["queries"] and a["candidates"] == b["candidates"],
             })
     n = len(plans)
-    mean_q = round(sum(p["query_jaccard"] for p in pairs) / len(pairs), 4) if pairs else None
-    mean_d = round(sum(p["discovery_query_jaccard"] for p in pairs) / len(pairs), 4) if pairs else None
-    mean_c = round(sum(p["candidate_jaccard"] for p in pairs) / len(pairs), 4) if pairs else None
-    identical = sum(1 for p in pairs if p["identical_plan"])
+
+    def _mean(key: str) -> Optional[float]:
+        if not pairs:
+            return None
+        return round(sum(p[key] for p in pairs) / len(pairs), 4)
+
+    same_set_pairs = [p for p in pairs if p["same_nominee_set"]]
     return {
         "subject": result["subject"],
         "runs": n,
         "sources": sorted({p["source"] for p in plans}),
         "errors": [p["error"] for p in plans if p["error"]],
-        "mean_query_jaccard": mean_q,
-        "mean_discovery_query_jaccard": mean_d,
-        "mean_candidate_jaccard": mean_c,
-        "identical_plan_pairs": identical,
+        "mean_query_jaccard": _mean("query_jaccard"),
+        "mean_discovery_query_jaccard": _mean("discovery_query_jaccard"),
+        "mean_candidate_jaccard": _mean("candidate_jaccard"),
+        "mean_pool_query_jaccard": _mean("pool_query_jaccard"),
+        "same_nominee_set_pairs": len(same_set_pairs),
+        "pool_query_jaccard_same_nominees": (
+            round(sum(p["pool_query_jaccard"] for p in same_set_pairs) / len(same_set_pairs), 4)
+            if same_set_pairs else None
+        ),
+        "identical_plan_pairs": sum(1 for p in pairs if p["identical_plan"]),
         "total_pairs": len(pairs),
         "pairs": pairs,
         "plans": plans,
@@ -129,27 +162,34 @@ def render_markdown(result: Dict[str, Any]) -> str:
         "",
         "## 2. 两两比较",
         "",
-        "| 对 | 查询词 Jaccard | 发现阶段查询词 Jaccard | 提名名单 Jaccard | 计划逐字相同 |",
-        "|---|---|---|---|---|",
+        "| 对 | 全量查询词 Jaccard | 发现/锚定阶段 Jaccard | 提名名单 Jaccard | 候选池输入 Jaccard | 同一份提名 | 计划逐字相同 |",
+        "|---|---|---|---|---|---|---|",
     ]
     for p in result["pairs"]:
         lines.append(
             f"| {p['pair']} | {p['query_jaccard']} | {p['discovery_query_jaccard']} | "
-            f"{p['candidate_jaccard']} | {'是' if p['identical_plan'] else '否'} |"
+            f"{p['candidate_jaccard']} | {p['pool_query_jaccard']} | "
+            f"{'是' if p['same_nominee_set'] else '否'} | {'是' if p['identical_plan'] else '否'} |"
         )
     lines += [
         "",
         "## 3. 结论",
         "",
-        f"- 查询词平均 Jaccard：**{result['mean_query_jaccard']}**",
-        f"- 发现阶段查询词平均 Jaccard：**{result['mean_discovery_query_jaccard']}**",
+        f"- 全量查询词平均 Jaccard：**{result['mean_query_jaccard']}**",
+        f"- 发现/锚定阶段查询词平均 Jaccard：**{result['mean_discovery_query_jaccard']}**"
+        "（这两个阶段由代码拼装，应当 = 1.0）",
         f"- 提名竞品平均 Jaccard：**{result['mean_candidate_jaccard']}**",
+        f"- 候选池输入（发现阶段实际会发的查询）平均 Jaccard：**{result['mean_pool_query_jaccard']}**",
+        f"- 提名名单相同的计划对：{result['same_nominee_set_pairs']}/{result['total_pairs']}"
+        f"（这些对的候选池输入 Jaccard = {result['pool_query_jaccard_same_nominees']}）",
         f"- 逐字相同的计划对：{result['identical_plan_pairs']}/{result['total_pairs']}",
         f"- 计划来源：{', '.join(result['sources'])}"
         + (f"｜错误：{'; '.join(result['errors'])}" if result["errors"] else ""),
         "",
-        "> 判读：发现阶段的查询词/提名名单如果 Jaccard 很低，说明**同一句式重复跑**",
-        "> 根本不是在测管线行为，而是在测计划抽签——上游的稳定性是下游稳定性的前提。",
+        "> 判读：**候选池输入**才是决定候选池的东西。",
+        "> 发现/锚定阶段的查询词由代码拼装（应当恒等），",
+        "> 剩下的差异全部来自**提名名单**——那是模型知识，不是措辞抽签。",
+        "> 提名名单相同时，候选池输入应当完全相同。",
     ]
     return "\n".join(lines)
 

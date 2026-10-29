@@ -1,0 +1,12 @@
+{
+  "authority": "self-improving",
+  "exported": "2026-10-29",
+  "qcheck_md5": "6d8081235a06710d6bc1e5d5378c8c13",
+  "rules_authority_md5": "8163a93668eb5ef9eb62a903f55e269f",
+  "hook_md5": "443a29cbeba8ff42dc56e5361d658a2e",
+  "ci_workflow_md5": "864e7c2652f9b300177764a70e987f2a",
+  "qcheck_version": "0.4.0",
+  "command": "python tools/sync-gate.py <repo_root>   # 重新导出这条；不写死本机路径：\n        # VENDOR.json 会进 git，绝对路径等于把用户目录/盘符布局推到远端（QR-15）",
+  "activate": "git config core.hooksPath .githooks   # 每个 clone 一次，git 不随 clone 传这条配置",
+  "note": "CI 跑的是这份快照。快照可能落后于权威源——本地提交时由 pre-commit 钩子 sync-gate.py --check 拦住；拿不到权威源的环境按快照跑并显式声明日期。快照本体被手改过的话，.quality/qcheck.py 会先比对自己与台账的 md5 再判定（exit 2）。"
+}

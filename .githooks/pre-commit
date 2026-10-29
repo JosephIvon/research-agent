@@ -1,0 +1,74 @@
+#!/bin/sh
+# qcheck 质量闸门（pre-commit）—— 唯一不依赖智能体配合的阻断点。
+# 只跑确定性检查；LLM 的评审意见永不进这里（quality-rules.md QR-00 的分级）。
+#
+# 本文件由 self-improving/tools/git-hooks/pre-commit 生成，权威源是那一份；
+# 仓内副本装在 .githooks/ 下，用 `git config core.hooksPath .githooks` 激活。
+set -u
+
+die() {
+    printf '%s\n' "$@" >&2
+    exit 1
+}
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || die "FATAL: pre-commit 不在 git 工作树里跑"
+
+# 判定工具按三级解析，**每一级都是显式的**，不猜：
+#   1) $QCHECK_HOME          —— 人指定的权威源
+#   2) $HOME/self-improving  —— 本机默认位置（仍是运行时求出来的，不是写死的盘符）
+#   3) <repo>/.quality/      —— 提交进仓的快照（CI、新克隆、没有权威源的机器走这条）
+auth=""
+if [ -n "${QCHECK_HOME:-}" ] && [ -f "$QCHECK_HOME/tools/qcheck.py" ]; then
+    auth=$QCHECK_HOME
+elif [ -f "${HOME:-}/self-improving/tools/qcheck.py" ]; then
+    auth="${HOME:-}/self-improving"
+fi
+
+py=${QCHECK_PYTHON:-}
+if [ -z "$py" ]; then
+    for cand in python python3 py; do
+        if command -v "$cand" >/dev/null 2>&1; then
+            py=$cand
+            break
+        fi
+    done
+fi
+[ -n "$py" ] || die "FATAL: PATH 上找不到 python 解释器；设 QCHECK_PYTHON=<解释器路径>"
+
+snap="$root/.quality/qcheck.py"
+snap_rules="$root/.quality/rules.min.md"
+
+if [ -n "$auth" ]; then
+    tool="$auth/tools/qcheck.py"
+    rules="$auth/quality-rules.md"
+    [ -f "$rules" ] || die \
+        "FATAL: 规则文件不在 $rules —— 强度策略没有权威源，qcheck 会拒绝判定。" \
+        "  修法：补回 quality-rules.md，或用 QCHECK_HOME 指对位置。"
+    # 有权威源就必须校验快照没落后：否则仓里那份 .quality/ 会变成没人知道过期的第二套判定。
+    gate="$auth/tools/sync-gate.py"
+    if [ -f "$gate" ] && [ -f "$snap" ]; then
+        # 不用临时文件：Git Bash 的 /tmp 对 Windows 侧进程不可见，且失败时容易留下垃圾。
+        if ! stale=$( "$py" "$gate" "$root" --check 2>&1 ); then
+            printf '%s\n' "$stale" >&2
+            die "  ⇒ 快照落后就拦：改判定只改权威源，然后重新导出快照。"
+        fi
+    fi
+    printf '闸门用权威源判定: %s\n' "$rules"
+elif [ -f "$snap" ] && [ -f "$snap_rules" ]; then
+    tool=$snap
+    rules=$snap_rules
+    # 按快照跑必须说出来：CI 绿灯不等于最新规则绿灯。日期在 VENDOR.json 里。
+    printf 'NOTICE: 本次按仓内快照判定（.quality/，非权威源）。见 .quality/VENDOR.json 的 exported 日期。\n'
+else
+    die \
+        "FATAL: 闸门既找不到权威源也找不到快照 —— 这一次提交没有任何判定发生。" \
+        "  找过的路径: \$QCHECK_HOME/tools/qcheck.py、\$HOME/self-improving/tools/qcheck.py、$snap" \
+        "  修法（二选一，不许选'跳过'）：" \
+        "    export QCHECK_HOME=<self-improving 目录>" \
+        "    或在权威源上跑 python tools/sync-gate.py <repo> 把快照提交进来" \
+        "  静默跳过的闸门等于没有闸门（QR-15）。不要 --no-verify，不要删钩子。"
+fi
+
+# --staged 只检本次要提交的文件：闸门增量生效，不因为仓里存量债拦住所有提交。
+# qcheck 退出码：0 通过 / 1 阻断命中 / 2 工具或规则缺失——2 同样拦，坏掉的闸门不算通过。
+exec "$py" "$tool" --staged --root "$root" --rules-file "$rules"

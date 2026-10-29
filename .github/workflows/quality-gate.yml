@@ -1,0 +1,119 @@
+# 质量闸门（qcheck）—— 由 self-improving/tools/ci/quality-gate.yml 导出，不要手改。
+#
+# 改这个文件要改权威源，然后重新导出：python tools/sync-gate.py <仓>
+# 手改这里的后果：本地 pre-commit 用权威源判定、CI 用这份被改过的文件判定，
+# 同一份代码两边结论不同——那正是 quality-rules.md 里 QR-11 要拦的事。
+#
+# 跑什么：仓内快照 `.quality/qcheck.py` + `.quality/rules.min.md`（规则强度表的抽取版）。
+# 快照会先验自己的 md5 与 .quality/VENDOR.json 的台账是否一致（qcheck 里的
+# verify_snapshot）——不一致就 exit 2 不产出判定。托管 runner 上拿不到权威源，
+# 所以"闸门本体在这份副本里被改过没改过"必须能自证，否则 CI 的绿是手改出来的绿。
+#
+# 为什么默认只判"本次改动的文件"：research-agent 全仓有存量债务，msr 有 32 处阻断项。
+# 全量拦=CI 永久红=没人看=闸门失效。增量拦让债务只在有人碰它时才要求清偿。
+# 全量债务报告用 workflow_dispatch(scope=all)，只报不拦。
+#
+# 退出码约定与工具一致：0=通过 / 1=有阻断项（红）/ 2=环境或依赖缺失（红，且日志会
+# 说明缺什么）。2 不会伪装成 0——CI 在什么都没判定时报绿是假阴性。
+name: Quality gate (qcheck)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "changed=只判本次改动（会拦）/ all=全仓债务报告（不拦）"
+        required: false
+        default: changed
+        type: choice
+        options:
+          - changed
+          - all
+
+permissions:
+  contents: read
+
+jobs:
+  qcheck:
+    name: 确定性质量闸门
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # fetch-depth 0：要拿 base 提交做差集，默认浅克隆会让 `git diff BASE` 直接失败
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          # qcheck 只用标准库，版本只要能跑就行；这里钉 3.12 与仓内其它 job 对齐
+          python-version: "3.12"
+
+      - name: 快照就位检查（缺快照=没有任何判定发生，必须红）
+        run: |
+          missing=0
+          for f in .quality/qcheck.py .quality/rules.min.md .quality/VENDOR.json; do
+            [ -f "$f" ] || { echo "FAIL: 缺 $f"; missing=1; }
+          done
+          if [ "$missing" = 1 ]; then
+            echo "  修法（在有权威源的机器上）：python tools/sync-gate.py <仓根目录>"
+            echo "  闸门本体与规则快照都不在仓库里时，这条 CI 什么也没检查——不许空跑报绿。"
+            exit 2
+          fi
+          echo "快照就位，导出日 $(python -c "import json;print(json.load(open('.quality/VENDOR.json'))['exported'])")"
+
+      - name: 全仓债务报告（scope=all，只报不拦）
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.scope == 'all' }}
+        run: |
+          echo "::notice title=闸门口径::本轮为全仓债务报告，按快照（导出日见上）判定，不拦提交"
+          python .quality/qcheck.py --root . --rules-file .quality/rules.min.md --all
+          echo "（上面红/绿不影响本步：--all 模式只出报告，拦截归增量模式管）"
+        continue-on-error: true
+
+      - name: 增量闸门（本次改动的文件，红=有阻断项）
+        if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.scope == 'all') }}
+        # 事件字段一律经 env: 传进 bash，不在 run: 里内联 ${{ }}：
+        # 内联是模板注入面（分支名/PR 标题由提 PR 的人控制，展开后就是 shell 代码），
+        # 而且实测把值塞进双引号里会多出引号字面量、把 merge-base 静默变成失败。
+        # env: 的值不经过 shell 解析，$IFS、反引号、$( ) 都只是字符串。
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -eu
+          BASE=""
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            BASE="$(git merge-base "origin/$BASE_REF" HEAD 2>/dev/null || true)"
+          elif [ "$EVENT_NAME" = "push" ]; then
+            case "$EVENT_BEFORE" in
+              ""|0000000000000000000000000000000000000000) BASE="" ;;
+              *) BASE="$EVENT_BEFORE" ;;
+            esac
+          fi
+          # 新分支首推 / force-push / dispatch 都没有可用基线：退回"本次提交自身"的差集，
+          # 连这个都拿不到（仓库只有一个提交）就明确说明本轮判了什么范围，不静默跳过。
+          if [ -z "$BASE" ]; then
+            BASE="$(git rev-parse --verify -q 'HEAD~1^{commit}' 2>/dev/null || true)"
+          fi
+          # BASE 必须是纯十六进制提交号才能交给 qcheck：git rev-parse 失败时会把参数原样
+          # 吐回 stdout（实测得到字面量 'HEAD~1'），脏值传下去只会变成让人误读的 FATAL。
+          case "$BASE" in
+            ''|*[!0-9a-fA-F]*) BASE="" ;;
+          esac
+          if [ -z "$BASE" ]; then
+            echo "::error::仓库里只有一个提交，无法算差集；本轮改用全仓扫描并照常拦截。" \
+              "如果是新仓，这是正确行为；如果是历史被截断，请先补 fetch-depth。"
+            python .quality/qcheck.py --root . --rules-file .quality/rules.min.md --all
+            exit $?
+          fi
+          echo "::notice title=判定范围::BASE=$BASE（只判与它相比的改动文件）"
+          python .quality/qcheck.py --root . --rules-file .quality/rules.min.md --changed "$BASE"
+
+      - name: 闸门本体被改动时的提示（exit 2 会走到这里，把修法直接打在日志末尾）
+        if: ${{ failure() }}
+        run: |
+          echo "--- 若上面报 '快照被改动' 或 '快照落后'："
+          echo "    CI 判的是 .quality/ 里的副本。在本地权威源改规则/工具后必须重新导出："
+          echo "    python tools/sync-gate.py <仓根目录> && git add .quality .githooks && git commit"
+          echo "    （git add 按名字列，不要 -A）"

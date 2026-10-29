@@ -193,7 +193,12 @@ _SYSTEM_PROMPT = (
     "5. search_plan 按四个阶段给查询词：entity_anchor（弄清主体是什么）、"
     "competitor_discovery（找候选竞品）、per_competitor_verify（逐家查证）、"
     "counter_evidence（找缺点与评价）。查询词要短，是**搜索词**不是任务句。\n"
-    "5b. **competitor_discovery 的查询词要能直接命中产品官网**。"
+    "5a. **entity_anchor 与 competitor_discovery 这两个阶段的查询词不用你写**"
+    "（系统按固定模板生成，写了也会被覆盖）——写这两个阶段只是为了占位。"
+    "你只需要给 per_competitor_verify 与 counter_evidence 两个阶段的查询词，"
+    "它们是**模板**：写成带占位符的形式，如「{竞品名} 定价」「{竞品名} 官网 功能」，"
+    "系统会把真竞品名填进去。\n"
+    "5b. **per_competitor_verify / counter_evidence 的查询词要能直接命中产品官网**。"
     "实测（2026-10-28）：品类级的对比/排行词（'AI陪伴 应用 对比'、'AI陪伴 应用 排行'）"
     "搜回来的全是榜单文章与工具目录，入选名单一家真竞品都没有。"
     "要写成能落到**某个产品首页**的形式："
@@ -530,12 +535,12 @@ def _default_search_queries(entity_name: str) -> List[SearchStage]:
     return [
         SearchStage(
             stage="entity_anchor",
-            queries=[f"{name} 是什么", f"{name} 官网"],
+            queries=list(_deterministic_queries("entity_anchor", name, "")),
             acceptance="命中主体官方源，用于确认主体是什么",
         ),
         SearchStage(
             stage="competitor_discovery",
-            queries=[f"{name} 竞品", f"{name} 类似产品", f"{name} 替代方案"],
+            queries=list(_deterministic_queries("competitor_discovery", name, "")),
             acceptance="产出候选池，媒体/百科页会被剔除",
         ),
         SearchStage(
@@ -549,6 +554,141 @@ def _default_search_queries(entity_name: str) -> List[SearchStage]:
             acceptance="补齐限制与评价",
         ),
     ]
+
+
+# ----------------------------------------------------------------------
+# 发现阶段的查询词：由代码按模板拼装，不由模型自由发挥
+# ----------------------------------------------------------------------
+#
+# 为什么（实测 2026-10-29，`tool_e2e_plan_variance.py`）：
+# 同一主体「猫箱」连生成 5 次调研计划，**查询词两两 Jaccard 只有 0.097**
+# （百度搭子 0.125），10 对计划**无一对逐字相同**。模型每次都换写法：
+# "猫箱 AI 官网" / "猫箱 官网" / "猫箱 App 官网" / "猫箱 AI 官方"……
+#
+# 计划查询词每次换 → 搜到的结果集换 → 候选池换 → 入选名单换
+# → "同一句式重复跑"的稳定性线（S1）测的是**计划抽签**，不是管线行为；
+# 跨句式的 Jaccard（Q3）更是必然为 0。
+#
+# 口径：**模型提名（主体名、竞品名单、赛道判断），代码拼装（查询词）**。
+# 模型仍然决定"找谁"，代码决定"怎么搜"——同输入必得同查询，
+# 差异只可能来自搜索后端本身。
+#
+# 这两个阶段的查询词**不再采信模型输出**（哪怕模型照旧写了也照样覆盖）：
+# 依赖提示词"请别写"是软约束，模板拼装才是硬约束。
+
+# 主体类型 → 锚定阶段的第二种问法。写死映射而不是让模型现编，
+# 是为了"同一主体每次问法一样"。
+_ANCHOR_TYPE_PHRASE = {
+    "app": "App 官网",
+    "application": "App 官网",
+    "website": "网站",
+    "site": "网站",
+    "product": "产品官网",
+    "service": "服务官网",
+    "platform": "平台官网",
+}
+
+# 发现阶段的品类级问法（固定两条）。竞品官网的查询词由发现阶段执行器
+# 按"<提名竞品名> 官网 / 官方网站"另发（见 search_stages.py），不在这两条里。
+_DISCOVERY_TEMPLATES = ("{name} 竞品", "{name} 类似应用")
+
+
+def _deterministic_queries(stage: str, entity_name: str, entity_type: str) -> List[str]:
+    """按固定模板拼装 entity_anchor / competitor_discovery 的查询词。
+
+    同一个 (stage, 主体名, 主体类型) 必得同一组查询词——
+    这是"计划不再抽签"的实现方式。
+    """
+    name = (entity_name or "").strip()
+    if not name:
+        return []
+    if stage == "entity_anchor":
+        queries = [f"{name} 官网"]
+        phrase = _ANCHOR_TYPE_PHRASE.get((entity_type or "").strip().lower())
+        if phrase:
+            queries.append(f"{name} {phrase}")
+    elif stage == "competitor_discovery":
+        queries = [tpl.format(name=name) for tpl in _DISCOVERY_TEMPLATES]
+    else:
+        return []
+    # 去重（主体名本身带"官网"时模板会撞车）
+    seen = set()
+    unique = []
+    for query in queries:
+        if query and query not in seen:
+            seen.add(query)
+            unique.append(query)
+    return unique
+
+
+def _normalize_nominees(raw: Any) -> List[str]:
+    """把模型提名的竞品名单整理成**稳定顺序**。
+
+    去重（同名只留一个，大小写不敏感）+ **排序**：提名名单是"模型知识"，
+    顺序不该带随机性——发现阶段按这个顺序逐个发查询，顺序变了就等于
+    同一份计划换了个跑法（实测：同主体两次提名 4–6 个，顺序每次不同）。
+    排序让"同一份名单"在任何一次运行里都按同一条路走。
+    """
+    seen = set()
+    names: List[str] = []
+    for item in (raw or []):
+        if not isinstance(item, str):
+            continue
+        name = item.strip()
+        if not name:
+            continue
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+    return sorted(names)[:12]
+
+
+def _apply_deterministic_queries(
+    stages: List[SearchStage],
+    entity_name: str,
+    entity_type: str,
+) -> List[SearchStage]:
+    """把 entity_anchor / competitor_discovery 两个阶段的查询词换成代码拼装的。
+
+    模型写的这两个阶段的查询词**丢弃**：它们是"计划抽签"的主要来源
+    （实测 Jaccard 0.097）。其余阶段（逐家验证、反证）仍用模型的模板，
+    因为它们是**按竞品展开的意图词**（"{竞品名} 定价"这类），
+    写错了只会少查一个角度，不会把候选池换掉。
+    """
+    out: List[SearchStage] = []
+    seen_stages = set()
+    for stage in stages:
+        if stage.stage in ("entity_anchor", "competitor_discovery"):
+            queries = _deterministic_queries(stage.stage, entity_name, entity_type)
+            if queries:
+                out.append(SearchStage(
+                    stage=stage.stage,
+                    queries=queries,
+                    acceptance=stage.acceptance,
+                ))
+                seen_stages.add(stage.stage)
+            continue
+        out.append(stage)
+        seen_stages.add(stage.stage)
+    # 模型没给这两个阶段时补上（缺阶段 = 该阶段一条都不搜 = 候选池空）
+    fallback_acceptance = {
+        "entity_anchor": "命中主体官方源，用于确认主体是什么",
+        "competitor_discovery": "产出候选池，媒体/百科页会被剔除",
+    }
+    for stage_name in ("entity_anchor", "competitor_discovery"):
+        if stage_name in seen_stages:
+            continue
+        queries = _deterministic_queries(stage_name, entity_name, entity_type)
+        if not queries:
+            continue
+        out.append(SearchStage(
+            stage=stage_name,
+            queries=queries,
+            acceptance=fallback_acceptance[stage_name],
+        ))
+    return out
 
 
 def _entity_name_from_query(user_query: str) -> str:
@@ -761,6 +901,15 @@ def build_plan_from_data(data: Dict[str, Any], user_query: str) -> ResearchPlan:
             acceptance=fallback.acceptance,
         ))
 
+    # **发现阶段的查询词由代码拼装**（2026-10-29）：模型每次生成的查询词都不一样
+    # （实测 Jaccard 0.097），会把候选池整个换掉——稳定性线测到的就成了
+    # "计划抽签"而不是管线行为。模型仍然决定"找谁"，代码决定"怎么搜"。
+    stages = _apply_deterministic_queries(
+        stages,
+        entity_name_for_queries,
+        fold_entity_type(entity.get("entity_type")),
+    )
+
     questions = [
         {"question": str(q.get("question") or ""), "default": str(q.get("default") or "")}
         for q in (data.get("open_questions") or [])
@@ -788,10 +937,7 @@ def build_plan_from_data(data: Dict[str, Any], user_query: str) -> ResearchPlan:
             if str(d).strip()
         ],
         criteria=criteria,
-        competitor_candidates=[
-            str(c).strip() for c in (data.get("competitor_candidates") or [])
-            if isinstance(c, str) and str(c).strip()
-        ][:12],
+        competitor_candidates=_normalize_nominees(data.get("competitor_candidates")),
         # 准入标准从"描述"变成"可执行"：解析不出就标记，别让报告里的口径
         # 变成谎言（声明与执行脱节是这一轮实测里最贵的坑）
         admission_rule=parse_admission_rule(
