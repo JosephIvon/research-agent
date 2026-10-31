@@ -191,3 +191,58 @@ def test_host_overlap_across_phrasings():
     )
     assert r["jaccard"] == pytest.approx(0.3333, abs=1e-4)
     assert r["common"] == ["xingyeai.com"]
+
+
+# ----------------------------------------------------------------------
+# 换分母：顶层 golden（与主体无关的"赛道全集"）
+# ----------------------------------------------------------------------
+
+def test_top_level_golden_is_subject_independent(tmp_path):
+    """顶层 "golden" = 与主体无关的金标准（赛道全集）。
+
+    金标准扩成全集后，两个主体（猫箱、百度搭子）共用同一份赛道全集，
+    不再按 subject 分块——分块会把全集复制两遍，改一处漏一处。
+    """
+    path = tmp_path / "universe.json"
+    path.write_text(json.dumps({
+        "version": 2,
+        "track": "AI 陪伴 / 角色扮演",
+        "golden": [
+            {"name": "A", "hosts": ["a.com"], "evidence": "title「A」"},
+            {"name": "B", "hosts": ["b.com"], "evidence": "title「B」"},
+        ],
+    }), encoding="utf-8")
+    gs = rm.GoldenSet.from_file(str(path))
+    assert len(gs) == 2
+    assert gs.match("https://a.com/x")["name"] == "A"
+    # 指定主体也照样用全集（顶层优先）
+    gs2 = rm.GoldenSet.from_file(str(path), subject="猫箱")
+    assert len(gs2) == 2
+
+
+def test_subject_blocks_still_work_when_no_top_level_golden(tmp_path):
+    """没有顶层 golden 时，仍按 subjects 分块取（向后兼容）。"""
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps({
+        "subjects": {"猫箱": {"golden": [{"name": "A", "hosts": ["a.com"]}]}},
+    }), encoding="utf-8")
+    assert len(rm.GoldenSet.from_file(str(path), subject="猫箱")) == 1
+    assert len(rm.GoldenSet.from_file(str(path))) == 1
+
+
+def test_bigger_denominator_lowers_recall_for_the_same_run():
+    """换分母的算术口径：同一批命中，分母越大 recall 越低。
+
+    这是"口径对照"能并列报的前提——两个数都来自同一批 runs。
+    """
+    run = _run(
+        candidates=[{"url": "https://a.com/", "site_type": "product_site", "aggregator": False}],
+        scored=[{"url": "https://a.com/", "name": "A", "score": 0.75, "gate_passed": True}],
+        selected=[{"url": "https://a.com/", "name": "A"}],
+    )
+    small = rm.GoldenSet([{"name": "A", "hosts": ["a.com"]}])
+    big = rm.GoldenSet([{"name": "A", "hosts": ["a.com"]},
+                        {"name": "B", "hosts": ["b.com"]},
+                        {"name": "C", "hosts": ["c.com"]}])
+    assert rm.funnel_metrics(run, small)["recall"]["L0"] == pytest.approx(1.0)
+    assert rm.funnel_metrics(run, big)["recall"]["L0"] == pytest.approx(1 / 3)

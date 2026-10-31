@@ -86,6 +86,11 @@ class GoldenSet:
         from pathlib import Path
 
         data = json.loads(Path(path).read_text(encoding="utf-8"))
+        # 顶层 "golden" = **与主体无关**的金标准（例如"该赛道全集"）：
+        # 两个主体（猫箱、百度搭子）共用同一份赛道全集时用它。
+        top = data.get("golden")
+        if isinstance(top, list) and top:
+            return cls(list(top))
         subjects = data.get("subjects") or {}
         if subject and subject in subjects:
             entries = (subjects[subject] or {}).get("golden") or []

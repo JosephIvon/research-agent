@@ -138,6 +138,75 @@ async def run_with_retry(llm, search_tool, subject, style, query, attempts=3):
     return last, True
 
 
+def _tier_subsets(golden: rm.GoldenSet) -> Dict[str, rm.GoldenSet]:
+    """按 source_tier 把金标准切成几个口径视图。
+
+    为什么要分层：赛道全集里每条的来源不等价——
+    独立来源（导航站/媒体/社区/英文榜单/Wikipedia/Reddit）中立，
+    **厂商自写横评**有自我推荐的偏倚，应用商店层是**搜索 API 的抽样**
+    （不可复现），而"只有本管线发现"的条目说明**外部来源也漏了**。
+    同一批实跑在每个口径下的召回并列报，读者才能看清结论对口径有多敏感。
+    """
+    entries = list(golden.entries)
+    if not any(e.get("source_tier") for e in entries):
+        return {}
+    def pick(tiers):
+        return rm.GoldenSet([e for e in entries if (e.get("source_tier") or "") in tiers])
+    subsets = {
+        "口径：仅独立来源": pick({"external"}),
+        "口径：独立来源+抽样核验": pick({"external", "sample_verified"}),
+        "口径：全部（全集）": golden,
+    }
+    return {k: v for k, v in subsets.items() if len(v) > 0}
+
+
+def analyze_denominators(runs: List[Dict[str, Any]],
+                         goldens: Dict[str, rm.GoldenSet]) -> List[Dict[str, Any]]:
+    """**同一批实跑**在多份金标准下的召回对照（换分母，不重跑）。
+
+    为什么要：把金标准从"抽样 18 个"扩成"赛道全集"之后，
+    新旧口径的 R1 **不能直接相减**（分母变了）。要在**同一批 runs** 上
+    并列算出来，才谈得上"换口径后召回是升是降"。
+    判定线（R1 ≥0.70 等）**不动**，这里只并列报同一阈值下的两个数。
+    """
+    valid = [r for r in runs if not _invalid(r)]
+    all_goldens: Dict[str, rm.GoldenSet] = dict(goldens)
+
+    def hostset(g: rm.GoldenSet):
+        return frozenset(h for e in g.entries for h in (e.get("hosts") or []))
+
+    # 带 source_tier 的金标准（赛道全集）自动补上分层视图：
+    # 同一批实跑在"仅独立来源/独立来源+抽样/全部"三个口径下并列报。
+    for label, g in list(goldens.items()):
+        for sub_label, subset in _tier_subsets(g).items():
+            if hostset(subset) in {hostset(x) for x in all_goldens.values()}:
+                continue
+            all_goldens[f"{label}·{sub_label}"] = subset
+    out: List[Dict[str, Any]] = []
+    for label, golden in all_goldens.items():
+        per_run = [rm.funnel_metrics(rec, golden) for rec in valid]
+        recalls = _agg([m["recall"]["L0"] for m in per_run])
+        keeps_l1 = _agg([m["keep"]["L1"] for m in per_run])
+        keeps_l3 = _agg([m["keep"]["L3"] for m in per_run])
+        # 口径不完整度：有 source_tier 字段的金标准里，
+        # "只有本管线发现、外部来源没列"的条目数 = 这个口径至少还漏了多少。
+        tiers: Dict[str, int] = {}
+        for entry in golden.entries:
+            tier = str(entry.get("source_tier") or "未标注")
+            tiers[tier] = tiers.get(tier, 0) + 1
+        out.append({
+            "label": label,
+            "golden_total": len(golden),
+            "recall_L0": recalls,
+            "keep_L1": keeps_l1,
+            "keep_L3": keeps_l3,
+            "r1_verdict": rm.verdict("R1", recalls, LINES["R1"][2]),
+            "tiers": tiers,
+            "per_run_recall": [m["recall"]["L0"] for m in per_run],
+        })
+    return out
+
+
 def analyze(runs: List[Dict[str, Any]], golden: rm.GoldenSet) -> Dict[str, Any]:
     """算全部指标：每次运行的漏斗 + 每组的稳定性 + 跨句式对照。"""
     valid = [r for r in runs if not _invalid(r)]
@@ -339,6 +408,28 @@ def render_markdown(analysis: Dict[str, Any], lines: Dict[str, Any],
                    f"{', '.join(c['only_task']) or '（无）'} | "
                    f"{', '.join(c['only_search']) or '（无）'} |")
     out.append("")
+    denominators = meta.get("denominators") or []
+    if denominators:
+        out.append("## 6. 口径对照（同一批实跑，换分母）")
+        out.append("")
+        out.append("| 金标准口径 | 条目数 | recall_L0 | keep_L1 | keep_L3 | R1 判定（线 ≥0.70） |")
+        out.append("|---|---|---|---|---|---|")
+        for item in denominators:
+            out.append(
+                f"| {item['label']} | {item['golden_total']} | "
+                f"{item['recall_L0'] if item['recall_L0'] is not None else '不判'} | "
+                f"{item['keep_L1'] if item['keep_L1'] is not None else '不判'} | "
+                f"{item['keep_L3'] if item['keep_L3'] is not None else '不判'} | "
+                f"{item['r1_verdict']['status']} |")
+        out.append("")
+        for item in denominators:
+            if item.get("tiers") and len(item["tiers"]) > 1:
+                parts = "、".join(f"{k} {v} 条" for k, v in sorted(item["tiers"].items()))
+                out.append(f"- {item['label']} 的来源构成：{parts}")
+        out.append("")
+        out.append("> 两个口径的分母不同，**数值不可直接相减**；"
+                   "判定线（R1 ≥ 0.70）实跑前定稿，未改动。")
+        out.append("")
     return "\n".join(out)
 
 
@@ -366,8 +457,13 @@ async def main_async(args) -> int:
     md_path = Path("output") / f"recall_{ts}.md"
     analysis = analyze(runs, golden)
     lines = line_results(analysis)
+    goldens = {"主口径：" + Path(args.golden).stem: golden}
+    for extra in (args.golden_extra or []):
+        goldens["对照口径：" + Path(extra).stem] = rm.GoldenSet.from_file(str(extra))
+    denominators = analyze_denominators(runs, goldens)
     meta = {"generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "golden_file": str(args.golden)}
+            "golden_file": str(args.golden),
+            "denominators": denominators}
     raw_path.write_text(json.dumps({"meta": meta, "runs": runs, "analysis": analysis,
                                     "lines": lines}, ensure_ascii=False, indent=2),
                         encoding="utf-8")
@@ -380,6 +476,11 @@ async def main_async(args) -> int:
         val = item["overall"]
         print(f"  {code}: {item['metric']} = {val if val is not None else '不判'} "
               f"（线 ≥{item['threshold']}）→ {item['verdict']['status']}")
+    print()
+    print("口径对照（同一批实跑，换分母；判定线未改）：")
+    for item in denominators:
+        print(f"  {item['label']:34s} {item['golden_total']:3d} 条｜"
+              f"recall_L0={item['recall_L0']} → R1 {item['r1_verdict']['status']}")
     failed = [c for c in ("R1", "R2", "R3", "S1") if lines[c]["verdict"]["pass"] is False]
     return 1 if failed else 0
 
@@ -387,6 +488,8 @@ async def main_async(args) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="发现召回实跑（只跑发现阶段）")
     parser.add_argument("--golden", default=str(GOLDEN_FILE), help="金标准文件")
+    parser.add_argument("--golden-extra", nargs="*", default=None,
+                        help="对照口径的金标准文件（同一批实跑换分母，不重跑）")
     parser.add_argument("--repeats", type=int, default=3, help="每种句式重复几次")
     parser.add_argument("--attempts", type=int, default=3, help="数据无效时最多重试几次")
     parser.add_argument("--pause", type=float, default=3.0, help="两次运行之间的间隔秒数")
@@ -399,6 +502,10 @@ def main() -> int:
         analysis = analyze(data["runs"], golden)
         lines = line_results(analysis)
         meta = data.get("meta") or {}
+        goldens = {"主口径：" + Path(args.golden).stem: golden}
+        for extra in (args.golden_extra or []):
+            goldens["对照口径：" + Path(extra).stem] = rm.GoldenSet.from_file(str(extra))
+        meta["denominators"] = analyze_denominators(data["runs"], goldens)
         md = Path(args.analyze).with_suffix(".md")
         md.write_text(render_markdown(analysis, lines, meta), encoding="utf-8")
         print(f"报告：{md.resolve()}")
@@ -407,6 +514,10 @@ def main() -> int:
             val = item["overall"]
             print(f"  {code}: {item['metric']} = {val if val is not None else '不判'} "
                   f"（线 ≥{item['threshold']}）→ {item['verdict']['status']}")
+        print("口径对照：")
+        for item in meta["denominators"]:
+            print(f"  {item['label']:34s} {item['golden_total']:3d} 条｜"
+                  f"recall_L0={item['recall_L0']} → R1 {item['r1_verdict']['status']}")
         return 0
     return asyncio.run(main_async(args))
 

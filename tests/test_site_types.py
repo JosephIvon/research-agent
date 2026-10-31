@@ -184,6 +184,67 @@ def test_seventh_round_real_sites_stay_product_sites(url, title):
     assert st.classify_site(url, title) == st.SITE_PRODUCT, url
 
 
+# ----------------------------------------------------------------------
+# 弱提示词需要佐证（2026-11-01，扩赛道全集时实测到的误伤）
+# ----------------------------------------------------------------------
+
+@pytest.mark.parametrize("url,title", [
+    # 真实产品官网，标题里带"体验/探索"这类营销词——
+    # 实测被判成 media → 真竞品被站点类型过滤掉（丢在"站点类型过滤"）。
+    ("https://purrlyai.com/", "PurrlyAI酒馆 - 沉浸式AI角色扮演聊天平台 | 自由创作虚拟伴侣与无禁词互动体验"),
+    ("https://maoxiangai.com/", "猫箱官网 — 下载猫箱 App，和心动 AI 探索剧情宇宙"),
+    ("https://weavai.app/", "AI 織夢 - 沉浸式 AI 角色扮演與互動小說平台"),
+    ("https://wlingai.com/", "VSoul微灵AI官网 - AI角色创建与虚拟陪伴平台 | 角色卡导入与剧情互动"),
+])
+def test_product_sites_with_marketing_words_stay_product_sites(url, title):
+    assert st.classify_site(url, title) == st.SITE_PRODUCT, url
+
+
+@pytest.mark.parametrize("url,title", [
+    # 弱提示**被佐证**时仍然判文章页（≥2 个弱提示，或与强提示同现）
+    ("https://example.com/app", "类似猫箱APP推荐：这几款工具凭口碑值得一试"),
+    ("https://example.com/app", "国内外虚拟 AI 聊天 APP 竞品分析"),
+    ("https://example.com/app", "2026 年 AI 陪伴 app 推荐与实测盘点"),
+])
+def test_corroborated_article_titles_are_still_media(url, title):
+    assert st.classify_site(url, title) == st.SITE_MEDIA, url
+
+
+@pytest.mark.parametrize("url,title", [
+    # 实测第八轮（2026-11-01）：AI 工具**导航站**——
+    # cxgn.cn 的真实标题是「AI创作导航 - 创作与探索，找到任何 AI 工具」，
+    # 但搜索结果标题里带着"星野"（导航站标题常列一串产品名），
+    # 于是被当成"星野的产品官网"，还因域名更短在同名合并里
+    # 挤掉了真官网 xingyeai.com → 金标准里的星野整轮都没被命中。
+    ("https://www.cxgn.cn/", "AI创作导航 - 创作与探索，找到任何 AI 工具"),
+    ("https://www.cxgn.cn/", "星野 - AI创作导航"),
+    ("https://example.com/tools", "AI 工具导航站 - 收录上千个 AI 应用"),
+])
+def test_navigation_sites_are_not_product_sites(url, title):
+    assert st.classify_site(url, title) == st.SITE_DIRECTORY, url
+    assert st.looks_like_aggregator(url, title) is True
+
+
+def test_cxgn_is_a_directory_host():
+    """光看域名也要认（搜索结果标题不一定带"导航"两个字）。"""
+    assert st.classify_site("https://www.cxgn.cn/", "") == st.SITE_DIRECTORY
+
+
+@pytest.mark.parametrize("url,title", [
+    # 弱提示**单独**命中不再判文章页——但真实文章仍由结构规则拦下
+    # （toutiao 是媒体站、teasa 那条路径深度 3、volcengine 是 /blog/ 路径）。
+    ("https://www.toutiao.com/article/7667425415937442344/",
+     "类似猫箱APP追番平台精选：这5款工具凭用户口碑值得一试"),
+    ("https://teasa.ai/zh-CN/guides/maoxiang-alternative",
+     "猫箱替代app推荐：类似猫箱的AI角色扮演软件（2026）"),
+    ("https://www.volcengine.com/blog/2908497",
+     "百度搭子、扣子Coze、Dify横评：企业办公智能体平台选哪个？"),
+])
+def test_real_articles_are_still_filtered_by_structure(url, title):
+    """弱提示放松后，真文章必须仍被拦下（域名/路径深度规则兜底）。"""
+    assert st.classify_site(url, title) == st.SITE_MEDIA, url
+
+
 def test_looks_like_aggregator_accepts_title():
     assert ss.looks_like_aggregator("https://miyu-ai.com.cn/", "miyuai聊天") is False
     assert ss.looks_like_aggregator("https://miyu-ai.com.cn/blog/a", "2026 年盘点：10 款最佳") is True

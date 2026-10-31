@@ -88,6 +88,13 @@ output/*
 # 发现召回测量的实跑报告（漏斗表 + 归因表）——结论要能回源。
 # 原始 run json（含全部候选池、几十 KB）仍只留本地。
 !output/recall_*.md
+# 赛道全集金标准的**人工核对表**（每条候选的页面标题、来源 URL、裁定理由）——
+# 金标准是外部真值，核对过程必须能回源，否则"全集"只是结论没有证据。
+!output/_universe_review.md
+# 外部来源采集的原始产物（1739 条来源条目，~700KB）：
+# 每条的来源 URL 已经写进 evals/discovery_golden/track_universe.json 的 sources 字段，
+# 原始文件留本地即可，不进仓库。
+scratch/
 # 计划稳定性实测报告（查询词 Jaccard 证据）——同样是能回源的证据。
 !output/plan_variance_*.md
 # 真跑 LLM 轨迹录制（LLM_RECORD_SCRIPT 落盘处，本地沉淀/CI artifact 用）
