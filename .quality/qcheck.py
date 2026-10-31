@@ -32,7 +32,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-VERSION = "0.4.0"
+VERSION = "0.6.1"
 HERE = Path(__file__).resolve().parent
 
 TEXT_SUFFIXES = {".py", ".md", ".json", ".sh", ".ps1", ".cmd", ".bat", ".toml",
@@ -64,17 +64,21 @@ def read_rules(path: Path) -> dict[str, str]:
     return sev
 
 
-def load_lines(path: Path):
-    try:
-        raw = path.read_bytes()
-    except OSError as exc:
-        return None, "unreadable: %s" % exc
+def lines_from_bytes(raw: bytes):
     if len(raw) > MAX_BYTES:
         return None, "skipped: file larger than %d bytes" % MAX_BYTES
     try:
         return raw.decode("utf-8-sig").splitlines(), None
     except UnicodeDecodeError:
         return None, "skipped: not utf-8 decodable (binary)"
+
+
+def load_lines(path: Path):
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        return None, "unreadable: %s" % exc
+    return lines_from_bytes(raw)
 
 
 def find(path: list, rule: str, message: str) -> None:
@@ -169,6 +173,19 @@ INTERP_ARGS = {"python", "python3", "py", "bash", "sh", "node"}
 # 带值的开关：`make -C sub target` 的 `sub` 不是目标名，不能当第一个操作数。
 VALUE_FLAGS = {"-C", "-f", "--file", "--makefile", "-I", "-l", "-o"}
 SCRIPT_SUFFIXES = (".py", ".sh", ".js", ".ps1", ".bash")
+# workflow YAML 也进命令分支：Actions/GitLab 的 `run:` 是唯一真的丢给 shell 执行的地方，
+# 一条没有载体的步骤在这里同样是"文档教了一步跑不通"，而且比 README 更容易长期没人复核。
+QR12_SUFFIXES = {".md", ".txt", ".sh", ".yml", ".yaml"}
+RUN_KEY_RE = re.compile(r"^(\s*)(?:-\s+)?run\s*:\s*(.*)$")
+BLOCK_SCALAR_RE = re.compile(r"^[|>][+-]?\d*$")
+# 命令替换与表达式的外壳先拿掉：`$(git merge-base ...)` 留着 `$(` 会让第一个 token 变成
+# `BASE="$(git`，被当成赋值跳过后，真正的命令名消失、剩下的 `merge-base` 反倒被当命令查——
+# 那是假红。摊平后看的是"里面跑的是什么"，`$(no-such-tool)` 里的假命令仍然照查。
+EMBED_RE = re.compile(r"\$\{\{.*?\}\}|\$\(|`")
+# 行尾注释不是可执行载荷：`python x.py  # 先看基线; make sure 绿` 里那个分号会被切成新的一段，
+# 于是注释里的散文以 `make` 开头、`sure` 当目标名——拿一句人话报一条假缺陷。只在 `# ` 前有
+# 空格时才切，避免把 URL 片段（`https://x#frag`）或 `cmd#tag` 这类没有空格的写法误当注释。
+CMD_COMMENT_RE = re.compile(r"\s+#\s.*$")
 
 
 def looks_like_path(tok: str) -> bool:
@@ -331,21 +348,62 @@ def script_in_repo(root: Path, rel, arg: str) -> bool:
     return False
 
 
-def qr12_command_existence(rel, lines: list, out: list) -> None:
-    if rel.suffix.lower() not in {".md", ".txt", ".sh"}:
-        return
-    root = RUN_ROOT or Path.cwd()
+def yaml_run_bodies(lines: list) -> list:
+    """取 workflow YAML 里 `run:` 的执行体，返回 [(行号, 命令文本)]。
+
+    为什么 YAML 不能整份当命令读：文件里每一行都是配置，逐行 tokenize 会把 `- name:`、
+    `uses:`、`if:` 全当成命令名，误报会淹掉那条真缺陷。`run:` 的值（块标量或同行内联）
+    才是 shell 真正执行的载荷。行号取命令自己那一行，报出来才能直接点过去改。
+    """
+    bodies: list = []
+    lineno = 0
+    while lineno < len(lines):
+        m = RUN_KEY_RE.match(lines[lineno])
+        if m:
+            key_indent, rest = len(m.group(1)), m.group(2).strip()
+            if BLOCK_SCALAR_RE.match(rest):
+                j = lineno + 1
+                while j < len(lines):
+                    raw = lines[j]
+                    stripped = raw.strip()
+                    if stripped and len(raw) - len(raw.lstrip()) <= key_indent:
+                        break          # 缩进回到键这一层 = 块结束了
+                    if stripped:
+                        bodies.append((j + 1, stripped))
+                    j += 1
+                lineno = j
+                continue
+            if rest:
+                bodies.append((lineno + 1, rest))
+        lineno += 1
+    return bodies
+
+
+def qr12_bodies(rel, lines: list) -> list:
+    """命令分支的读入范围：markdown 只认 ``` 围栏内的行，YAML 只认 run: 的执行体。"""
+    if rel.suffix.lower() in {".yml", ".yaml"}:
+        return yaml_run_bodies(lines)
+    out = []
     in_fence = False
-    reported: set[str] = set()     # 同一份文档里同一个命令只报一次：README 里 8 行 `make ...`
-                                   # 是 1 个问题（文档教了一条仓内不存在的步骤），不是 8 个。
     for i, line in enumerate(lines, 1):
         if FENCE_RE.match(line):
             in_fence = not in_fence
             continue
-        if not in_fence:
-            continue
-        body = re.sub(r"^\s*(\$|>)\s*", "", line).strip()
-        if not body or body.startswith("#") or OPT_OUT in line:
+        if in_fence:
+            out.append((i, line))
+    return out
+
+
+def qr12_command_existence(rel, lines: list, out: list) -> None:
+    if rel.suffix.lower() not in QR12_SUFFIXES:
+        return
+    root = RUN_ROOT or Path.cwd()
+    reported: set[str] = set()     # 同一份文档里同一个命令只报一次：README 里 8 行 `make ...`
+                                   # 是 1 个问题（文档教了一条仓内不存在的步骤），不是 8 个。
+    for i, raw in qr12_bodies(rel, lines):
+        body = EMBED_RE.sub(" ", CMD_COMMENT_RE.sub("",
+                       re.sub(r"^\s*(\$|>)\s*", "", raw).strip()))
+        if not body or body.startswith("#") or OPT_OUT in raw:
             continue
         for segment in PIPE_RE.split(body):
             tokens = segment.split()
@@ -671,7 +729,12 @@ RUNTIME_ONLY = [("QR-16", "接口需被真调过一次：这是运行时事实�
                 # 分支要靠"对照上游 schema 实测快照"才能判——第六轮那个 `click` 枚举缺陷今天仍然
                 # 只有人评能抓。让每次运行都打出这条，策略行就不会暗示存在一个没实现的检查。
                 ("QR-12·字段名分支", "上游字段名/枚举值是否存在需要实测 schema 快照，静态检查看不见它。"
-                          "由人对快照或运行时断言结案；本工具的 QR-12 只判命令分支（仓内执行载体）。")]
+                          "由人对快照或运行时断言结案；本工具的 QR-12 只判命令分支（仓内执行载体）。"),
+                # QR-10 的触发面写的是"任何要被复算的统计表/对外材料"，本工具只判表格行（| 开头）。
+                # 散文行里的同类百分比静态**可**判，但两仓的散文命中池还没逐条裁过（表格那一池今天裁完），
+                # 没裁过的判据一上阻断位就会拦住整段历史文档。不说就等于让读者以为散文也在管。
+                ("QR-10·散文行分支", "非表格行里的测量百分比本工具不判（判据只覆盖表块内的行）。"
+                          "散文/标题里的同类百分比要结案靠评审或扩判据；判据分池过程见 quality-rules.md §D 第 6 条。")]
 
 # 执行阶段登记表（不是策略！）：quality-rules.md 里 QR-10/QR-19 的强度仍是"阻断"，
 # 但这两条静态近似的**误报率还没实测**，直接上阻断位会让开发第一次提交就撞墙、
@@ -680,11 +743,9 @@ RUNTIME_ONLY = [("QR-16", "接口需被真调过一次：这是运行时事实�
 OBSERVE = {
     # 这里刻意不写命中数：数字会随仓里文档增删而变，写死之后就没人再数一遍（QR-19 的
     # "未核数字不得引用"用在工具自己身上）。要数字就现算，命令在下面这条说明里。
-    "QR-10": "行级判据已在 research-agent --all 上逐条分池并据此收紧（阈值写法/同行分母/"
-             "URL 百分号/表头分母列四类误报已修，3 处真缺陷已回填分母）；"
-             "material-search-rec 那一池还没裁，所以仍只报不拦。引用前先重算：python "
-             ".quality/qcheck.py --root <仓> --rules-file .quality/rules.min.md --all ；"
-             "升回阻断的前置条件：msr 池裁完 + 两仓真缺陷清零",
+    # QR-10 曾在这一栏挂到 2026-10-29：两个试点仓的 --all 命中池逐条裁完（research-agent
+    # 53 处、material-search-rec 15 处，真缺陷全部回填分母、误报全部收到判据里），残留误报
+    # 0 处 ⇒ 按登记的复查条件升回阻断位。撤回来只要把这一条加回去，判据不用动。
     "QR-19": "判据已从行级收紧到文件级（行级成批误伤，故降级为观察）；"
              "复查条件：文件级判据在两个试点仓跑满两周且零误伤",
 }
@@ -753,6 +814,38 @@ def git_z_list(root: Path, *args: str) -> tuple[int, list[str], str]:
     return proc.returncode, names, proc.stderr.decode("utf-8", "replace").strip()
 
 
+def git_index_blob(root: Path, name: str) -> tuple[int, bytes, str]:
+    """取索引（stage 0）里的那份字节——那才是要被提交的内容。
+
+    两步走，不是一条 `cat-file blob :名字` 搞定，原因在这台机上真撞过：
+      ① `:(literal)` 这类 pathspec magic 只有**吃 pathspec 的命令**认；cat-file 把它当
+         路径字面量的一部分，实测 `fatal: path '(literal)loader.py' does not exist`；
+      ② 不带 magic 的 `:名字` 又会让含 `:`/空格/非 ASCII 的名字被 git 重新解析一遍——
+         名字是 git 自己报出来的，不能再反过来喂给它解释。
+    所以先用 ls-files --stage 拿到 OID（这一步吃 pathspec，magic 生效），再把**十六进制
+    OID**交给 cat-file：OID 不会被解释成任何东西。-z 必须排在 `--` 之前，否则它自己
+    就成了一个 pathspec。
+
+    返回 (0, 字节, "")=拿到；(3, b"", 说明)=不是文本（gitlink/非 stage 0），闸门判不了
+    但也不算取不到；其余非 0=取不到，调用方必须拒判。"""
+    spec = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--stage", "--",
+                           ":(literal)%s" % name], capture_output=True)
+    if spec.returncode != 0:
+        return spec.returncode, b"", spec.stderr.decode("utf-8", "replace").strip()
+    entry = spec.stdout.decode("utf-8", "replace").split("\0", 1)[0].strip()
+    if not entry:
+        return 1, b"", "索引里查不到这条（ls-files --stage 空返回）"
+    head = entry.split("\t", 1)[0]
+    fields = head.split()
+    if len(fields) < 3:
+        return 1, b"", "ls-files --stage 的输出形状不认识: %r" % entry
+    mode, oid, stage = fields[0], fields[1], fields[2]
+    if mode == "160000" or stage != "0":
+        return 3, b"", "mode=%s stage=%s：子模块指针/非 stage 0，不是文本内容" % (mode, stage)
+    blob = subprocess.run(["git", "-C", str(root), "cat-file", "blob", oid], capture_output=True)
+    return blob.returncode, blob.stdout, blob.stderr.decode("utf-8", "replace").strip()
+
+
 def all_tree_files(root: Path, drop: set) -> list[Path]:
     """--all 的范围 = **有可能被推到远端的文件**，不是目录里的每个字节。
     .gitignore 掉的（一次性探针、生成的 e2e 报告）既进不了 commit 也进不了 CI，
@@ -784,8 +877,27 @@ def all_tree_files(root: Path, drop: set) -> list[Path]:
     return files
 
 
-def iter_targets(args) -> tuple[list[Path], Path]:
-    root = Path(args.root or ".").resolve()
+def repo_root_of(target: Path) -> Path:
+    """被点名对象所在的仓根（git 问得到就用 toplevel，问不到用对象自己的目录）。"""
+    d = target if target.is_dir() else target.parent
+    if shutil.which("git") is not None:
+        proc = subprocess.run(["git", "-C", str(d), "rev-parse", "--show-toplevel"],
+                              capture_output=True)
+        top = proc.stdout.decode("utf-8", "replace").strip() if proc.returncode == 0 else ""
+        if top:
+            return Path(top).resolve()
+    return d.resolve()
+
+
+def iter_targets(args) -> tuple[list[Path], Path, list[str]]:
+    # 判定根 = 载体、.qcheck-ignore、相对路径的基准，必须和文件集来自同一棵树。
+    # 现场：从 self-improving 里跑 `qcheck.py D:/workspace/<repo>` 做只读体检，文件集来自
+    # 参数、root 却按 cwd，于是那棵仓里每个 scripts/*.py 都判成"不在仓里"，一次吐出 35 个
+    # 假阻断。闸门最危险的失败不是坏掉，是**用错的树给出看着很可信的红/绿**。
+    if args.root is None and args.paths:
+        root = repo_root_of(Path(args.paths[0]))
+    else:
+        root = Path(args.root or ".").resolve()
     ignored = load_ignored(root)
     drop = SKIP_DIRS | set(ignored)
     if args.staged or args.changed:
@@ -811,11 +923,28 @@ def iter_targets(args) -> tuple[list[Path], Path]:
         if code != 0:
             sys.stderr.write("FATAL: %s: %s\n" % (fail_msg, err))
             sys.exit(2)
-        files = [(root / f) for f in names]
-        return [f for f in files if f.is_file()
-                and not any(part in drop for part in f.parts[len(root.parts):])], root
+        # 改动集的每一个名字都必须有下落。原来这里是 `[f for f in files if f.is_file()]`——
+        # 一个 staged 之后被从工作树删掉（或改名）的文件，git 照样报在改动集里，is_file()
+        # 却为假，于是**静默少判一个文件并返回绿**（实测：改动集 3 个名字，闸门只判 2 个，
+        # exit 0，而那份内容确实会被提交）。索引里的字节才是要提交的东西，所以取不到盘上
+        # 文件不等于不用判。
+        files: list[Path] = []
+        off_disk: list[str] = []
+        for name in names:
+            p = root / name
+            if any(part in drop for part in p.parts[len(root.parts):]):
+                continue
+            files.append(p) if p.is_file() else off_disk.append(name)
+        if off_disk and not args.staged:
+            sys.stderr.write(
+                "FATAL: 改动集里有 git 报了但盘上取不到的路径：%s\n"
+                "  --changed 比的是基线到工作树，这种不一致说明树和 git 说的对不上；"
+                "拿不到就拒绝判定（退出码 2），不许报绿。\n"
+                % ", ".join(off_disk[:5]))
+            sys.exit(2)
+        return files, root, off_disk
     if args.all:
-        return all_tree_files(root, drop), root
+        return all_tree_files(root, drop), root, []
     paths = [Path(p) for p in args.paths]
     for p in paths:
         if not p.exists():
@@ -832,7 +961,7 @@ def iter_targets(args) -> tuple[list[Path], Path]:
             # 显式点名的文件一律要扫，哪怕它落在 .qcheck-ignore 的目录里——
             # 自检就是靠这一条来扫缺陷样例集的；例外只对"目录级遍历"生效。
             files.append(p)
-    return files, root
+    return files, root, []
 
 
 def to_sarif(findings, severities) -> dict:
@@ -884,7 +1013,7 @@ def main() -> int:
 
     severities = read_rules(Path(args.rules_file))
 
-    files, root = iter_targets(args)
+    files, root, index_only = iter_targets(args)
     global RUN_ROOT
     RUN_ROOT = root          # QR-12 的执行载体要在仓根上找，不能按单个文件的目录找
     # 跳过的目录是闸门的已知盲区，必须在表头说出来，不能让它变成一个没人知道的默认值。
@@ -903,6 +1032,25 @@ def main() -> int:
             continue
         for check in CHECKS:
             check(rel, lines, findings)
+    # 改动集里"索引有、工作树没有"的那些：内容照样会被提交，所以按索引里的那份字节判。
+    unjudgeable: list[str] = []
+    for name in index_only:
+        code, raw, err = git_index_blob(root, name)
+        if code == 3:
+            unjudgeable.append("%s（%s）" % (name, err))
+            continue
+        if code != 0:
+            sys.stderr.write(
+                "FATAL: 索引里记着 %s，但 git 给不出它的内容：%s\n"
+                "  改动集取不全就不判（退出码 2）。少判一个文件然后报绿，比红更危险。\n"
+                % (name, err))
+            return 2
+        lines, why = lines_from_bytes(raw)
+        if lines is None:
+            skipped += 1
+            continue
+        for check in CHECKS:
+            check(Path(name), lines, findings)
 
     used_rules = sorted({f["rule"] for f in findings})
     drift = [r for r in used_rules if r not in severities]
@@ -939,10 +1087,22 @@ def main() -> int:
                 "exported": snapshot_exported,
                 "note": "判定用的是仓内快照，不是 self-improving 权威源；快照可能落后",
             }
+        if index_only:
+            # 机读口径要和文本口径说同一件事：哪些路径只在索引里。
+            sarif["runs"][0]["properties"]["qcheck:indexOnlyChanges"] = list(index_only)
+        if unjudgeable:
+            sarif["runs"][0]["properties"]["qcheck:unjudgeableChanges"] = list(unjudgeable)
         sys.stdout.write(json.dumps(sarif, ensure_ascii=False, indent=2) + "\n")
     else:
-        sys.stdout.write("qcheck %s :: %d file(s) scanned, %d unreadable skipped\n"
-                         % (VERSION, len(files), skipped))
+        sys.stdout.write("qcheck %s :: %d file(s) scanned, %d unreadable skipped :: 判定根=%s\n"
+                         % (VERSION, len(files) + len(index_only), skipped, root))
+        if index_only:
+            sys.stdout.write("  NOTICE: 改动集里 %d 个路径工作树上取不到（staged 之后被删/改名），"
+                             "按**索引里的那份字节**判定: %s\n"
+                             % (len(index_only), ", ".join(index_only[:5])))
+        if unjudgeable:
+            sys.stdout.write("  已知盲区（改动集里判不了的）: %s —— 闸门看不见这种内容，"
+                             "不许把它当成已通过\n" % "; ".join(unjudgeable))
         if snapshot_exported is not None:
             sys.stdout.write("  NOTICE: 按仓内快照判定（导出日 %s，非 self-improving 权威源）。\n"
                              % snapshot_exported)
@@ -952,7 +1112,7 @@ def main() -> int:
             sys.stdout.write("  已知盲区（.qcheck-ignore 声明的例外）: %s —— 缺陷样例集，"
                              "由 selftest/F**/judge.py 逐文件扫，例外只对目录遍历生效\n"
                              % ", ".join(ignored))
-        if not files:
+        if not files and not index_only:
             # 空判定范围必须是显式事实，不能和"扫了但没问题"共用一个绿。
             scope = ("--changed %s" % args.changed) if args.changed else \
                     ("--staged" if args.staged else "--all")

@@ -11,17 +11,28 @@ search:
     - html
     - json
 
-# 引擎清单（2026-10-29 调整）
+# 引擎清单（2026-10-29 调整，第二次）
 #
 # 为什么禁用这几个：实测 2026-10-29 上午，本机到 duckduckgo 的 TLS 校验失败
 # （curl_cffi SSLError）、google 返回 403、brave 与 google cse 集体限流。
 # 这些引擎每次都要耗掉超时预算（还带重试），**把整次请求的时间吃光**，
-# 于是排在后面的 yahoo 根本没机会返回——表现是"搜索全部 0 条"，
-# 而 raw 响应里的 unresponsive_engines 只列那 3 个挂掉的，看不出真凶。
+# 于是排在后面的引擎根本没机会返回——表现是"搜索全部 0 条"，
+# 而 raw 响应里的 unresponsive_engines 只列那几个挂掉的，看不出真凶。
+#
+# 为什么显式启用 bing/yahoo：**它们在 SearXNG 的默认配置里是 disabled: true**
+# （实测），默认不启用——只有显式指定 engines=bing 才会跑。
+#
+# 为什么启用中文引擎（sogou / 360search / toutiao / so.com）：
+# 实测同一查询「猫箱 官网」，sogou 15 条 / 360search 13 条 / toutiao 7 条 /
+# so.com 7 条，**首条都是 maoxiangai.com**；通用引擎（yahoo/bing）在中文
+# 小众 App 官网的索引上明显更差。发现召回测量的金标准里有一半是中文
+# AI 陪伴应用（Talkie、CHAI、OMate、独响、逗逗、蔚蓝陪伴…），
+# 这些站点只有中文引擎收得全。
 #
 # 注意：覆盖默认引擎**只写 name + disabled**；写 engine: 会被当成自定义引擎
 # （实测报 "google cse: can't register engine (loading engine failed)"）。
 engines:
+  # -- 失效的，全禁 --
   - name: google
     disabled: true
   - name: google cse
@@ -42,15 +53,28 @@ engines:
     disabled: true
   - name: google news
     disabled: true
-  # yahoo 在默认配置里是 disabled: true（实测 2026-10-29），
-  # 但它是本机唯一还能用的引擎——显式启用。
+  - name: sm.cn
+    disabled: true
+  # -- 默认禁用的，显式打开 --
+  - name: bing
+    disabled: false
   - name: yahoo
+    disabled: false
+  # -- 中文引擎：默认就是开的，显式写一遍是为了让这份配置自解释 --
+  - name: sogou
+    disabled: false
+  - name: 360search
+    disabled: false
+  - name: toutiao
+    disabled: false
+  - name: so.com
     disabled: false
 
 outgoing:
-  # 超时压到 6 秒：单条查询里若还有慢引擎，别让它把整次请求的预算耗光
-  request_timeout: 6
-  max_request_timeout: 12
+  # 超时 8 秒：中文引擎偶尔慢，6 秒太紧会把好结果掐掉；
+  # 失效的引擎已禁用，不会再吃光整次请求的预算
+  request_timeout: 8
+  max_request_timeout: 15
   useragent_suffix: "research-agent"
 
 server:
