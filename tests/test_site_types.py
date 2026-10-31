@@ -419,3 +419,72 @@ def test_a_download_page_title_is_not_canonicalized():
     result = runner.run_competitor_discovery(plan)
     urls = [item["url"] for item in result.selected]
     assert "dl.example.com" not in " ".join(urls), urls
+
+
+# ----------------------------------------------------------------------
+# 同一产品的多个版本：汉化站 / 镜像站 / 商店页不能各占一个名额
+# ----------------------------------------------------------------------
+
+def test_normalized_brand_strips_modifiers_and_punctuation():
+    """品牌键：去修饰词 + 去标点 → "Character AI中文版" ≡ "Character.AI"。"""
+    assert ss._normalized_brand("Character AI中文版") == ss._normalized_brand("Character.AI")
+    assert ss._normalized_brand("Character.AI") == "characterai"
+    assert ss._normalized_brand("星野") == "星野"
+    # 不同产品不能被归到一起
+    assert ss._normalized_brand("星野集团") != ss._normalized_brand("星野")
+    assert ss._normalized_brand("Kindroid") != ss._normalized_brand("Kindred Stitch")
+
+
+def test_chinese_clone_site_and_official_site_count_once():
+    """同一个产品的汉化站与官网只算一家（实测第八轮：白占两个名额）。"""
+    plan = rp.build_default_plan("猫箱")
+    plan.competitor_candidates = ["Character.AI"]
+    stub = _StubSearch({
+        "猫箱 竞品": [],
+        "Character.AI 官网": [
+            {"title": "Character.AI", "url": "https://character.ai/", "content": "官方"},
+            {"title": "Character AI中文版", "url": "https://characterapp.cn/", "content": "汉化"},
+        ],
+    })
+    runner = ss.SearchStageRunner(stub)
+    result = runner.run_competitor_discovery(plan)
+    urls = [item["url"] for item in result.selected]
+    assert len(urls) == 1, urls
+    assert urls[0] == "https://character.ai/", urls
+
+
+def test_mirror_site_with_the_brand_in_the_domain_counts_once():
+    """镜像站名字对不上，但域名带同一品牌 → 同一家的两个站只算一家。"""
+    plan = rp.build_default_plan("猫箱")
+    plan.competitor_candidates = ["Kindroid"]
+    stub = _StubSearch({
+        "猫箱 竞品": [],
+        "Kindroid 官网": [
+            {"title": "Kindroid", "url": "https://kindroid.ai/", "content": "官方"},
+            {"title": "Kindred Stitch", "url": "https://kindroid-ai.net/", "content": "镜像"},
+        ],
+    })
+    runner = ss.SearchStageRunner(stub)
+    result = runner.run_competitor_discovery(plan)
+    urls = [item["url"] for item in result.selected]
+    assert len(urls) == 1, urls
+    assert urls[0] == "https://kindroid.ai/", urls
+
+
+def test_microsoft_store_page_is_not_a_competitor_official_site():
+    """微软商店页不是产品官网（实测第八轮：它白占了一个名额）。
+
+    路径是 /product/<id>，域名单看像商店——商店清单里漏了 apps.microsoft.com，
+    于是被判成"有独立站点的产品官网"。
+    """
+    plan = rp.build_default_plan("猫箱")
+    plan.competitor_candidates = ["猫箱"]
+    stub = _StubSearch({
+        "猫箱 竞品": [],
+        "猫箱 官网": [
+            {"title": "猫箱", "url": "https://apps.microsoft.com/product/9NBLGGH4NNS1", "content": "商店页"},
+        ],
+    })
+    runner = ss.SearchStageRunner(stub)
+    result = runner.run_competitor_discovery(plan)
+    assert result.selected == [], result.selected

@@ -40,6 +40,7 @@ from src.workflow.site_types import (  # noqa: F401  (转出以兼容既有引�
     classify_site,
     host_of,
     looks_like_aggregator,
+    normalized_brand,
     site_type_label,
 )
 
@@ -93,6 +94,72 @@ def _strip_www(host: str) -> str:
     """去掉 www. 前缀——官网域名常写成 www.dumate.cn，模型给的可能是 dumate.cn。"""
     host = (host or "").split(":")[0].lower()
     return host[4:] if host.startswith("www.") else host
+
+
+# 候选名里的**修饰词**与规范化在 site_types.normalized_brand
+# （research_plan 也要用它给"模型提名的竞品"加权重，放一起才没有循环导入）。
+
+def _normalized_brand(name: str) -> str:
+    """候选名的品牌键（去修饰词 + 去标点）——实现在 site_types，这里转出。"""
+    return normalized_brand(name)
+
+
+def _brand_in_host(brand: str, host: str) -> bool:
+    """品牌键是否出现在域名里（同一产品的镜像站/子域）。
+
+    实测第八轮："Kindroid"（kindroid.ai）与 "Kindred Stitch"（kindroid-ai.net）
+    名字对不上，但域名里带着品牌 → 是同一家的两个站。
+
+    门槛：品牌键至少 5 个字符——太短的（"ai"、"app"）会在无关域名里乱命中。
+    域名先去掉点/连字符再比："character.ai" → "characterai"，
+    于是品牌 "characterai" 命中官网、不命中汉化站 "characterapp.cn"。
+    """
+    brand = (brand or "").strip().casefold()
+    host = (host or "").strip().casefold()
+    if len(brand) < 5 or not brand.isascii():
+        return False
+    flat = "".join(ch for ch in host if ch.isalnum())
+    return brand in flat
+
+
+def _candidate_rank(candidate: Any) -> Tuple[int, int, int]:
+    """候选的"更像竞品官网"排序（越大越好）。
+
+    1. 非聚合页优先（官网 > 媒体/商店页）；
+    2. 域名里带自己的品牌优先（kindroid.ai > kindroid-ai.net）；
+    3. 域名更短优先（少一层子域的多半是官网首页）。
+    """
+    host = _strip_www(host_of(candidate.url))
+    brand = _normalized_brand(candidate.name)
+    return (
+        0 if candidate.is_aggregator else 1,
+        1 if _brand_in_host(brand, host) else 0,
+        -len(host),
+    )
+
+
+def _merge_brand_hosts(by_name: Dict[str, Any]) -> Dict[str, Any]:
+    """第二轮合并：**域名里带同一品牌**的候选算同一家。
+
+    实测第八轮："Kindroid"（kindroid.ai）与 "Kindred Stitch"（kindroid-ai.net）
+    名字对不上，按名字合并漏掉了——同一家的两个站白占两个名额。
+    """
+    kept: List[Tuple[str, Any]] = []
+    for key, candidate in by_name.items():
+        merged_key = None
+        for other_key, other in kept:
+            if _brand_in_host(_normalized_brand(candidate.name), host_of(other.url)) \
+                    or _brand_in_host(_normalized_brand(other.name), host_of(candidate.url)):
+                merged_key = other_key
+                break
+        if merged_key is None:
+            kept.append((key, candidate))
+            continue
+        # 同一家的两个站：留更像官网的那个
+        if _candidate_rank(candidate) > _candidate_rank(
+                next(c for k, c in kept if k == merged_key)):
+            kept = [(k, candidate if k == merged_key else c) for k, c in kept]
+    return dict(kept)
 
 
 def _canonical_product_url(url: str) -> str:
@@ -345,7 +412,13 @@ class SearchStageRunner:
             # 一致**，它更像产品本身（"星野" vs 同名的酒店公司"星野集团"）。
             # 合并键**忽略大小写**：同一产品的官网与移动站常常一个写 "Tofai"
             # 一个写 "tofai"（实测第六轮：两个域名各占一个名额）。
-            merge_key = candidate.name.strip().casefold()
+            #
+            # 合并键用**规范化品牌名**（去修饰词 + 去标点）：实测第八轮
+            # "Character.AI" 与 "Character AI中文版"（汉化站）名字不同，
+            # 于是同一个产品白占两个名额，把真竞品挤出去了。
+            merge_key = _normalized_brand(candidate.name)
+            if not merge_key:
+                merge_key = candidate.name.strip().casefold()
             existing = by_name.get(merge_key)
             if existing is None:
                 by_name[merge_key] = candidate
@@ -355,10 +428,16 @@ class SearchStageRunner:
                 if existing.is_aggregator and not candidate.is_aggregator:
                     better = True
                 elif not existing.is_aggregator and not candidate.is_aggregator:
-                    if _title_is_exactish(title, candidate.name) and not _title_is_exactish(
-                        title_by_name.get(merge_key, ""), candidate.name
-                    ):
+                    # 同一家的两个站：留更像官网的那个（域名里带自己品牌、
+                    # 域名更短）。实测第八轮：汉化站（characterapp.cn）会把
+                    # 真官网（character.ai）挤掉——只按"标题更贴名字"判会选错。
+                    if _candidate_rank(candidate) > _candidate_rank(existing):
                         better = True
+                    elif _candidate_rank(candidate) == _candidate_rank(existing):
+                        if _title_is_exactish(title, candidate.name) and not _title_is_exactish(
+                            title_by_name.get(merge_key, ""), candidate.name
+                        ):
+                            better = True
                 if better:
                     by_name[merge_key] = candidate
                     title_by_name[merge_key] = title
@@ -397,6 +476,8 @@ class SearchStageRunner:
         by_name = {
             name: c for name, c in by_name.items() if c.url in surviving
         }
+        # 第二轮合并：域名里带同一品牌的候选算同一家（kindroid.ai / kindroid-ai.net）
+        by_name = _merge_brand_hosts(by_name)
         # 媒体/百科/社区/应用商店/开发者平台/收录目录/文章页都不是竞品官网：
         # 剔掉（但保留在候选里以备人工查看）
         official = [c for c in result.candidates if not c.is_aggregator]

@@ -492,6 +492,100 @@ def test_nominees_are_deduplicated_and_sorted():
 
 
 # ----------------------------------------------------------------------
+# 赛道词：一条不依赖模型记忆的发现路径
+# ----------------------------------------------------------------------
+
+def test_track_keywords_are_normalized():
+    """赛道词：去重 + 去空 + 最多 3 个。"""
+    data = _plan_data()
+    data["track_keywords"] = ["AI 陪伴", "AI 陪伴 ", "", "AI 角色扮演", "AI 情感陪伴", "AI 伴侣"]
+    plan = rp.build_plan_from_data(data, "x")
+    assert plan.track_keywords == ["AI 陪伴", "AI 角色扮演", "AI 情感陪伴"]
+
+
+def test_track_keywords_become_discovery_queries():
+    """赛道词 → 代码拼装的赛道查询词（不带主体名）。
+
+    实测（2026-10-31）："AI 陪伴 app 官网" 能搜到模型根本不知道的
+    Tofai、蔚蓝陪伴——模型提名最多覆盖 5–6 个真竞品，这是唯一的另一条路。
+    """
+    data = _plan_data()
+    data["track_keywords"] = ["AI 陪伴"]
+    plan = rp.build_plan_from_data(data, "x")
+    queries = plan.queries_for("competitor_discovery")
+    assert "AI 陪伴 app 官网" in queries
+    assert "AI 陪伴 官网" in queries
+    # 赛道查询**不带主体名**——带了就退化成主体相关的查询
+    assert all("百度搭子" not in q for q in queries if "AI 陪伴" in q)
+
+
+def test_track_queries_are_deterministic():
+    """同样的赛道词 → 同样的查询词（与模型这次写了什么无关）。"""
+    queries = []
+    for extra in (["AI 陪伴"], ["AI 陪伴"], []):
+        data = _plan_data()
+        data["track_keywords"] = extra
+        data["search_plan"] = [{"stage": "competitor_discovery", "queries": ["随便写"]}]
+        queries.append(rp.build_plan_from_data(data, "x").queries_for("competitor_discovery"))
+    assert queries[0] == queries[1]
+    assert queries[2] == ["百度搭子 竞品", "百度搭子 类似应用"]
+
+
+def test_english_track_keyword_uses_english_templates():
+    """英文赛道词配英文模板（中文模板对英文主体是错的）。"""
+    data = _plan_data()
+    data["track_keywords"] = ["AI companion"]
+    plan = rp.build_plan_from_data(data, "x")
+    queries = plan.queries_for("competitor_discovery")
+    assert "AI companion official site" in queries
+    assert "AI companion app official" in queries
+
+
+def test_track_keywords_round_trip_through_dict():
+    data = _plan_data()
+    data["track_keywords"] = ["AI 陪伴"]
+    plan = rp.build_plan_from_data(data, "x")
+    restored = rp.ResearchPlan.from_dict(plan.to_dict())
+    assert restored.track_keywords == ["AI 陪伴"]
+
+
+def test_nominated_competitors_outrank_track_discovered_ones():
+    """模型提名的竞品优先占名额（实测第九轮：赛道词把裁决池灌到 15–30 家，
+    而名额只有 5–8 个，同分时按名字字母序截断 → 真竞品被挤掉）。"""
+    plan = rp.build_plan_from_data(_plan_data(), "x")
+    plan.competitor_candidates = ["星野"]
+    nominated = {
+        "name": "星野", "url": "https://www.xingyeai.com/", "description": "AI 陪伴",
+        "site_type": "product_site",
+    }
+    discovered = {
+        "name": "Kimi", "url": "https://www.kimi.com/", "description": "AI 助手",
+        "site_type": "product_site",
+    }
+    scored = rp.admit_competitors([discovered, nominated], plan)
+    order = [item["name"] for item in scored["selected"]]
+    assert order.index("星野") < order.index("Kimi"), order
+    assert any("模型提名的同赛道竞品" in r for r in
+               next(i for i in scored["scored"] if i["name"] == "星野")["reasons"])
+
+
+def test_track_discovered_competitors_still_fill_remaining_slots():
+    """赛道词捞到的产品仍然能补位（不能因为没被提名就一票否决）。"""
+    plan = rp.build_plan_from_data(_plan_data(), "x")
+    plan.competitor_candidates = ["星野"]
+    plan.criteria = dict(plan.criteria)
+    plan.criteria["max_count"] = 2
+    candidates = [
+        {"name": "星野", "url": "https://www.xingyeai.com/", "description": "",
+         "site_type": "product_site"},
+        {"name": "Tofai", "url": "https://tofaipro.cn/", "description": "",
+         "site_type": "product_site"},
+    ]
+    result = rp.admit_competitors(candidates, plan)
+    assert [i["name"] for i in result["selected"]] == ["星野", "Tofai"], result["selected"]
+
+
+# ----------------------------------------------------------------------
 # 搜索四段式
 # ----------------------------------------------------------------------
 

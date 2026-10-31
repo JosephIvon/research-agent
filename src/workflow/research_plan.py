@@ -43,7 +43,13 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from src.agent.citations import make_evidence_id
 from src.workflow.admission_rules import evaluate_discovery, parse_admission_rule
-from src.workflow.site_types import SITE_PRODUCT, classify_site, site_type_label
+from src.workflow.site_types import (
+    SITE_PRODUCT,
+    classify_site,
+    normalized_brand,
+    site_type_label,
+)
+
 
 PLAN_INTENT = "plan"
 PLAN_MAX_TOKENS = 16384
@@ -183,6 +189,12 @@ _SYSTEM_PROMPT = (
     "判断是不是真的产品官网，**你说了不算数**。但这一步很有用——"
     "搜索框里搜「猫箱 竞品」回来的全是榜单文章，而你其实知道同赛道是谁"
     "（星野、筑梦岛、Talkie、Character.AI）。\n"
+    "3c. track_keywords 给出主体所属**赛道/品类**的通用说法，1–3 个词，"
+    "例如「AI 情感陪伴」「AI 角色扮演」。系统会用它拼出不带主体名的查询词"
+    "（如「AI 情感陪伴 app 官网」）去搜**你不知道的**竞品——"
+    "实测你的提名最多覆盖 5–6 个真竞品（放宽到 30 个也只多 1–2 个），"
+    "而赛道词查询能搜到 Tofai、蔚蓝陪伴这类你没提过的产品。"
+    "**词要是品类名，不是产品名**（写「AI 陪伴」而不是「猫箱」）。\n"
     "4. angles：分析角度的**优先级**（primary/secondary/ignore）、理由，"
     "以及该角度值得看的**站内页面关键词** page_hints（如定价页、功能页、API 文档）。"
     "angle 只能取 " + " / ".join(ANGLE_ORDER) + "（"
@@ -218,6 +230,7 @@ _SYSTEM_PROMPT = (
     '"competitor_criteria":{"layers":["direct"],"must_include":[],'
     '"must_exclude":[],"min_count":3,"max_count":5,"admission_rule":""},'
     '"competitor_candidates":[],'
+    '"track_keywords":[],'
     '"angles":[{"angle":"feature","priority":"secondary","reason":"",'
     '"page_hints":["定价","功能"]}],'
     '"search_plan":[{"stage":"entity_anchor","queries":[""],"acceptance":""}],'
@@ -280,6 +293,13 @@ class ResearchPlan:
     # 模型**提名**的竞品（只是候选，代码会搜它的官网并核验是不是产品官网）。
     # 作用：搜索框搜"猫箱 竞品"回来的全是榜单文章，而模型其实知道同赛道是谁。
     competitor_candidates: List[str] = field(default_factory=list)
+    # **赛道词**（品类/赛道的中文说法，如 ["AI 情感陪伴", "AI 角色扮演"]）。
+    # 为什么要有它：实测（2026-10-31）模型提名 8 个能覆盖 18 个金标准产品里的
+    # 5–6 个，放宽到 30 个也只到 7 个——**模型的小众中文 App 知识是天花板**。
+    # 而不带主体名的赛道词查询（"AI 陪伴 app 官网"）能搜到模型根本不知道的
+    # 产品（Tofai、蔚蓝陪伴）——这是**不依赖模型记忆**的发现路径。
+    # 口径仍是"模型给词、代码拼查询词"：模型只给品类词，查询词由代码拼。
+    track_keywords: List[str] = field(default_factory=list)
     # 准入规则的**可执行形态**（从 criteria.admission_rule 解析而来）：
     # 报告里写的那句话，到底哪几条被代码判了、在哪个阶段判、哪条判不了。
     admission_rule: Dict[str, Any] = field(default_factory=dict)
@@ -339,6 +359,7 @@ class ResearchPlan:
             },
             "competitor_criteria": dict(self.criteria),
             "competitor_candidates": list(self.competitor_candidates),
+            "track_keywords": list(self.track_keywords),
             # 可执行形态的准入规则：报告/前端要能说清"这句口径哪几条真的判了"
             "admission_rule": dict(self.admission_rule),
             "angles": [a.to_dict() for a in self.angles],
@@ -393,6 +414,10 @@ class ResearchPlan:
                 str(c).strip() for c in (data.get("competitor_candidates") or [])
                 if str(c).strip()
             ][:12],
+            track_keywords=[
+                str(k).strip() for k in (data.get("track_keywords") or [])
+                if str(k).strip()
+            ][:3],
             angles=angles,
             search_plan=stages,
             open_questions=list(data.get("open_questions") or []),
@@ -592,11 +617,30 @@ _ANCHOR_TYPE_PHRASE = {
 # 按"<提名竞品名> 官网 / 官方网站"另发（见 search_stages.py），不在这两条里。
 _DISCOVERY_TEMPLATES = ("{name} 竞品", "{name} 类似应用")
 
+# 赛道词查询的模板（**不带主体名**）。
+# 实测（2026-10-31）：赛道词查询能搜到**模型根本不知道**的产品——
+# "AI 陪伴 app 官网" 命中 Tofai 与蔚蓝陪伴，而这两家模型提名 8 次都没提过。
+# 模型的知识有天花板（放宽到 30 个提名也只多覆盖 1–2 个），
+# 赛道词是唯一**不依赖模型记忆**的发现路径。
+# 英文赛道用英文模板（中文主体项目里主体多中文，但金标准里有英文产品）。
+_TRACK_TEMPLATES_ZH = ("{k} app 官网", "{k} 官网")
+_TRACK_TEMPLATES_EN = ("{k} official site", "{k} app official")
 
-def _deterministic_queries(stage: str, entity_name: str, entity_type: str) -> List[str]:
+
+def _track_templates(keyword: str) -> Tuple[str, ...]:
+    """按赛道词的语言选模板（中文词配中文模板，英文词配英文模板）。"""
+    text = (keyword or "").strip()
+    if not text:
+        return ()
+    is_ascii = all(ch.isascii() for ch in text)
+    return _TRACK_TEMPLATES_EN if is_ascii else _TRACK_TEMPLATES_ZH
+
+
+def _deterministic_queries(stage: str, entity_name: str, entity_type: str,
+                            track_keywords: Optional[Sequence[str]] = None) -> List[str]:
     """按固定模板拼装 entity_anchor / competitor_discovery 的查询词。
 
-    同一个 (stage, 主体名, 主体类型) 必得同一组查询词——
+    同一个 (stage, 主体名, 主体类型, 赛道词) 必得同一组查询词——
     这是"计划不再抽签"的实现方式。
     """
     name = (entity_name or "").strip()
@@ -609,6 +653,10 @@ def _deterministic_queries(stage: str, entity_name: str, entity_type: str) -> Li
             queries.append(f"{name} {phrase}")
     elif stage == "competitor_discovery":
         queries = [tpl.format(name=name) for tpl in _DISCOVERY_TEMPLATES]
+        # 赛道词查询：不带主体名，用来搜模型不知道的竞品
+        for keyword in (track_keywords or [])[:3]:
+            for tpl in _track_templates(keyword):
+                queries.append(tpl.format(k=keyword))
     else:
         return []
     # 去重（主体名本身带"官网"时模板会撞车）
@@ -645,10 +693,34 @@ def _normalize_nominees(raw: Any) -> List[str]:
     return sorted(names)[:12]
 
 
+def _normalize_track_keywords(raw: Any) -> List[str]:
+    """整理**赛道词**（品类/赛道的中文说法）。
+
+    去重 + 去掉空词 + 最多留 3 个。顺序保持模型给的顺序——
+    赛道词是"知识"，但它进的是**确定性拼装**的模板，所以顺序不影响查询词集合
+    （模板拼装的结果与顺序无关，只有去重后集合一样，查询词也一样）。
+    """
+    seen = set()
+    keywords: List[str] = []
+    for item in (raw or []):
+        if not isinstance(item, str):
+            continue
+        word = item.strip()
+        if not word:
+            continue
+        key = word.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        keywords.append(word)
+    return keywords[:3]
+
+
 def _apply_deterministic_queries(
     stages: List[SearchStage],
     entity_name: str,
     entity_type: str,
+    track_keywords: Optional[Sequence[str]] = None,
 ) -> List[SearchStage]:
     """把 entity_anchor / competitor_discovery 两个阶段的查询词换成代码拼装的。
 
@@ -661,7 +733,8 @@ def _apply_deterministic_queries(
     seen_stages = set()
     for stage in stages:
         if stage.stage in ("entity_anchor", "competitor_discovery"):
-            queries = _deterministic_queries(stage.stage, entity_name, entity_type)
+            queries = _deterministic_queries(
+                stage.stage, entity_name, entity_type, track_keywords)
             if queries:
                 out.append(SearchStage(
                     stage=stage.stage,
@@ -680,7 +753,8 @@ def _apply_deterministic_queries(
     for stage_name in ("entity_anchor", "competitor_discovery"):
         if stage_name in seen_stages:
             continue
-        queries = _deterministic_queries(stage_name, entity_name, entity_type)
+        queries = _deterministic_queries(
+            stage_name, entity_name, entity_type, track_keywords)
         if not queries:
             continue
         out.append(SearchStage(
@@ -904,10 +978,12 @@ def build_plan_from_data(data: Dict[str, Any], user_query: str) -> ResearchPlan:
     # **发现阶段的查询词由代码拼装**（2026-10-29）：模型每次生成的查询词都不一样
     # （实测 Jaccard 0.097），会把候选池整个换掉——稳定性线测到的就成了
     # "计划抽签"而不是管线行为。模型仍然决定"找谁"，代码决定"怎么搜"。
+    track_keywords = _normalize_track_keywords(data.get("track_keywords"))
     stages = _apply_deterministic_queries(
         stages,
         entity_name_for_queries,
         fold_entity_type(entity.get("entity_type")),
+        track_keywords,
     )
 
     questions = [
@@ -938,6 +1014,7 @@ def build_plan_from_data(data: Dict[str, Any], user_query: str) -> ResearchPlan:
         ],
         criteria=criteria,
         competitor_candidates=_normalize_nominees(data.get("competitor_candidates")),
+        track_keywords=track_keywords,
         # 准入标准从"描述"变成"可执行"：解析不出就标记，别让报告里的口径
         # 变成谎言（声明与执行脱节是这一轮实测里最贵的坑）
         admission_rule=parse_admission_rule(
@@ -1054,6 +1131,23 @@ def score_candidate(candidate: Dict[str, Any], plan: ResearchPlan) -> Dict[str, 
         score += min(0.25, overlap * 0.12)
         if overlap:
             reasons.append(f"与主体词面重合 {overlap} 项")
+
+    # **模型提名的竞品优先占名额**（实测第九轮，2026-10-31）：
+    # 赛道词查询把整个品类的产品都拉进了候选池（裁决池从 7–11 家涨到 15–30 家），
+    # 而名额只有 5–8 个——截断按 (-分数, 路径深度, 名字) 排，
+    # 绝大多数候选同分 0.5，于是**实际是按名字字母序截断**：
+    # 真竞品（星野、筑梦岛）被 Kimi、Nomi、Poe 这类同品类产品挤掉，
+    # 实测"丢在截断"从 0–3 涨到 4–5，keep_L3 从 0.86 掉到 0.21。
+    # 模型提名是"模型确实知道它是同赛道竞品"的信号，比品类词更可信，
+    # 拿它给提名过的候选加权 → 名额先给已知竞品，赛道词捞到的当长尾补位。
+    nominated = {
+        normalized_brand(n) for n in (plan.competitor_candidates or []) if str(n).strip()
+    }
+    if nominated:
+        brand = normalized_brand(name)
+        if brand and brand in nominated:
+            score += 0.25
+            reasons.append("是模型提名的同赛道竞品")
 
     excluded = [t for t in (plan.criteria.get("must_exclude") or []) if t and t in (name + description)]
     if excluded:

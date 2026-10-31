@@ -15,6 +15,49 @@ from __future__ import annotations
 from typing import Optional
 from urllib.parse import urlparse
 
+# 候选名里的**修饰词**（实测第八轮，2026-10-31）：
+# 同一个产品会以多个名字出现在结果里——"Character.AI" 与
+# "Character AI中文版"（汉化站）、"Kindroid" 与 "Kindred Stitch"（镜像站）。
+# 名字不同 → 合并键不同 → **同一个产品白占两个名额**，把真竞品挤出去
+# （实测入选 8 个里有 3 个是同一产品的不同版本）。
+_NAME_MODIFIERS = (
+    "简体中文", "繁体中文", "繁体版", "中文版", "中文", "英文版", "国际版",
+    "官方版", "官方正版", "官方", "正版", "免费版", "免费", "下载版", "下载",
+    "安装版", "安装", "最新版", "新版", "完整版", "专业版", "客户端",
+    "安卓版", "安卓", "苹果版", "ios版", "ios", "windows版", "windows",
+    "pc版", "pc", "web版", "web", "app版", "app", "apps", "官网", "官方助手",
+)
+
+
+def normalized_brand(name: str) -> str:
+    """把候选名规范化成"品牌键"：去修饰词 + 去标点空格。
+
+    "Character.AI" → "characterai"；"Character AI中文版" → "characterai" ✓
+    "星野" → "星野"（中文名不带修饰词，原样保留）
+
+    放在本模块而不是 search_stages：research_plan 也要用它
+    （给"模型提名的竞品"加权重），而 search_stages 反过来依赖 research_plan，
+    放这里才没有循环导入。
+    """
+    text = (name or "").strip().casefold()
+    if not text:
+        return ""
+    text = "".join(ch for ch in text if ch.isalnum())
+    changed = True
+    while changed:
+        changed = False
+        for mod in _NAME_MODIFIERS:
+            mod = mod.casefold()
+            if text.endswith(mod) and len(text) > len(mod):
+                text = text[: -len(mod)]
+                changed = True
+                break
+            if text.startswith(mod) and len(text) > len(mod):
+                text = text[len(mod):]
+                changed = True
+                break
+    return text
+
 # 应用商店 / 下载站
 _APP_STORE_HOST_HINTS = (
     "apps.apple.com", "itunes.apple.com", "play.google.com", "appgallery.",
@@ -35,6 +78,11 @@ _APP_STORE_HOST_HINTS = (
     # （/2271.html 是筑梦岛的下载页），路径有 id 一段但域名是下载站。
     "9na.", "gamersky.", "3dmgame.", "ali213.", "m.ddooo.", "ddooo.",
     "crsky.", "xiazai.zol.", "pc6.cn", "www.9na.cn",
+    # 实测第八轮（2026-10-31）：微软商店页（apps.microsoft.com）被判成
+    # "产品官网"——它的路径是 /product/<id>，域名单看就是商店，
+    # 但商店清单里没有它，于是成了某产品的"官网"，白占一个名额。
+    "apps.microsoft.com", "windowsphone.com", "galaxystore.",
+    "market.xiaomi.com", "chromewebstore.google.com", "snapcraft.io",
 )
 
 # 开发者社区 / UGC 博客平台
