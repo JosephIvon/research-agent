@@ -55,7 +55,7 @@ def _fresh_cache():
 def test_deep_dive_brings_official_domain_into_pool(monkeypatch):
     _fresh_cache()
     fake = _MirrorThenOfficial()
-    runner = ss.SearchStageRunner(fake)
+    runner = ss.SearchStageRunner(fake, enable_deep_dive=True)
     result = runner.run_competitor_discovery(_plan())
     urls = [c.url for c in result.candidates]
     assert "https://talkie-ai.com/" in urls, "下钻要官方域进池 ✓"
@@ -70,16 +70,13 @@ def test_deep_dive_result_cache_prevents_requery(monkeypatch):
     """第二个 runner（同一进程）不重发下钻查询——否则 12 轮 × 8 品牌 = 96 次查询 ✗。"""
     _fresh_cache()
     fake1 = _MirrorThenOfficial()
-    ss.SearchStageRunner(fake1).run_competitor_discovery(_plan())
-    queries_after_first = len(fake1.queries)
+    ss.SearchStageRunner(fake1, enable_deep_dive=True).run_competitor_discovery(_plan())
     fake2 = _MirrorThenOfficial()
-    ss.SearchStageRunner(fake2).run_competitor_discovery(_plan())
+    ss.SearchStageRunner(fake2, enable_deep_dive=True).run_competitor_discovery(_plan())
     assert "talkie 官网" not in fake2.queries, "结果缓存命中，不重发 ✓"
-    assert len(fake2.queries) < queries_after_first or True
     # 且官方域仍然进池（从缓存结果吸收 ✓）
-    urls = [c.url for c in ss.SearchStageRunner(_MirrorThenOfficial()).run_competitor_discovery(_plan()).candidates] if False else None
     fake3 = _MirrorThenOfficial()
-    result3 = ss.SearchStageRunner(fake3).run_competitor_discovery(_plan())
+    result3 = ss.SearchStageRunner(fake3, enable_deep_dive=True).run_competitor_discovery(_plan())
     assert "https://talkie-ai.com/" in [c.url for c in result3.candidates]
     assert "talkie 官网" not in fake3.queries
 
@@ -97,7 +94,7 @@ def test_deep_dive_is_bounded():
             return [{"url": f"https://official-{query.split(' ')[0]}.example/",
                      "title": query.split(" ")[0], "content": "x"}]
 
-    runner = ss.SearchStageRunner(_Many(), )
+    runner = ss.SearchStageRunner(_Many(), enable_deep_dive=True)
     runner.max_deep_dives = 3
     result = runner.run_competitor_discovery(_plan())
     dive_queries = [q for q in seen_queries if q.endswith("官网") and not q.startswith("猫箱")]
@@ -114,7 +111,7 @@ def test_deep_dive_failure_does_not_invalidate_round():
                 raise RuntimeError("backend down")
             return super().search(query, num_results=num_results)
 
-    runner = ss.SearchStageRunner(_Flaky())
+    runner = ss.SearchStageRunner(_Flaky(), enable_deep_dive=True)
     result = runner.run_competitor_discovery(_plan())
     # _search 对非后端异常本来就吞掉返回 []（既有语义 ✓）——
     # 关键性质：下钻挂掉**不作废整轮**、主链路候选照常 ✓
@@ -135,7 +132,7 @@ def test_deep_dive_never_reintroduces_subject_pages():
 
     plan = _plan()
     plan.official_domains = ["maoxiang.example"]  # 主体域的正规来源 ✓
-    runner = ss.SearchStageRunner(_SubjectTrap())
+    runner = ss.SearchStageRunner(_SubjectTrap(), enable_deep_dive=True)
     result = runner.run_competitor_discovery(plan)
     urls = [c.url for c in result.candidates]
     assert "https://maoxiang.example/" not in urls, "主体页不得回流（域级防线）✓"

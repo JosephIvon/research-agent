@@ -296,7 +296,7 @@ class SearchStageRunner:
     def __init__(self, search_tool: Any, num_results: int = 8,
                  enable_directory_channel: bool = True,
                  enable_store_channel: bool = True,
-                 enable_deep_dive: bool = True,
+                 enable_deep_dive: bool = False,
                  max_deep_dives: int = 8):
         self.search_tool = search_tool
         self.num_results = num_results
@@ -308,8 +308,11 @@ class SearchStageRunner:
         # C4 应用商店通道（默认开）：store_only 来源占全集 32% ✗，
         # 商店 Web 版的深页在常规查询里不出现 ✓。
         self.enable_store_channel = enable_store_channel
-        # 实体下钻（默认开）：对**发现**的品牌补一击 "<品牌> 官网"，
-        # 让官方域进池（第十二轮实测：Talkie 12/12 轮域名没对上 ✗）。
+        # 实体下钻（**默认关**，2026-11-01 第十三轮证伪后回退 ✓）：
+        # 对**发现**的品牌补一击 "<品牌> 官网"。机制工作正常，但实测
+        # Talkie 的官方域 talkie-ai.com 在引擎里**不可见**（"talkie 官网"
+        # 只回 3 条且无它 ✗）——缺口不是"查询不够好"而是"索引里没有"，
+        # 边际价值 ≈ 0。代码留用：换搜索后端/引擎后可再开 ✓。
         self.enable_deep_dive = enable_deep_dive
         self.max_deep_dives = max_deep_dives
         # 主体锚定的结果缓存：竞品发现阶段要据此排除"主体自己的官方页"
