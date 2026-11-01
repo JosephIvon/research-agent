@@ -1,0 +1,222 @@
+{
+  "entity": {
+    "name": "百度搭子",
+    "entity_type": "app",
+    "what_it_is": "百度推出的面向大众用户的AI角色扮演与情感陪伴应用。",
+    "disambiguation_candidates": [],
+    "resolved_confidence": 0.95,
+    "official_domains": [
+      "dumate.cn"
+    ]
+  },
+  "competitor_criteria": {
+    "layers": [
+      "direct",
+      "alternative"
+    ],
+    "must_include": [
+      "面向C端用户的AI角色扮演或情感陪伴场景",
+      "以独立移动App或Web产品交付",
+      "支持创建角色并进行多轮AI对话"
+    ],
+    "must_exclude": [
+      "纯写作、编程等通用效率工具",
+      "真人匿名交友与社交产品",
+      "不含AI角色对话的纯互动游戏"
+    ],
+    "min_count": 3,
+    "max_count": 5,
+    "admission_rule": "直接竞品须同时满足面向C端、用于AI角色扮演或情感陪伴、以独立App或Web交付；替代产品可缺少长期记忆，但应支持角色创建或关系互动。",
+    "candidate_pool": 10
+  },
+  "competitor_candidates": [
+    "Character.AI",
+    "Replika",
+    "Talkie",
+    "Tofai",
+    "星野",
+    "猫箱",
+    "筑梦岛",
+    "蔚蓝陪伴"
+  ],
+  "track_keywords": [
+    "AI陪伴",
+    "AI角色扮演",
+    "AI社交"
+  ],
+  "admission_rule": {
+    "text": "直接竞品须同时满足面向C端、用于AI角色扮演或情感陪伴、以独立App或Web交付；替代产品可缺少长期记忆，但应支持角色创建或关系互动。",
+    "source": "partial",
+    "require_product_site": true,
+    "min_dimensions": 2,
+    "min_dimensions_stage": "post_crawl",
+    "layers": [],
+    "must_include": [
+      "面向C端用户的AI角色扮演或情感陪伴场景",
+      "以独立移动App或Web产品交付",
+      "支持创建角色并进行多轮AI对话"
+    ],
+    "must_exclude": [
+      "纯写作、编程等通用效率工具",
+      "真人匿名交友与社交产品",
+      "不含AI角色对话的纯互动游戏"
+    ],
+    "require_same_track": false,
+    "executable": [
+      "必须有官网（默认口径，规则未另行说明）",
+      "必须包含：面向C端用户的AI角色扮演或情感陪伴场景、以独立移动App或Web产品交付、支持创建角色并进行多轮AI对话",
+      "必须排除：纯写作、编程等通用效率工具、真人匿名交友与社交产品、不含AI角色对话的纯互动游戏",
+      "至少 2 个维度有数据（抓后判定，默认口径）"
+    ],
+    "not_executable": [
+      "直接竞品须同时满足面向C端（无法转成可执行条件）",
+      "用于AI角色扮演或情感陪伴（无法转成可执行条件）",
+      "以独立App或Web交付（无法转成可执行条件）",
+      "替代产品可缺少长期记忆（无法转成可执行条件）",
+      "但应支持角色创建或关系互动（无法转成可执行条件）"
+    ]
+  },
+  "angles": [
+    {
+      "angle": "feature",
+      "label": "功能",
+      "priority": "secondary",
+      "reason": "比较角色创建、对话、记忆与语音等核心能力。",
+      "weight": 0.35,
+      "page_hints": [
+        "功能介绍",
+        "角色创建",
+        "多轮对话",
+        "长期记忆",
+        "语音互动"
+      ]
+    },
+    {
+      "angle": "business",
+      "label": "业务价值",
+      "priority": "secondary",
+      "reason": "评估会员模式、付费点、用户规模与商业化路径。",
+      "weight": 0.3,
+      "page_hints": [
+        "会员定价",
+        "增值服务",
+        "用户规模",
+        "商业化"
+      ]
+    },
+    {
+      "angle": "engineering",
+      "label": "研发与实现",
+      "priority": "secondary",
+      "reason": "考察模型能力、记忆机制、内容安全与隐私设计。",
+      "weight": 0.2,
+      "page_hints": [
+        "模型能力",
+        "记忆机制",
+        "内容安全",
+        "隐私政策"
+      ]
+    },
+    {
+      "angle": "product",
+      "label": "产品与体验",
+      "priority": "secondary",
+      "reason": "比较角色发现、推荐机制、社区氛围与整体体验。",
+      "weight": 0.15,
+      "page_hints": [
+        "新手引导",
+        "角色推荐",
+        "对话体验",
+        "社区机制"
+      ]
+    }
+  ],
+  "search_plan": [
+    {
+      "stage": "entity_anchor",
+      "label": "实体锚定",
+      "queries": [
+        "百度搭子 官网",
+        "百度搭子 App 官网"
+      ],
+      "acceptance": "确认百度搭子的官网、产品定位、目标用户、核心功能与交付形态。"
+    },
+    {
+      "stage": "competitor_discovery",
+      "label": "竞品发现",
+      "queries": [
+        "百度搭子 竞品",
+        "百度搭子 类似应用",
+        "AI陪伴 app 官网",
+        "AI陪伴 官网",
+        "AI角色扮演 app 官网",
+        "AI角色扮演 官网",
+        "AI社交 app 官网",
+        "AI社交 官网"
+      ],
+      "acceptance": "发现候选产品，并依据同客群、同场景和同交付形态初步筛选。"
+    },
+    {
+      "stage": "per_competitor_verify",
+      "label": "逐家验证",
+      "queries": [
+        "{竞品名} 官网",
+        "{竞品名} 功能",
+        "{竞品名} 定价",
+        "{品类} App 官网"
+      ],
+      "acceptance": "通过产品官网或官方应用商店确认候选资格、产品功能、平台与收费方式。"
+    },
+    {
+      "stage": "counter_evidence",
+      "label": "反证",
+      "queries": [
+        "{竞品名} 官网 评价",
+        "{竞品名} 应用商店 评价",
+        "{竞品名} 隐私 安全",
+        "{品类} App 差评"
+      ],
+      "acceptance": "收集可追溯的用户差评、投诉、隐私限制、功能缺失及内容安全反馈。"
+    },
+    {
+      "stage": "entity_anchor",
+      "label": "实体锚定",
+      "queries": [
+        "百度搭子 官网",
+        "百度搭子 App 官网"
+      ],
+      "acceptance": "命中主体官方源，用于确认主体是什么"
+    },
+    {
+      "stage": "competitor_discovery",
+      "label": "竞品发现",
+      "queries": [
+        "百度搭子 竞品",
+        "百度搭子 类似应用",
+        "AI陪伴 app 官网",
+        "AI陪伴 官网",
+        "AI角色扮演 app 官网",
+        "AI角色扮演 官网",
+        "AI社交 app 官网",
+        "AI社交 官网"
+      ],
+      "acceptance": "产出候选池，媒体/百科页会被剔除"
+    }
+  ],
+  "open_questions": [
+    {
+      "question": "竞品范围是否限于C端AI陪伴与角色扮演产品？",
+      "default": "是，纳入直接竞品和少量替代产品"
+    },
+    {
+      "question": "是否重点关注中国大陆市场？",
+      "default": "是，必要时补充海外同类产品"
+    },
+    {
+      "question": "四个分析角度是否有侧重？",
+      "default": "功能、业务、研发与产品体验均衡分析"
+    }
+  ],
+  "source": "model",
+  "error": ""
+}

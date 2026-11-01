@@ -1,0 +1,215 @@
+{
+  "entity": {
+    "name": "猫箱",
+    "entity_type": "app",
+    "what_it_is": "一款支持创建角色、剧情互动与情感陪伴的AI聊天应用",
+    "disambiguation_candidates": [
+      "猫箱（AI角色扮演应用）",
+      "猫箱（同名小说、漫画或工具）"
+    ],
+    "resolved_confidence": 0.92,
+    "official_domains": []
+  },
+  "competitor_criteria": {
+    "layers": [
+      "direct",
+      "alternative",
+      "adjacent"
+    ],
+    "must_include": [
+      "星野",
+      "筑梦岛",
+      "Talkie"
+    ],
+    "must_exclude": [
+      "猫箱本体",
+      "无角色创建或陪伴功能的通用问答工具",
+      "仅提供小说或图片生成的单一创作工具"
+    ],
+    "min_count": 3,
+    "max_count": 8,
+    "admission_rule": "按同客群×同场景×同交付形态纳入：面向角色扮演或情感陪伴用户，以App、网页或聊天形态提供互动；通用问答仅在可独立创建角色时纳入。",
+    "candidate_pool": 10
+  },
+  "competitor_candidates": [
+    "Character.AI",
+    "Nomi",
+    "Replika",
+    "Talkie",
+    "Tofai",
+    "星野",
+    "筑梦岛",
+    "蔚蓝陪伴"
+  ],
+  "track_keywords": [
+    "AI角色扮演",
+    "AI情感陪伴"
+  ],
+  "admission_rule": {
+    "text": "按同客群×同场景×同交付形态纳入：面向角色扮演或情感陪伴用户，以App、网页或聊天形态提供互动；通用问答仅在可独立创建角色时纳入。",
+    "source": "partial",
+    "require_product_site": true,
+    "min_dimensions": 2,
+    "min_dimensions_stage": "post_crawl",
+    "layers": [],
+    "must_include": [
+      "星野",
+      "筑梦岛",
+      "Talkie"
+    ],
+    "must_exclude": [
+      "猫箱本体",
+      "无角色创建或陪伴功能的通用问答工具",
+      "仅提供小说或图片生成的单一创作工具"
+    ],
+    "require_same_track": true,
+    "executable": [
+      "必须有官网（默认口径，规则未另行说明）",
+      "按同客群×同场景×同交付形态纳入：面向角色扮演或情感陪伴用户（按赛道名册 + 赛道词 + 跨行业词判定）",
+      "必须包含：星野、筑梦岛、Talkie",
+      "必须排除：猫箱本体、无角色创建或陪伴功能的通用问答工具、仅提供小说或图片生成的单一创作工具",
+      "至少 2 个维度有数据（抓后判定，默认口径）"
+    ],
+    "not_executable": [
+      "以App（无法转成可执行条件）",
+      "网页或聊天形态提供互动（无法转成可执行条件）",
+      "通用问答仅在可独立创建角色时纳入（无法转成可执行条件）"
+    ]
+  },
+  "angles": [
+    {
+      "angle": "feature",
+      "label": "功能",
+      "priority": "secondary",
+      "reason": "比较角色创建、剧情互动、记忆、语音及多端能力",
+      "weight": 0.35,
+      "page_hints": [
+        "功能",
+        "角色",
+        "记忆",
+        "语音",
+        "多端"
+      ]
+    },
+    {
+      "angle": "business",
+      "label": "业务价值",
+      "priority": "secondary",
+      "reason": "比较目标用户、付费模式、订阅价格及商业化路径",
+      "weight": 0.3,
+      "page_hints": [
+        "定价",
+        "会员",
+        "订阅",
+        "商业化"
+      ]
+    },
+    {
+      "angle": "engineering",
+      "label": "研发与实现",
+      "priority": "secondary",
+      "reason": "比较模型接入、上下文记忆、内容安全与隐私机制",
+      "weight": 0.2,
+      "page_hints": [
+        "技术",
+        "API",
+        "记忆",
+        "安全",
+        "隐私"
+      ]
+    },
+    {
+      "angle": "product",
+      "label": "产品与体验",
+      "priority": "secondary",
+      "reason": "比较首次体验、内容质量、交互路径与留存设计",
+      "weight": 0.15,
+      "page_hints": [
+        "首页",
+        "新手",
+        "社区",
+        "体验"
+      ]
+    }
+  ],
+  "search_plan": [
+    {
+      "stage": "entity_anchor",
+      "label": "实体锚定",
+      "queries": [
+        "猫箱 官网",
+        "猫箱 App 官网"
+      ],
+      "acceptance": "确认猫箱的功能、运营主体、交付平台、官网及同名对象"
+    },
+    {
+      "stage": "competitor_discovery",
+      "label": "竞品发现",
+      "queries": [
+        "猫箱 竞品",
+        "猫箱 类似应用",
+        "AI角色扮演 app 官网",
+        "AI角色扮演 官网",
+        "AI情感陪伴 app 官网",
+        "AI情感陪伴 官网"
+      ],
+      "acceptance": "发现2–8个可能同客群、同场景、同交付形态的候选产品"
+    },
+    {
+      "stage": "per_competitor_verify",
+      "label": "逐家验证",
+      "queries": [
+        "{竞品名} 官网",
+        "{竞品名} 产品官网",
+        "{品类词} App 官网",
+        "{品类词} 下载"
+      ],
+      "acceptance": "逐家确认官网、产品功能、平台、定价与所属竞品层级"
+    },
+    {
+      "stage": "counter_evidence",
+      "label": "反证",
+      "queries": [
+        "{竞品名} 用户评价",
+        "{竞品名} 应用商店",
+        "{竞品名} 官网 缺点",
+        "{竞品名} 隐私 政策"
+      ],
+      "acceptance": "收集用户反馈、常见缺点、评分、隐私限制与停服风险"
+    },
+    {
+      "stage": "entity_anchor",
+      "label": "实体锚定",
+      "queries": [
+        "猫箱 官网",
+        "猫箱 App 官网"
+      ],
+      "acceptance": "命中主体官方源，用于确认主体是什么"
+    },
+    {
+      "stage": "competitor_discovery",
+      "label": "竞品发现",
+      "queries": [
+        "猫箱 竞品",
+        "猫箱 类似应用",
+        "AI角色扮演 app 官网",
+        "AI角色扮演 官网",
+        "AI情感陪伴 app 官网",
+        "AI情感陪伴 官网"
+      ],
+      "acceptance": "产出候选池，媒体/百科页会被剔除"
+    }
+  ],
+  "open_questions": [
+    {
+      "question": "是否将海外同类及通用角色聊天产品纳入？",
+      "default": "纳入海外同类，通用产品仅列为替代层"
+    },
+    {
+      "question": "“全部竞品信息”需要覆盖哪些维度？",
+      "default": "覆盖功能、定价、体验、技术与商业化"
+    }
+  ],
+  "source": "model",
+  "error": ""
+}

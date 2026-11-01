@@ -1,0 +1,231 @@
+{
+  "entity": {
+    "name": "百度搭子",
+    "entity_type": "app",
+    "what_it_is": "百度推出的AI情感陪伴与角色扮演聊天应用，支持角色创建和沉浸式对话。",
+    "disambiguation_candidates": [],
+    "resolved_confidence": 0.98,
+    "official_domains": [
+      "dumate.cn"
+    ]
+  },
+  "competitor_criteria": {
+    "layers": [
+      "direct",
+      "alternative",
+      "adjacent"
+    ],
+    "must_include": [
+      "面向C端用户的AI陪伴或角色扮演产品",
+      "具备角色创建、持续对话等核心能力",
+      "有官网或正规应用商店页面可核验"
+    ],
+    "must_exclude": [
+      "百度旗下非陪伴类AI产品",
+      "纯AI写作、绘画或语音工具",
+      "仅提供角色素材且无AI对话能力"
+    ],
+    "min_count": 5,
+    "max_count": 8,
+    "admission_rule": "同客群×同场景×同交付形态：直接竞品为C端AI角色对话或情感陪伴App；替代为通用AI聊天；相邻为虚拟社交、互动叙事产品。",
+    "candidate_pool": 10
+  },
+  "competitor_candidates": [
+    "Character.AI",
+    "Replika",
+    "Talkie",
+    "Tofai",
+    "星野",
+    "猫箱",
+    "筑梦岛",
+    "蔚蓝陪伴"
+  ],
+  "track_keywords": [
+    "AI情感陪伴",
+    "AI角色扮演",
+    "虚拟陪伴"
+  ],
+  "admission_rule": {
+    "text": "同客群×同场景×同交付形态：直接竞品为C端AI角色对话或情感陪伴App；替代为通用AI聊天；相邻为虚拟社交、互动叙事产品。",
+    "source": "partial",
+    "require_product_site": true,
+    "min_dimensions": 2,
+    "min_dimensions_stage": "post_crawl",
+    "layers": [],
+    "must_include": [
+      "面向C端用户的AI陪伴或角色扮演产品",
+      "具备角色创建、持续对话等核心能力",
+      "有官网或正规应用商店页面可核验"
+    ],
+    "must_exclude": [
+      "百度旗下非陪伴类AI产品",
+      "纯AI写作、绘画或语音工具",
+      "仅提供角色素材且无AI对话能力"
+    ],
+    "require_same_track": true,
+    "executable": [
+      "必须有官网（默认口径，规则未另行说明）",
+      "同客群×同场景×同交付形态：直接竞品为C端AI角色对话或情感陪伴App（按赛道名册 + 赛道词 + 跨行业词判定）",
+      "必须包含：面向C端用户的AI陪伴或角色扮演产品、具备角色创建、持续对话等核心能力、有官网或正规应用商店页面可核验",
+      "必须排除：百度旗下非陪伴类AI产品、纯AI写作、绘画或语音工具、仅提供角色素材且无AI对话能力",
+      "至少 2 个维度有数据（抓后判定，默认口径）"
+    ],
+    "not_executable": [
+      "替代为通用AI聊天（无法转成可执行条件）",
+      "相邻为虚拟社交（无法转成可执行条件）",
+      "互动叙事产品（无法转成可执行条件）"
+    ]
+  },
+  "angles": [
+    {
+      "angle": "feature",
+      "label": "功能",
+      "priority": "secondary",
+      "reason": "比较角色、对话、语音及付费等核心能力差异。",
+      "weight": 0.35,
+      "page_hints": [
+        "角色创建",
+        "角色广场",
+        "对话功能",
+        "语音互动",
+        "定价方案",
+        "会员权益",
+        "隐私设置",
+        "多端支持"
+      ]
+    },
+    {
+      "angle": "business",
+      "label": "业务价值",
+      "priority": "secondary",
+      "reason": "判断用户规模、变现方式与增长手段。",
+      "weight": 0.3,
+      "page_hints": [
+        "定价",
+        "订阅方案",
+        "用户规模",
+        "商业化",
+        "渠道合作",
+        "关于我们"
+      ]
+    },
+    {
+      "angle": "engineering",
+      "label": "研发与实现",
+      "priority": "secondary",
+      "reason": "比较模型、记忆、数据安全和迭代能力。",
+      "weight": 0.2,
+      "page_hints": [
+        "模型能力",
+        "技术架构",
+        "数据安全",
+        "隐私政策",
+        "更新日志",
+        "API文档"
+      ]
+    },
+    {
+      "angle": "product",
+      "label": "产品与体验",
+      "priority": "secondary",
+      "reason": "评估上手、互动质量、内容安全与留存体验。",
+      "weight": 0.15,
+      "page_hints": [
+        "新手引导",
+        "角色创建",
+        "对话体验",
+        "内容分级",
+        "用户反馈",
+        "版本记录"
+      ]
+    }
+  ],
+  "search_plan": [
+    {
+      "stage": "entity_anchor",
+      "label": "实体锚定",
+      "queries": [
+        "百度搭子 官网",
+        "百度搭子 App 官网"
+      ],
+      "acceptance": "确认百度搭子的产品定位、核心功能、平台与官方域名，核验dumate.cn。"
+    },
+    {
+      "stage": "competitor_discovery",
+      "label": "竞品发现",
+      "queries": [
+        "百度搭子 竞品",
+        "百度搭子 类似应用",
+        "AI情感陪伴 app 官网",
+        "AI情感陪伴 官网",
+        "AI角色扮演 app 官网",
+        "AI角色扮演 官网",
+        "虚拟陪伴 app 官网",
+        "虚拟陪伴 官网"
+      ],
+      "acceptance": "依据AI情感陪伴与AI角色扮演赛道收集候选，并区分直接、替代和相邻竞品。"
+    },
+    {
+      "stage": "per_competitor_verify",
+      "label": "逐家验证",
+      "queries": [
+        "{竞品名} 官网",
+        "{竞品名} 官方 下载",
+        "AI陪伴 App 官网",
+        "AI角色扮演 产品 官网"
+      ],
+      "acceptance": "每个入选竞品均有官网或正规商店页佐证，核对功能、平台、定价及定位。"
+    },
+    {
+      "stage": "counter_evidence",
+      "label": "反证",
+      "queries": [
+        "{竞品名} 官网 评价",
+        "{竞品名} 差评",
+        "{竞品名} 应用商店",
+        "{竞品名} 投诉"
+      ],
+      "acceptance": "收集用户反馈、隐私争议、付费问题或功能短板，避免仅采信官方宣传。"
+    },
+    {
+      "stage": "entity_anchor",
+      "label": "实体锚定",
+      "queries": [
+        "百度搭子 官网",
+        "百度搭子 App 官网"
+      ],
+      "acceptance": "命中主体官方源，用于确认主体是什么"
+    },
+    {
+      "stage": "competitor_discovery",
+      "label": "竞品发现",
+      "queries": [
+        "百度搭子 竞品",
+        "百度搭子 类似应用",
+        "AI情感陪伴 app 官网",
+        "AI情感陪伴 官网",
+        "AI角色扮演 app 官网",
+        "AI角色扮演 官网",
+        "虚拟陪伴 app 官网",
+        "虚拟陪伴 官网"
+      ],
+      "acceptance": "产出候选池，媒体/百科页会被剔除"
+    }
+  ],
+  "open_questions": [
+    {
+      "question": "竞品市场范围按中国大陆还是全球？",
+      "default": "中国大陆优先，补充海外头部产品"
+    },
+    {
+      "question": "“全部竞品”是否包含替代及相邻产品？",
+      "default": "三层均纳入，直接竞品优先"
+    },
+    {
+      "question": "重点比较哪些信息维度？",
+      "default": "功能、定价、用户、体验、技术与风险"
+    }
+  ],
+  "source": "model",
+  "error": ""
+}
