@@ -335,6 +335,8 @@ def analyze_denominators(runs: List[Dict[str, Any]],
             "keep_L1": keeps_l1,
             "keep_L3": keeps_l3,
             "r1_verdict": rm.verdict("R1", recalls, LINES["R1"][2]),
+            # 实体（品牌）口径（非判定口径 ✗）
+            "recall_brand_L0": _agg([m["recall_brand"]["L0"] for m in per_run]),
             "tiers": tiers,
             "per_run_recall": [m["recall"]["L0"] for m in per_run],
         })
@@ -399,6 +401,17 @@ def analyze(runs: List[Dict[str, Any]], golden: rm.GoldenSet) -> Dict[str, Any]:
             "only_task": overlap["only_a"],
             "only_search": overlap["only_b"],
         })
+    # ---- 实体（品牌）口径：量化"产品被发现了、只是域名没对上"的缺口 ----
+    # 品牌命中但 host 未命中的金标准产品逐轮计数（Talkie 案例 ✓）
+    brand_l0: List[Optional[float]] = []
+    brand_gap: Dict[str, int] = {}
+    for item in per_run:
+        m = item["metrics"]
+        brand_l0.append(m["recall_brand"]["L0"])
+        host_names = {h["name"] for h in m["hits"]["L0"]}
+        for h in m["hits_brand"]["L0"]:
+            if h["name"] not in host_names:
+                brand_gap[h["name"]] = brand_gap.get(h["name"], 0) + 1
     return {
         "golden_total": len(golden),
         "golden_measured": len(measured),
@@ -410,6 +423,9 @@ def analyze(runs: List[Dict[str, Any]], golden: rm.GoldenSet) -> Dict[str, Any]:
         "per_run": per_run,
         "stability": stability,
         "cross_phrasing": cross,
+        # 实体口径（非判定口径 ✗——判定线仍用 host 口径 ✓）
+        "recall_brand_L0": _agg(brand_l0),
+        "brand_gap": sorted(brand_gap.items(), key=lambda kv: (-kv[1], kv[0])),
         "tie": tie_analysis(valid, measured),
     }
 
@@ -570,6 +586,27 @@ def render_markdown(analysis: Dict[str, Any], lines: Dict[str, Any],
             v = lines[code]["by_group"].get(g)
             row.append(str(v) if v is not None else "不判")
         out.append("| " + " | ".join(row) + " |")
+    out.append("")
+    # ---- 实体（品牌）口径：产品被发现了、只是域名没对上（Talkie 案例 ✓）----
+    # 非判定口径 ✗：判定线仍用 host 口径（预注册不变 ✓）。
+    brand_recall = analysis.get("recall_brand_L0")
+    if brand_recall is not None:
+        host_r1 = lines["R1"]["overall"]
+        note = ""
+        if host_r1 is not None:
+            note = f"（同批 host 口径 R1={host_r1}，差 {round(brand_recall - host_r1, 4)} = 域名没对上的部分）"
+        out.append(f"- **实体口径（品牌匹配，非判定口径 ✗）**：recall_L0={brand_recall} {note}；"
+                   f"判定线仍用 host 口径（预注册不变）✓")
+        brand_gap = analysis.get("brand_gap") or []
+        if brand_gap:
+            total_runs = analysis.get("runs_valid") or 0
+            out.append("")
+            out.append("品牌命中但 host 未命中的产品（**实体归并缺口**，逐轮计数）：")
+            out.append("")
+            out.append("| 金标准产品 | 出现在 |")
+            out.append("|---|---|")
+            for name, cnt in brand_gap[:10]:
+                out.append(f"| {name} | {cnt}/{total_runs} 轮 |")
     out.append("")
     out.append("## 2. 漏斗（每次运行）")
     out.append("")

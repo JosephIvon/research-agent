@@ -112,6 +112,47 @@ class GoldenSet:
 
     def __init__(self, entries: Sequence[Dict[str, Any]]):
         self.entries = list(entries)
+        # 品牌（实体）索引：规范化品牌键 → 金标准条目。
+        # 背景（第十一轮实测 ✗）：Talkie 被发现在 talkieai.cc（官方域 ✓），
+        # 但金标准只记了 talkie-ai.com —— host 口径把"已发现的产品"记 0 分；
+        # 12 轮同批数据：host 口径 R1=0.4074 vs 品牌 口径=0.5139（+0.1065）。
+        # 冲突键（两个不同产品共用一个品牌键）自动排除，保证无歧义 ✓
+        # （实测两个口径 0 冲突 ✓，见 2026-11-01 探针）。
+        self.brand_index: Dict[str, Dict[str, Any]] = {}
+        self.ambiguous_brands: set = set()
+        self._build_brand_index()
+
+    def _build_brand_index(self) -> None:
+        from src.workflow.site_types import normalized_brand
+
+        # 歧义检测的"条目身份"必须用**位置**而不是名字：同名异站的两条
+        # （Muse@muse1.example vs Muse@muse2.example）恰恰是最需要歧义
+        # 保护的形态 ✗——按名字判会把它们误当成同一条 ✓ 改按下标判 ✓。
+        pending: Dict[str, set] = {}
+        for pos, entry in enumerate(self.entries):
+            keys = {normalized_brand(str(entry.get("name") or ""))}
+            for alias in (entry.get("aliases") or []):
+                key = normalized_brand(str(alias or ""))
+                if key:
+                    keys.add(key)
+            keys.discard("")
+            for key in keys:
+                pending.setdefault(key, set()).add(pos)
+                self.brand_index[key] = entry
+        # 一个键指向多个不同条目 → 有歧义 → 从索引里剔掉（brand 匹配宁缺毋滥 ✓）
+        for key, positions in pending.items():
+            if len(positions) > 1:
+                self.ambiguous_brands.add(key)
+                self.brand_index.pop(key, None)
+
+    def match_brand(self, name: str) -> Optional[Dict[str, Any]]:
+        """这个名字的规范化品牌键命中金标准里的哪一条？无歧义才命中 ✓。"""
+        from src.workflow.site_types import normalized_brand
+
+        key = normalized_brand(str(name or ""))
+        if not key or key in self.ambiguous_brands:
+            return None
+        return self.brand_index.get(key)
 
     @classmethod
     def from_file(cls, path: str, subject: Optional[str] = None,
@@ -229,6 +270,30 @@ def funnel_metrics(run: Dict[str, Any], golden: GoldenSet) -> Dict[str, Any]:
     recalls = {
         level: (found_counts[level] / total) if total else None for level in LEVELS
     }
+    # 实体（品牌）口径：候选的规范化品牌命中金标准 name/aliases 即算发现——
+    # 产品被找到了、只是域名跟金标准记的不同（镜像域/官方域并存）不该记 0 分 ✓。
+    # **非判定口径** ✗：判定线（R1≥0.70）仍用 host 口径（预注册不变）；
+    # 这里只是把"实体归并缺口"量化出来（host 与 brand 的差 = 域名没对上）。
+    brand_hits: Dict[str, Dict[str, Any]] = {}
+    for level in LEVELS:
+        found: Dict[str, Dict[str, Any]] = {}
+        for item in levels[level]:
+            entry = golden.match_brand(str(item.get("name") or ""))
+            if entry is None:
+                continue
+            name = entry.get("name") or ""
+            if name not in found:
+                found[name] = {
+                    "name": name,
+                    "hosts": entry.get("hosts") or [],
+                    "url": item.get("url", ""),
+                    "matched_by": "brand",
+                }
+        brand_hits[level] = found
+    brand_counts = {level: len(brand_hits[level]) for level in LEVELS}
+    brand_recalls = {
+        level: (brand_counts[level] / total) if total else None for level in LEVELS
+    }
     # 逐层保留率（分母是上一层的命中数）
     keeps: Dict[str, Optional[float]] = {}
     for prev, level in zip(LEVELS, LEVELS[1:]):
@@ -309,6 +374,10 @@ def funnel_metrics(run: Dict[str, Any], golden: GoldenSet) -> Dict[str, Any]:
         "keep": keeps,
         "precision": precisions,
         "hits": {level: sorted(hits[level].values(), key=lambda x: x["name"]) for level in LEVELS},
+        # 实体（品牌）口径（非判定口径 ✗——判定线仍用 host 口径 ✓）
+        "found_brand": brand_counts,
+        "recall_brand": brand_recalls,
+        "hits_brand": {level: sorted(brand_hits[level].values(), key=lambda x: x["name"]) for level in LEVELS},
         "lost": sorted(lost, key=lambda x: (x["reason"], x["name"])),
     }
 
