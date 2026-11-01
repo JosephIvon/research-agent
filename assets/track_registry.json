@@ -1,0 +1,2247 @@
+{
+  "version": 1,
+  "track": "AI 情感陪伴 / AI 角色扮演（面向个人用户的 AI 角色对话与互动叙事应用/网站）",
+  "built_at": "2026-11-01",
+  "split_seed": "research-agent/track-split/v1",
+  "note": "生产侧的赛道名册：同赛道闸门用它判『这个品牌/站点确实在这个赛道』。它与测量集（evals/discovery_golden/）互斥——切分规则见 evals/discovery_golden/track_universe.json 的 split_policy。",
+  "entries": [
+    {
+      "name": "AI Tales",
+      "aliases": [
+        "AI Tales"
+      ],
+      "hosts": [
+        "aitales.app"
+      ],
+      "source_tier": "external",
+      "evidence": "title「AI Tales: AI Text RPG & Fantasy Roleplay for Mobile」",
+      "sources": [
+        {
+          "source_url": "https://www.reddit.com/r/replika/comments/10wud0l/what_alternative_for_replika_is_best/",
+          "source_kind": "Reddit"
+        }
+      ]
+    },
+    {
+      "name": "AIgirlfriends AI",
+      "aliases": [
+        "AIgirlfriends AI"
+      ],
+      "hosts": [
+        "aigirlfriends.ai"
+      ],
+      "source_tier": "external",
+      "evidence": "title「About AIGirlfriends.ai — Company, Mission &amp; Editorial Team」",
+      "sources": [
+        {
+          "source_url": "https://aishenqi.net/tool/aigirlfriends-ai",
+          "source_kind": "导航目录"
+        },
+        {
+          "source_url": "https://toolagator.com/ai-tools-category/ai-roleplay/",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "AI剧情",
+      "aliases": [
+        "AI剧情"
+      ],
+      "hosts": [
+        "aijuqingapp.com",
+        "aistoryapp.com"
+      ],
+      "source_tier": "sample_verified",
+      "evidence": "title「AI 角色聊天与多角色互动剧本 | AI剧情」（两个域名同一产品）",
+      "sources": []
+    },
+    {
+      "name": "Agnai",
+      "aliases": [
+        "Agnai"
+      ],
+      "hosts": [
+        "agnai.chat"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Agnaistic」",
+      "sources": [
+        {
+          "source_url": "https://sider.ai/blog/ai-tools/best-sillytavern-alternatives-for-roleplay-chat-and-llm-control",
+          "source_kind": "榜单指南"
+        },
+        {
+          "source_url": "https://www.reddit.com/r/SillyTavernAI/comments/1bxqriy/would_you_recommend_sillytavern_if_i_just_want_a/",
+          "source_kind": "Reddit"
+        }
+      ]
+    },
+    {
+      "name": "AmorLink AI",
+      "aliases": [
+        "AmorLink AI"
+      ],
+      "hosts": [
+        "www.amorlink.ai"
+      ],
+      "source_tier": "external",
+      "evidence": "title「About AmorLink AI - what an AI companion is &amp; how it works」",
+      "sources": [
+        {
+          "source_url": "https://app.aibase.com/zh/class/%E6%83%85%E6%84%9F%E9%99%AA%E4%BC%B4",
+          "source_kind": "导航目录"
+        }
+      ]
+    },
+    {
+      "name": "Botify AI",
+      "aliases": [
+        "Botify AI"
+      ],
+      "hosts": [
+        "botify.ai"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Botify AI」",
+      "sources": [
+        {
+          "source_url": "https://dreamgen.com/blog/articles/best-character-ai",
+          "source_kind": "榜单指南"
+        },
+        {
+          "source_url": "https://www.reddit.com/r/replika/comments/11imvyo/what_are_the_decent_alternatives_out_there/",
+          "source_kind": "Reddit"
+        },
+        {
+          "source_url": "https://creati.ai/ai-tools/categories/ai-roleplay/",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "Caveduck",
+      "aliases": [
+        "Caveduck"
+      ],
+      "hosts": [
+        "caveduck.org"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Caveduck — Live AI Character Chat & Roleplay」",
+      "sources": [
+        {
+          "source_url": "https://aixhub.tools/en/category/ai-roleplay",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "Character.AI",
+      "aliases": [
+        "Character.AI"
+      ],
+      "hosts": [
+        "character.ai",
+        "character-ai.com.cn"
+      ],
+      "source_tier": "sample_verified",
+      "evidence": "title「character.ai | AI Chat, Reimagined–Your Words. Your World.」",
+      "sources": [
+        {
+          "source_url": "",
+          "source_kind": "本管线实跑发现"
+        },
+        {
+          "source_url": "https://www.aigc.cn/favorites/ai-chatbot",
+          "source_kind": "导航目录"
+        },
+        {
+          "source_url": "https://ai-bot.cn/favorites/ai-chatbots/",
+          "source_kind": "导航目录"
+        },
+        {
+          "source_url": "https://blog.csdn.net/2601_96583510/article/details/162963734",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.sohu.com/a/766287049_121649907",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.moonfox.cn/insight/report/1813",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://news.qq.com/rain/a/20240929A02YXO00",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://shouldieventry.com/insights/zh-tw/best-ai-companion-apps-in-2026/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.bladerpg.com/ai-roleplay/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.nieta.art/use-cases/zh-Hans/the-best-ai-roleplay-platforms",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.aiga.io/cn/blog/best-ai-roleplay-apps-2026",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://developer.volcengine.com/articles/7578551251881689131",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.lumichat.ink/zh/blog/best-free-ai-roleplay-chatbots",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/12/2026-%E5%B9%B4%E6%9C%80%E4%BD%B3-ai-%E9%99%AA%E4%BC%B4-app%EF%BC%9A10-%E6%AC%BE%E5%AE%8C%E6%95%B4%E8%A9%95%E6%B8%AC%E6%8E%92%E8%A1%8C/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://juejin.cn/post/7578705123208691755",
+          "source_kind": "社区帖子"
+        },
+        {
+          "source_url": "https://xueqiu.com/9057196330/324285947",
+          "source_kind": "社区帖子"
+        },
+        {
+          "source_url": "https://www.shenzhenware.com/articles/16467",
+          "source_kind": "媒体报道"
+        },
+        {
+          "source_url": "https://www.36kr.com/p/3001856796144776",
+          "source_kind": "媒体报道"
+        },
+        {
+          "source_url": "https://blog.csdn.net/sinat_37574187/article/details/143816082",
+          "source_kind": "媒体报道"
+        },
+        {
+          "source_url": "https://www.huxiu.com/article/3608463.html",
+          "source_kind": "媒体报道"
+        },
+        {
+          "source_url": "https://www.flowpixai.com/ai-tools/ai-companion-app-comparison.html",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.lumichat.ink/zh/blog/free-online-companion-chat-app-platform",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/03/30/%E3%80%902026-%E6%9C%80%E6%96%B0%E3%80%91%E5%85%8D%E8%B4%B9-ai-%E8%A7%92%E8%89%B2%E6%89%AE%E6%BC%94%E5%B9%B3%E5%8F%B0%E6%8E%A8%E8%8D%90%EF%BD%9C8-%E4%B8%AA%E6%9C%80%E5%A5%BD%E7%94%A8%E7%9A%84%E5%85%8D/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/15/2026%E5%B9%B4%E6%9C%80%E4%BD%B3ai%E4%BC%B4%E4%BE%A3app%EF%BC%9A10%E6%AC%BE%E8%AF%84%E6%B5%8B%E6%8E%92%E8%A1%8C/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://reverie.im/zh/best-ai-roleplay-chatbots",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://teasa.ai/zh-CN/guides/best-ai-roleplay-apps",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://thefriend.io/zh/blog/ai-peiliao-ruanjian-tuijian",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://prelulu.ai/zh/blog/ai-nanyou-nvyou-app-tuijian",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.maigoo.com/top/444878.html",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/2026/04/13/2026-%E5%B9%B4%E6%9C%80%E4%BD%B3-ai-%E8%A7%92%E8%89%B2%E6%89%AE%E6%BC%94-app%EF%BC%9A10-%E6%AC%BE%E5%AE%8C%E6%95%B4%E8%A9%95%E6%B8%AC%E6%8E%92%E8%A1%8C/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/2026/04/06/2026-%E6%9C%80%E4%BD%B3-ai-%E4%BC%B4%E4%BE%A3-app-%E6%8E%A8%E8%8D%90%EF%BC%9A6-%E6%AC%BE%E8%99%9A%E6%8B%9F%E9%99%AA%E4%BC%B4%E5%B9%B3%E5%8F%B0%E5%AE%8C%E6%95%B4%E8%AF%84%E6%B5%8B/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/15/2026%E5%B9%B4%E6%9C%80%E4%BD%B3ai-roleplay-ai%E8%81%8A%E5%A4%A9%E5%B9%B3%E5%8F%B0%EF%BC%9A7%E6%AC%BEhigh-freedom-content-rules%E8%A7%92%E8%89%B2%E6%89%AE%E6%BC%94%E8%AF%84%E6%B5%8B/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/12/2026-%E5%B9%B4%E6%9C%80%E4%BD%B3-ai-roleplay-ai-%E8%81%8A%E5%A4%A9%E6%A9%9F%E5%99%A8%E4%BA%BA%EF%BC%9A10-%E6%AC%BE%E5%AE%8C%E6%95%B4%E8%A9%95%E6%B8%AC%E6%8E%92%E8%A1%8C/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.nieta.art/use-cases/zh-Hans/the-best-ai-rp-platforms",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.aicpb.com/tw/ai-rankings/products/ai-character-rankings",
+          "source_kind": "导航目录"
+        },
+        {
+          "source_url": "https://hub.baai.ac.cn/view/36965",
+          "source_kind": "社区帖子"
+        },
+        {
+          "source_url": "https://xueqiu.com/8980528183/391521173",
+          "source_kind": "社区帖子"
+        },
+        {
+          "source_url": "https://xueqiu.com/5149251894/292170408",
+          "source_kind": "社区帖子"
+        },
+        {
+          "source_url": "https://xueqiu.com/1615318337/344199502",
+          "source_kind": "社区帖子"
+        },
+        {
+          "source_url": "https://www.aiangels.io/zh/best-ai-roleplay-app/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/03/30/ai-roleplay-platforms-ultimate-guide-2026/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/19/tavernai-2026-%E8%AF%84%E6%B5%8B%EF%BC%9A%E5%BC%80%E6%BA%90-ai-%E8%A7%92%E8%89%B2%E6%89%AE%E6%BC%94%E5%85%A8%E6%8C%87%E5%8D%97/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://blog.soullink.io/best-replika-alternatives-in-2026-other-ai-companions-worth-knowing-about/",
+          "source_kind": "榜单指南"
+        },
+        {
+          "source_url": "https://www.reddit.com/r/CharacterAI_101/comments/1bvnqo5/i_tried_a_bunch_of_ai_roleplay_chatbots/",
+          "source_kind": "Reddit"
+        },
+        {
+          "source_url": "https://en.wikipedia.org/wiki/List_of_chatbots",
+          "source_kind": "Wikipedia"
+        }
+      ]
+    },
+    {
+      "name": "Chatmosphere",
+      "aliases": [
+        "Chatmosphere"
+      ],
+      "hosts": [
+        "chatmosphere.us"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Chatmosphere」",
+      "sources": [
+        {
+          "source_url": "https://www.aitoolnet.com/s/roleplay",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "CherryPop AI",
+      "aliases": [
+        "CherryPop AI"
+      ],
+      "hosts": [
+        "cherrypop.ai"
+      ],
+      "source_tier": "vendor_article",
+      "evidence": "title「Your Garden | cherrypop.ai」",
+      "sources": [
+        {
+          "source_url": "https://aimojo.io/zh-CN/ai-anime-roleplay-apps/",
+          "source_kind": "盘点文章"
+        }
+      ]
+    },
+    {
+      "name": "Crushr",
+      "aliases": [
+        "Crushr"
+      ],
+      "hosts": [
+        "dumpstercrushr.com"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Crushr: Mobile Dumpster Compactor」",
+      "sources": [
+        {
+          "source_url": "https://theaisurf.com/ai-roleplay-tools/",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "Darlink AI",
+      "aliases": [
+        "Darlink AI"
+      ],
+      "hosts": [
+        "darlink.ai"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Chat now | DarLink AI」",
+      "sources": [
+        {
+          "source_url": "https://similarlabs.com/zh/p/bestaicompanions",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.aigirlmates.com/best-ai-waifu-generator-apps/",
+          "source_kind": "榜单指南"
+        },
+        {
+          "source_url": "https://www.reddit.com/r/Chatbots/comments/17sghja/what_are_your_best_ai_girlfriend_app/",
+          "source_kind": "Reddit"
+        }
+      ]
+    },
+    {
+      "name": "DiscordPal",
+      "aliases": [
+        "DiscordPal"
+      ],
+      "hosts": [
+        "discordpal.com"
+      ],
+      "source_tier": "external",
+      "evidence": "title「DiscordPal」",
+      "sources": [
+        {
+          "source_url": "https://www.aitoolnet.com/s/roleplay",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "Dolores",
+      "aliases": [
+        "Dolores"
+      ],
+      "hosts": [
+        "www.dolorescannon.com"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Dolores Cannon」",
+      "sources": [
+        {
+          "source_url": "https://xix.ai/zh/special/ai-roleplay-apps-for-casual-chats-stories-and-companionship.html",
+          "source_kind": "导航目录"
+        },
+        {
+          "source_url": "https://www.aitoolnet.com/s/roleplay",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "DreamCompanion",
+      "aliases": [
+        "DreamCompanion"
+      ],
+      "hosts": [
+        "dreamcompanion.net"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Dream Companion: Your Ultimate AI Companion Experience」",
+      "sources": [
+        {
+          "source_url": "https://aigirlmates.com/zh/best-ai-companion-apps/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.aitoolselection.com/zh-CN/best-ai-companion/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.aigirlmates.com/best-ai-waifu-generator-apps/",
+          "source_kind": "榜单指南"
+        },
+        {
+          "source_url": "https://aixhub.tools/en/category/ai-roleplay",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "Emochi",
+      "aliases": [
+        "Emochi"
+      ],
+      "hosts": [
+        "emochi-app.com.cn"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Emochi AI - 智能情感交互助手官网入口」",
+      "sources": [
+        {
+          "source_url": "https://similarlabs.com/zh/p/bestaicompanions",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.newrank.cn/article/detail/34773",
+          "source_kind": "媒体报道"
+        },
+        {
+          "source_url": "https://creati.ai/ai-tools/categories/ai-roleplay/",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "Eternal AI",
+      "aliases": [
+        "Eternal AI"
+      ],
+      "hosts": [
+        "eternal-ai.eu"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Eternal AI - Date Someone Unreal」",
+      "sources": [
+        {
+          "source_url": "https://www.aitoolnet.com/s/roleplay",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "FLAI",
+      "aliases": [
+        "FLAI"
+      ],
+      "hosts": [
+        "chat.flaiapp.com"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Welcome to FLAI」",
+      "sources": [
+        {
+          "source_url": "https://www.maigoo.com/top/444878.html",
+          "source_kind": "盘点文章"
+        }
+      ]
+    },
+    {
+      "name": "First Person Viewpoint",
+      "aliases": [
+        "First Person Viewpoint"
+      ],
+      "hosts": [
+        "firstpersonviewpoint.com"
+      ],
+      "source_tier": "external",
+      "evidence": "title「First Person Viewpoint — Local AI Interactive Fiction」",
+      "sources": [
+        {
+          "source_url": "https://huntscreens.com/zh/topic/roleplaying",
+          "source_kind": "导航目录"
+        }
+      ]
+    },
+    {
+      "name": "GPTGirlfriend",
+      "aliases": [
+        "GPTGirlfriend"
+      ],
+      "hosts": [
+        "www.gptgirlfriend.art"
+      ],
+      "source_tier": "external",
+      "evidence": "title「GPT Girlfriend: The Ultimate AI Companion Website 💜」",
+      "sources": [
+        {
+          "source_url": "https://aimojo.io/zh-CN/ai-anime-roleplay-apps/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.unite.ai/zh-cn/ai-girlfriends/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.aitoolselection.com/zh-CN/best-ai-companion/",
+          "source_kind": "盘点文章"
+        }
+      ]
+    },
+    {
+      "name": "GirlfriendGPT",
+      "aliases": [
+        "GirlfriendGPT"
+      ],
+      "hosts": [
+        "www.girlfriendgpt.org"
+      ],
+      "source_tier": "external",
+      "evidence": "title「GirlfriendGPT | Create your AI Girlfriend NOW !」",
+      "sources": [
+        {
+          "source_url": "https://aigirlmates.com/zh/best-ai-companion-apps/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://techshark.io/blog/best-ai-girlfriend-apps-websites/",
+          "source_kind": "榜单指南"
+        }
+      ]
+    },
+    {
+      "name": "GoLove",
+      "aliases": [
+        "GoLove"
+      ],
+      "hosts": [
+        "www.golove-ai.art",
+        "goloveaicom.com"
+      ],
+      "source_tier": "vendor_article",
+      "evidence": "title「GoLove AI — AI Girlfriend Chat, Voice &amp; Live Video」",
+      "sources": [
+        {
+          "source_url": "https://aigirlmates.com/zh/best-ai-companion-apps/",
+          "source_kind": "盘点文章"
+        }
+      ]
+    },
+    {
+      "name": "HeraHaven",
+      "aliases": [
+        "HeraHaven"
+      ],
+      "hosts": [
+        "herahaven.ai"
+      ],
+      "source_tier": "external",
+      "evidence": "title「HeraHaven | AI Dating | AI Dating App」",
+      "sources": [
+        {
+          "source_url": "https://www.virtualgirlfriendapps.com/",
+          "source_kind": "榜单指南"
+        }
+      ]
+    },
+    {
+      "name": "Janitor AI",
+      "aliases": [
+        "Janitor AI"
+      ],
+      "hosts": [
+        "janitor-ai.io",
+        "janitorai.com"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Janitor AI — Free AI Companion Roleplay」",
+      "sources": [
+        {
+          "source_url": "",
+          "source_kind": "本管线实跑发现"
+        },
+        {
+          "source_url": "https://shouldieventry.com/insights/zh-tw/best-ai-companion-apps-in-2026/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.aiga.io/cn/blog/best-ai-roleplay-apps-2026",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://developer.volcengine.com/articles/7578551251881689131",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.lumichat.ink/zh/blog/best-free-ai-roleplay-chatbots",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://kkaiapi.com/jiaose-banyan-moxing-paihang",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://juejin.cn/post/7578705123208691755",
+          "source_kind": "社区帖子"
+        },
+        {
+          "source_url": "https://blog.csdn.net/sinat_37574187/article/details/143816082",
+          "source_kind": "媒体报道"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/03/30/%E3%80%902026-%E6%9C%80%E6%96%B0%E3%80%91%E5%85%8D%E8%B4%B9-ai-%E8%A7%92%E8%89%B2%E6%89%AE%E6%BC%94%E5%B9%B3%E5%8F%B0%E6%8E%A8%E8%8D%90%EF%BD%9C8-%E4%B8%AA%E6%9C%80%E5%A5%BD%E7%94%A8%E7%9A%84%E5%85%8D/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://reverie.im/zh/best-ai-roleplay-chatbots",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://teasa.ai/zh-CN/guides/best-ai-roleplay-apps",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/2026/04/13/2026-%E5%B9%B4%E6%9C%80%E4%BD%B3-ai-%E8%A7%92%E8%89%B2%E6%89%AE%E6%BC%94-app%EF%BC%9A10-%E6%AC%BE%E5%AE%8C%E6%95%B4%E8%A9%95%E6%B8%AC%E6%8E%92%E8%A1%8C/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/15/2026%E5%B9%B4%E6%9C%80%E4%BD%B3ai-roleplay-ai%E8%81%8A%E5%A4%A9%E5%B9%B3%E5%8F%B0%EF%BC%9A7%E6%AC%BEhigh-freedom-content-rules%E8%A7%92%E8%89%B2%E6%89%AE%E6%BC%94%E8%AF%84%E6%B5%8B/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/12/2026-%E5%B9%B4%E6%9C%80%E4%BD%B3-ai-roleplay-ai-%E8%81%8A%E5%A4%A9%E6%A9%9F%E5%99%A8%E4%BA%BA%EF%BC%9A10-%E6%AC%BE%E5%AE%8C%E6%95%B4%E8%A9%95%E6%B8%AC%E6%8E%92%E8%A1%8C/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.aicpb.com/tw/ai-rankings/products/ai-character-rankings",
+          "source_kind": "导航目录"
+        },
+        {
+          "source_url": "https://www.aiangels.io/zh/best-ai-roleplay-app/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/03/30/ai-roleplay-platforms-ultimate-guide-2026/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/19/tavernai-2026-%E8%AF%84%E6%B5%8B%EF%BC%9A%E5%BC%80%E6%BA%90-ai-%E8%A7%92%E8%89%B2%E6%89%AE%E6%BC%94%E5%85%A8%E6%8C%87%E5%8D%97/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://channelai.ai/blog/best-ai-chatbot-platforms-with-character-and-roleplay-features",
+          "source_kind": "榜单指南"
+        },
+        {
+          "source_url": "https://findaichat.com/category/roleplay-ai-chat-bots",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "Joi",
+      "aliases": [
+        "Joi"
+      ],
+      "hosts": [
+        "joi.com"
+      ],
+      "source_tier": "external",
+      "evidence": "title「AI Chat Conversations &amp; Virtual Companions | JOI AI」",
+      "sources": [
+        {
+          "source_url": "https://www.aicpb.com/tw/ai-rankings/products/ai-character-rankings",
+          "source_kind": "导航目录"
+        }
+      ]
+    },
+    {
+      "name": "Joi AI",
+      "aliases": [
+        "Joi AI"
+      ],
+      "hosts": [
+        "joi.ai"
+      ],
+      "source_tier": "vendor_article",
+      "evidence": "title「AI Chats — Talk with Virtual Companions — Joi AI」",
+      "sources": [
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/12/2026-%E5%B9%B4%E6%9C%80%E4%BD%B3-ai-%E9%99%AA%E4%BC%B4-app%EF%BC%9A10-%E6%AC%BE%E5%AE%8C%E6%95%B4%E8%A9%95%E6%B8%AC%E6%8E%92%E8%A1%8C/",
+          "source_kind": "盘点文章"
+        }
+      ]
+    },
+    {
+      "name": "Juicy Chat",
+      "aliases": [
+        "Juicy Chat"
+      ],
+      "hosts": [
+        "wiki.juicychat.ai"
+      ],
+      "source_tier": "external",
+      "evidence": "title「WELCOME JUICYCHAT | JuicyChat.AI」",
+      "sources": [
+        {
+          "source_url": "https://aixhub.tools/en/category/ai-roleplay",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "KindredMind",
+      "aliases": [
+        "KindredMind"
+      ],
+      "hosts": [
+        "kindredmind.care"
+      ],
+      "source_tier": "external",
+      "evidence": "title「KindredMind: A Voice and Visual Companion for Older Adults with Mild Cognitive Impairment and Dementia」",
+      "sources": [
+        {
+          "source_url": "https://aitoolsdirectory.com/chat",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "KoboldAI",
+      "aliases": [
+        "KoboldAI"
+      ],
+      "hosts": [
+        "koboldai.com"
+      ],
+      "source_tier": "external",
+      "evidence": "title「KoboldAI」",
+      "sources": [
+        {
+          "source_url": "https://similarlabs.com/blog/best-character-ai-alternatives",
+          "source_kind": "榜单指南"
+        },
+        {
+          "source_url": "https://www.reddit.com/r/CharacterAI_No_Filter/comments/1azyvle/all_available_alternatives_to_character_ai_suck/",
+          "source_kind": "Reddit"
+        }
+      ]
+    },
+    {
+      "name": "Koko AI",
+      "aliases": [
+        "Koko AI"
+      ],
+      "hosts": [
+        "kokoai.app"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Koko AI | Chat, Call & Animate AI Characters in 3D Worlds」",
+      "sources": [
+        {
+          "source_url": "https://ai-bot.cn/favorites/ai-chatbots/",
+          "source_kind": "导航目录"
+        },
+        {
+          "source_url": "https://www.shenzhenware.com/articles/16467",
+          "source_kind": "媒体报道"
+        }
+      ]
+    },
+    {
+      "name": "Kupid AI",
+      "aliases": [
+        "Kupid AI"
+      ],
+      "hosts": [
+        "www.kupid.ai"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Kupid AI Pricing &amp; Plans -75% for Premium Today!」",
+      "sources": [
+        {
+          "source_url": "https://nika.team/zh/blog/best-ai-girlfriend-apps/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://aimojo.io/zh-CN/ai-anime-roleplay-apps/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://aiblogfirst.com/ai-roleplay-apps/",
+          "source_kind": "榜单指南"
+        },
+        {
+          "source_url": "https://www.aitoolnet.com/s/roleplay",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "Lovescape",
+      "aliases": [
+        "Lovescape"
+      ],
+      "hosts": [
+        "lovescape.ai"
+      ],
+      "source_tier": "external",
+      "evidence": "title「AI Character Generator - Create characters with Lovescape AI」",
+      "sources": [
+        {
+          "source_url": "https://aigirlmates.com/zh/best-ai-companion-apps/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.unite.ai/zh-cn/ai-girlfriends/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://myanima.ai/blog/best-waifu-chatbots",
+          "source_kind": "榜单指南"
+        }
+      ]
+    },
+    {
+      "name": "LumiChat",
+      "aliases": [
+        "LumiChat"
+      ],
+      "hosts": [
+        "www.lumichat.ink"
+      ],
+      "source_tier": "vendor_article",
+      "evidence": "title「LumiChat Yunmeng Companion Chat - Healing AI Character Chat Platform」",
+      "sources": [
+        {
+          "source_url": "https://www.lumichat.ink/zh/blog/best-free-ai-roleplay-chatbots",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.lumichat.ink/zh/blog/free-online-companion-chat-app-platform",
+          "source_kind": "盘点文章"
+        }
+      ]
+    },
+    {
+      "name": "Maze AI",
+      "aliases": [
+        "Maze AI"
+      ],
+      "hosts": [
+        "mazeai.app"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Create Your Own World — Custom Scenarios in Maze AI」",
+      "sources": [
+        {
+          "source_url": "https://huntscreens.com/zh/topic/roleplaying",
+          "source_kind": "导航目录"
+        }
+      ]
+    },
+    {
+      "name": "Me.bot",
+      "aliases": [
+        "Me.bot"
+      ],
+      "hosts": [
+        "www.me.bot"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Me.bot | Your Personal AI Companion and Second Me」",
+      "sources": [
+        {
+          "source_url": "https://ai-bot.cn/favorites/ai-chatbots/",
+          "source_kind": "导航目录"
+        }
+      ]
+    },
+    {
+      "name": "Muah AI",
+      "aliases": [
+        "Muah AI"
+      ],
+      "hosts": [
+        "muah.ai"
+      ],
+      "source_tier": "external",
+      "evidence": "title「AI Companion Chat, Voice, Photos &amp; Video | Muah AI」",
+      "sources": [
+        {
+          "source_url": "https://techshark.io/blog/best-ai-girlfriend-apps-websites/",
+          "source_kind": "榜单指南"
+        },
+        {
+          "source_url": "https://www.reddit.com/r/CharacterAI_No_Filter/comments/1azyvle/all_available_alternatives_to_character_ai_suck/",
+          "source_kind": "Reddit"
+        }
+      ]
+    },
+    {
+      "name": "Nastia AI",
+      "aliases": [
+        "Nastia AI"
+      ],
+      "hosts": [
+        "nastiaai.org",
+        "nastia-ai.com"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Nastia AI: Uncensored AI Companion Chat」",
+      "sources": [
+        {
+          "source_url": "https://xix.ai/zh/special/ai-roleplay-apps-for-casual-chats-stories-and-companionship.html",
+          "source_kind": "导航目录"
+        },
+        {
+          "source_url": "https://aixhub.tools/en/category/ai-roleplay",
+          "source_kind": "目录站"
+        },
+        {
+          "source_url": "https://www.reddit.com/r/replika/comments/14igwki/is_there_another_app_similar_to_replika_but_better/",
+          "source_kind": "Reddit"
+        }
+      ]
+    },
+    {
+      "name": "Nectar",
+      "aliases": [
+        "Nectar"
+      ],
+      "hosts": [
+        "www.nectarsleep.com"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Nectar Sleep」",
+      "sources": [
+        {
+          "source_url": "https://www.unite.ai/zh-cn/ai-girlfriends/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://aishenqi.net/tool/aigirlfriends-ai",
+          "source_kind": "导航目录"
+        }
+      ]
+    },
+    {
+      "name": "Nectar AI",
+      "aliases": [
+        "Nectar AI"
+      ],
+      "hosts": [
+        "www.nectar-ai.art"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Nectar AI: Custom AI Companions, Chat &amp; Image Generation」",
+      "sources": [
+        {
+          "source_url": "https://www.myairomance.com/best-ai-romantic-chatbots-2026",
+          "source_kind": "榜单指南"
+        }
+      ]
+    },
+    {
+      "name": "Nezaton",
+      "aliases": [
+        "Nezaton"
+      ],
+      "hosts": [
+        "nezaton.com"
+      ],
+      "source_tier": "external",
+      "evidence": "title「AI Chatbot for Small Businesses | Nezaton」",
+      "sources": [
+        {
+          "source_url": "https://aitoolsdirectory.com/chat",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "Nika AI",
+      "aliases": [
+        "Nika AI"
+      ],
+      "hosts": [
+        "www.nikaai.app"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Nika AI」",
+      "sources": [
+        {
+          "source_url": "https://app.aibase.com/zh/class/%E6%83%85%E6%84%9F%E9%99%AA%E4%BC%B4",
+          "source_kind": "导航目录"
+        }
+      ]
+    },
+    {
+      "name": "OMate",
+      "aliases": [
+        "OMate"
+      ],
+      "hosts": [
+        "omate.org"
+      ],
+      "source_tier": "sample_verified",
+      "evidence": "title「OMate — AI 角色扮演 App｜兼容 SillyTavern 角色卡·世界书·预设」（注意：www.omate.com 是可穿戴设备公司，不同物）",
+      "sources": []
+    },
+    {
+      "name": "Palaura",
+      "aliases": [
+        "Palaura"
+      ],
+      "hosts": [
+        "heypalaura.com"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Palaura — Serious Dating App Where AI Does the Matchmaking」",
+      "sources": [
+        {
+          "source_url": "https://app.aibase.com/zh/class/%E6%83%85%E6%84%9F%E9%99%AA%E4%BC%B4",
+          "source_kind": "导航目录"
+        }
+      ]
+    },
+    {
+      "name": "ParadiseAI",
+      "aliases": [
+        "ParadiseAI"
+      ],
+      "hosts": [
+        "paradiseai.app"
+      ],
+      "source_tier": "external",
+      "evidence": "title「AI角色創作+虛擬社交 | ParadiseAI - 打造你的元宇宙人格」",
+      "sources": [
+        {
+          "source_url": "https://www.51wan.com/rank/ailtbd/",
+          "source_kind": "盘点文章"
+        }
+      ]
+    },
+    {
+      "name": "Paradot",
+      "aliases": [
+        "Paradot"
+      ],
+      "hosts": [
+        "paradot.ai"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Paradot - Virtual Being to Chat」",
+      "sources": [
+        {
+          "source_url": "https://www.jiuzyoung.com/info/introduce-5-companion-apps/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://blog.soullink.io/best-replika-alternatives-in-2026-other-ai-companions-worth-knowing-about/",
+          "source_kind": "榜单指南"
+        },
+        {
+          "source_url": "https://www.reddit.com/r/replika/comments/11bo1sf/best_alternatives_to_replika/",
+          "source_kind": "Reddit"
+        },
+        {
+          "source_url": "https://worldmetrics.org/alternatives/replika/",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "PixelChat",
+      "aliases": [
+        "PixelChat"
+      ],
+      "hosts": [
+        "www.pixelchat.ai"
+      ],
+      "source_tier": "external",
+      "evidence": "",
+      "sources": [
+        {
+          "source_url": "https://seektool.ai/category/ai_roleplay",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "PolyBuzz",
+      "aliases": [
+        "PolyBuzz"
+      ],
+      "hosts": [
+        "polybuzz.ai"
+      ],
+      "source_tier": "external",
+      "evidence": "title「PolyBuzz | Talk to AI Characters &amp; Enjoy Free AI Chat Anytime」",
+      "sources": [
+        {
+          "source_url": "",
+          "source_kind": "本管线实跑发现"
+        },
+        {
+          "source_url": "https://www.lumichat.ink/zh/blog/best-free-ai-roleplay-chatbots",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://teasa.ai/zh-CN/guides/best-ai-roleplay-apps",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://prelulu.ai/zh/blog/ai-nanyou-nvyou-app-tuijian",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.aicpb.com/tw/ai-rankings/products/ai-character-rankings",
+          "source_kind": "导航目录"
+        },
+        {
+          "source_url": "https://xix.ai/zh/app/zhu-meng-dao-app.html",
+          "source_kind": "导航目录"
+        },
+        {
+          "source_url": "https://companionhunt.com/best/ai-companion-apps/",
+          "source_kind": "榜单指南"
+        },
+        {
+          "source_url": "https://aitoolsdirectory.com/chat",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "Privee AI",
+      "aliases": [
+        "Privee AI"
+      ],
+      "hosts": [
+        "www.priveeai.com"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Privee AI | Chat, play and create with AI characters」",
+      "sources": [
+        {
+          "source_url": "https://memakie.com/tools/category/ai-character-chat",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "Questas",
+      "aliases": [
+        "Questas"
+      ],
+      "hosts": [
+        "www.questas.com.au"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Home - Questas」",
+      "sources": [
+        {
+          "source_url": "https://xix.ai/zh/special/ai-roleplay-apps-for-casual-chats-stories-and-companionship.html",
+          "source_kind": "导航目录"
+        }
+      ]
+    },
+    {
+      "name": "RealmWeave",
+      "aliases": [
+        "RealmWeave"
+      ],
+      "hosts": [
+        "realmweaver.io"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Realmweaver: Your worlds deserve to exist」",
+      "sources": [
+        {
+          "source_url": "https://creati.ai/ai-tools/categories/ai-roleplay/",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "Replika",
+      "aliases": [
+        "Replika"
+      ],
+      "hosts": [
+        "replika.com",
+        "create.replika.com",
+        "replikazh.com",
+        "replika.ai",
+        "myreplika.com"
+      ],
+      "source_tier": "sample_verified",
+      "evidence": "title「Replika is the AI Friend to Do Life With」/「Replika官网中文」；备用域名 replika.ai 的 title 同为「Replika | The AI Friend to do Life With」（2026-10-29 复测时按同产品多域名约定补入；replika-ai.app 疑似仿冒站，未采信）",
+      "sources": [
+        {
+          "source_url": "",
+          "source_kind": "本管线实跑发现"
+        },
+        {
+          "source_url": "https://www.aigc.cn/favorites/ai-girlfriend",
+          "source_kind": "导航目录"
+        },
+        {
+          "source_url": "https://ai-bot.cn/favorites/ai-chatbots/",
+          "source_kind": "导航目录"
+        },
+        {
+          "source_url": "https://blog.csdn.net/2601_96583510/article/details/162963734",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.sohu.com/a/766287049_121649907",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.moonfox.cn/insight/report/1813",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://news.qq.com/rain/a/20240929A02YXO00",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://news.qq.com/rain/a/20260720A08SHH00",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://shouldieventry.com/insights/zh-tw/best-ai-companion-apps-in-2026/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://nika.team/zh/blog/best-ai-girlfriend-apps/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.nieta.art/use-cases/zh-Hans/the-best-ai-roleplay-platforms",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.lumichat.ink/zh/blog/best-free-ai-roleplay-chatbots",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/12/2026-%E5%B9%B4%E6%9C%80%E4%BD%B3-ai-%E9%99%AA%E4%BC%B4-app%EF%BC%9A10-%E6%AC%BE%E5%AE%8C%E6%95%B4%E8%A9%95%E6%B8%AC%E6%8E%92%E8%A1%8C/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.shenzhenware.com/articles/16467",
+          "source_kind": "媒体报道"
+        },
+        {
+          "source_url": "https://blog.csdn.net/sinat_37574187/article/details/143816082",
+          "source_kind": "媒体报道"
+        },
+        {
+          "source_url": "https://www.huxiu.com/article/3608463.html",
+          "source_kind": "媒体报道"
+        },
+        {
+          "source_url": "https://www.lumichat.ink/zh/blog/free-online-companion-chat-app-platform",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/03/30/%E3%80%902026-%E6%9C%80%E6%96%B0%E3%80%91%E5%85%8D%E8%B4%B9-ai-%E8%A7%92%E8%89%B2%E6%89%AE%E6%BC%94%E5%B9%B3%E5%8F%B0%E6%8E%A8%E8%8D%90%EF%BD%9C8-%E4%B8%AA%E6%9C%80%E5%A5%BD%E7%94%A8%E7%9A%84%E5%85%8D/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/15/2026%E5%B9%B4%E6%9C%80%E4%BD%B3ai%E4%BC%B4%E4%BE%A3app%EF%BC%9A10%E6%AC%BE%E8%AF%84%E6%B5%8B%E6%8E%92%E8%A1%8C/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://teasa.ai/zh-CN/guides/best-ai-roleplay-apps",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://thefriend.io/zh/blog/ai-peiliao-ruanjian-tuijian",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://prelulu.ai/zh/blog/ai-nanyou-nvyou-app-tuijian",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.maigoo.com/top/444878.html",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.jiuzyoung.com/info/introduce-5-companion-apps/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/2026/04/13/2026-%E5%B9%B4%E6%9C%80%E4%BD%B3-ai-%E8%A7%92%E8%89%B2%E6%89%AE%E6%BC%94-app%EF%BC%9A10-%E6%AC%BE%E5%AE%8C%E6%95%B4%E8%A9%95%E6%B8%AC%E6%8E%92%E8%A1%8C/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/2026/04/06/2026-%E6%9C%80%E4%BD%B3-ai-%E4%BC%B4%E4%BE%A3-app-%E6%8E%A8%E8%8D%90%EF%BC%9A6-%E6%AC%BE%E8%99%9A%E6%8B%9F%E9%99%AA%E4%BC%B4%E5%B9%B3%E5%8F%B0%E5%AE%8C%E6%95%B4%E8%AF%84%E6%B5%8B/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/15/2026%E5%B9%B4%E6%9C%80%E4%BD%B3ai-roleplay-ai%E8%81%8A%E5%A4%A9%E5%B9%B3%E5%8F%B0%EF%BC%9A7%E6%AC%BEhigh-freedom-content-rules%E8%A7%92%E8%89%B2%E6%89%AE%E6%BC%94%E8%AF%84%E6%B5%8B/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/12/2026-%E5%B9%B4%E6%9C%80%E4%BD%B3-ai-roleplay-ai-%E8%81%8A%E5%A4%A9%E6%A9%9F%E5%99%A8%E4%BA%BA%EF%BC%9A10-%E6%AC%BE%E5%AE%8C%E6%95%B4%E8%A9%95%E6%B8%AC%E6%8E%92%E8%A1%8C/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.nieta.art/use-cases/zh-Hans/the-best-ai-rp-platforms",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://xix.ai/zh/app/zhu-meng-dao-app.html",
+          "source_kind": "导航目录"
+        },
+        {
+          "source_url": "https://ai-bot.cn/app/10462.html",
+          "source_kind": "导航目录"
+        },
+        {
+          "source_url": "https://hub.baai.ac.cn/view/36965",
+          "source_kind": "社区帖子"
+        },
+        {
+          "source_url": "https://xueqiu.com/8980528183/391521173",
+          "source_kind": "社区帖子"
+        },
+        {
+          "source_url": "https://xueqiu.com/5149251894/292170408",
+          "source_kind": "社区帖子"
+        },
+        {
+          "source_url": "https://xueqiu.com/1615318337/344199502",
+          "source_kind": "社区帖子"
+        },
+        {
+          "source_url": "https://www.aiangels.io/zh/best-ai-roleplay-app/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/03/30/ai-roleplay-platforms-ultimate-guide-2026/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/19/tavernai-2026-%E8%AF%84%E6%B5%8B%EF%BC%9A%E5%BC%80%E6%BA%90-ai-%E8%A7%92%E8%89%B2%E6%89%AE%E6%BC%94%E5%85%A8%E6%8C%87%E5%8D%97/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://blog.chatjanitor.com/best-ai-roleplay-chat-platforms-2026/",
+          "source_kind": "榜单指南"
+        },
+        {
+          "source_url": "https://www.reddit.com/r/Chatbots/comments/17sghja/what_are_your_best_ai_girlfriend_app/",
+          "source_kind": "Reddit"
+        },
+        {
+          "source_url": "https://en.wikipedia.org/wiki/Artificial_human_companion",
+          "source_kind": "Wikipedia"
+        }
+      ]
+    },
+    {
+      "name": "Rochat",
+      "aliases": [
+        "Rochat"
+      ],
+      "hosts": [
+        "rochat.ai"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Rochat - Unlimited AI Character Chat | Character AI Alternative | AI Girlfriend, Boyfriend &amp; AI Talkie | Real-Time AI Companion」",
+      "sources": [
+        {
+          "source_url": "https://seektool.ai/category/ai_roleplay",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "Secret Desires AI",
+      "aliases": [
+        "Secret Desires AI"
+      ],
+      "hosts": [
+        "affiliate.secretdesires.ai"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Secret Desires AI」",
+      "sources": [
+        {
+          "source_url": "https://www.aitoolselection.com/zh-CN/best-ai-companion/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://secretdesires.ai/blog/best-ai-roleplay-chat",
+          "source_kind": "榜单指南"
+        }
+      ]
+    },
+    {
+      "name": "Seduced",
+      "aliases": [
+        "Seduced"
+      ],
+      "hosts": [
+        "seduced.app"
+      ],
+      "source_tier": "vendor_article",
+      "evidence": "title「Official SEDUCED Domains | SEDUCED」",
+      "sources": [
+        {
+          "source_url": "https://aigirlmates.com/zh/best-ai-companion-apps/",
+          "source_kind": "盘点文章"
+        }
+      ]
+    },
+    {
+      "name": "Selira AI",
+      "aliases": [
+        "Selira AI"
+      ],
+      "hosts": [
+        "selira.ai"
+      ],
+      "source_tier": "vendor_article",
+      "evidence": "title「About Selira AI - Privacy-First AI Companion Platform」",
+      "sources": [
+        {
+          "source_url": "https://similarlabs.com/zh/p/bestaicompanions",
+          "source_kind": "盘点文章"
+        }
+      ]
+    },
+    {
+      "name": "SextingCompanion",
+      "aliases": [
+        "SextingCompanion"
+      ],
+      "hosts": [
+        "sextingcompanion.org"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Sexting Companion: AI Girlfriend &amp; Chatbot」",
+      "sources": [
+        {
+          "source_url": "https://www.reddit.com/r/replika/comments/14igwki/is_there_another_app_similar_to_replika_but_better/",
+          "source_kind": "Reddit"
+        }
+      ]
+    },
+    {
+      "name": "SillyTavern",
+      "aliases": [
+        "SillyTavern"
+      ],
+      "hosts": [
+        "sillytavern.one"
+      ],
+      "source_tier": "external",
+      "evidence": "title「登录 | SillyTavern Pro」",
+      "sources": [
+        {
+          "source_url": "",
+          "source_kind": "本管线实跑发现"
+        },
+        {
+          "source_url": "https://foreverse.cn/zh/ai-roleplay-apps",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.aiga.io/cn/blog/best-ai-roleplay-apps-2026",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://developer.volcengine.com/articles/7578551251881689131",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://kkaiapi.com/jiaose-banyan-moxing-paihang",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://juejin.cn/post/7578705123208691755",
+          "source_kind": "社区帖子"
+        },
+        {
+          "source_url": "https://reverie.im/zh/best-ai-roleplay-chatbots",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://teasa.ai/zh-CN/guides/best-ai-roleplay-apps",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/2026/04/13/2026-%E5%B9%B4%E6%9C%80%E4%BD%B3-ai-%E8%A7%92%E8%89%B2%E6%89%AE%E6%BC%94-app%EF%BC%9A10-%E6%AC%BE%E5%AE%8C%E6%95%B4%E8%A9%95%E6%B8%AC%E6%8E%92%E8%A1%8C/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/12/2026-%E5%B9%B4%E6%9C%80%E4%BD%B3-ai-roleplay-ai-%E8%81%8A%E5%A4%A9%E6%A9%9F%E5%99%A8%E4%BA%BA%EF%BC%9A10-%E6%AC%BE%E5%AE%8C%E6%95%B4%E8%A9%95%E6%B8%AC%E6%8E%92%E8%A1%8C/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/03/30/ai-roleplay-platforms-ultimate-guide-2026/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/19/tavernai-2026-%E8%AF%84%E6%B5%8B%EF%BC%9A%E5%BC%80%E6%BA%90-ai-%E8%A7%92%E8%89%B2%E6%89%AE%E6%BC%94%E5%85%A8%E6%8C%87%E5%8D%97/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://reverie.im/en/best-ai-roleplay-chatbots",
+          "source_kind": "榜单指南"
+        },
+        {
+          "source_url": "https://www.reddit.com/r/replika/comments/11bo1sf/best_alternatives_to_replika/",
+          "source_kind": "Reddit"
+        },
+        {
+          "source_url": "https://aigirlfriend.tools/listing/sillytavern/",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "Solli",
+      "aliases": [
+        "Solli"
+      ],
+      "hosts": [
+        "solli.global"
+      ],
+      "source_tier": "external",
+      "evidence": "title「solli | Your Essential Pharma Media Resource」",
+      "sources": [
+        {
+          "source_url": "https://blog.csdn.net/2601_96583510/article/details/162963734",
+          "source_kind": "盘点文章"
+        }
+      ]
+    },
+    {
+      "name": "SoulAI",
+      "aliases": [
+        "SoulAI"
+      ],
+      "hosts": [
+        "soulai.me",
+        "soulsai.cn"
+      ],
+      "source_tier": "sample_verified",
+      "evidence": "title「SoulAI官网 - 从角色设定到故事共创 | 中文AI对话指南」",
+      "sources": [
+        {
+          "source_url": "",
+          "source_kind": "本管线实跑发现"
+        },
+        {
+          "source_url": "https://www.51wan.com/rank/ailtbd/",
+          "source_kind": "盘点文章"
+        }
+      ]
+    },
+    {
+      "name": "SoulLink",
+      "aliases": [
+        "SoulLink"
+      ],
+      "hosts": [
+        "soullink.io"
+      ],
+      "source_tier": "external",
+      "evidence": "title「SoulLink: A Life, Together」",
+      "sources": [
+        {
+          "source_url": "https://blog.soullink.io/best-replika-alternatives-in-2026-other-ai-companions-worth-knowing-about/",
+          "source_kind": "榜单指南"
+        }
+      ]
+    },
+    {
+      "name": "Talkie",
+      "aliases": [
+        "Talkie"
+      ],
+      "hosts": [
+        "talkie-ai.com",
+        "talkieai.cc"
+      ],
+      "source_tier": "sample_verified",
+      "evidence": "title「Talkie | Free AI Character Chat」（注意：talkie.ai 是 AI 医疗预约，是**同名不同物**）",
+      "sources": [
+        {
+          "source_url": "",
+          "source_kind": "本管线实跑发现"
+        },
+        {
+          "source_url": "https://www.bladerpg.com/ai-roleplay/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.lumichat.ink/zh/blog/best-free-ai-roleplay-chatbots",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://xueqiu.com/9057196330/324285947",
+          "source_kind": "社区帖子"
+        },
+        {
+          "source_url": "https://www.shenzhenware.com/articles/16467",
+          "source_kind": "媒体报道"
+        },
+        {
+          "source_url": "https://blog.csdn.net/sinat_37574187/article/details/143816082",
+          "source_kind": "媒体报道"
+        },
+        {
+          "source_url": "https://www.flowpixai.com/ai-tools/ai-companion-app-comparison.html",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/03/30/%E3%80%902026-%E6%9C%80%E6%96%B0%E3%80%91%E5%85%8D%E8%B4%B9-ai-%E8%A7%92%E8%89%B2%E6%89%AE%E6%BC%94%E5%B9%B3%E5%8F%B0%E6%8E%A8%E8%8D%90%EF%BD%9C8-%E4%B8%AA%E6%9C%80%E5%A5%BD%E7%94%A8%E7%9A%84%E5%85%8D/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/15/2026%E5%B9%B4%E6%9C%80%E4%BD%B3ai%E4%BC%B4%E4%BE%A3app%EF%BC%9A10%E6%AC%BE%E8%AF%84%E6%B5%8B%E6%8E%92%E8%A1%8C/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://teasa.ai/zh-CN/guides/best-ai-roleplay-apps",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://thefriend.io/zh/blog/ai-peiliao-ruanjian-tuijian",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://prelulu.ai/zh/blog/ai-nanyou-nvyou-app-tuijian",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.maigoo.com/top/444878.html",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/2026/04/13/2026-%E5%B9%B4%E6%9C%80%E4%BD%B3-ai-%E8%A7%92%E8%89%B2%E6%89%AE%E6%BC%94-app%EF%BC%9A10-%E6%AC%BE%E5%AE%8C%E6%95%B4%E8%A9%95%E6%B8%AC%E6%8E%92%E8%A1%8C/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/2026/04/06/2026-%E6%9C%80%E4%BD%B3-ai-%E4%BC%B4%E4%BE%A3-app-%E6%8E%A8%E8%8D%90%EF%BC%9A6-%E6%AC%BE%E8%99%9A%E6%8B%9F%E9%99%AA%E4%BC%B4%E5%B9%B3%E5%8F%B0%E5%AE%8C%E6%95%B4%E8%AF%84%E6%B5%8B/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/15/2026%E5%B9%B4%E6%9C%80%E4%BD%B3ai-roleplay-ai%E8%81%8A%E5%A4%A9%E5%B9%B3%E5%8F%B0%EF%BC%9A7%E6%AC%BEhigh-freedom-content-rules%E8%A7%92%E8%89%B2%E6%89%AE%E6%BC%94%E8%AF%84%E6%B5%8B/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/12/2026-%E5%B9%B4%E6%9C%80%E4%BD%B3-ai-roleplay-ai-%E8%81%8A%E5%A4%A9%E6%A9%9F%E5%99%A8%E4%BA%BA%EF%BC%9A10-%E6%AC%BE%E5%AE%8C%E6%95%B4%E8%A9%95%E6%B8%AC%E6%8E%92%E8%A1%8C/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.aicpb.com/tw/ai-rankings/products/ai-character-rankings",
+          "source_kind": "导航目录"
+        },
+        {
+          "source_url": "https://hub.baai.ac.cn/view/36965",
+          "source_kind": "社区帖子"
+        },
+        {
+          "source_url": "https://xueqiu.com/5149251894/292170408",
+          "source_kind": "社区帖子"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/03/30/ai-roleplay-platforms-ultimate-guide-2026/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/19/tavernai-2026-%E8%AF%84%E6%B5%8B%EF%BC%9A%E5%BC%80%E6%BA%90-ai-%E8%A7%92%E8%89%B2%E6%89%AE%E6%BC%94%E5%85%A8%E6%8C%87%E5%8D%97/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://companionwise.com/best/ai-companion-apps/",
+          "source_kind": "榜单指南"
+        },
+        {
+          "source_url": "https://seektool.ai/ranking/categories/ai_roleplay",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "Talkie AI",
+      "aliases": [
+        "Talkie AI"
+      ],
+      "hosts": [
+        "talkie-ai.io"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Talkie AI Online - Free Character Chat and App Download」",
+      "sources": [
+        {
+          "source_url": "https://news.qq.com/rain/a/20240929A02YXO00",
+          "source_kind": "盘点文章"
+        }
+      ]
+    },
+    {
+      "name": "TavernAI",
+      "aliases": [
+        "TavernAI"
+      ],
+      "hosts": [
+        "tavernai.net"
+      ],
+      "source_tier": "external",
+      "evidence": "title「TavernAI 2 - Official Website」",
+      "sources": [
+        {
+          "source_url": "https://developer.volcengine.com/articles/7578551251881689131",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://juejin.cn/post/7578705123208691755",
+          "source_kind": "社区帖子"
+        },
+        {
+          "source_url": "https://weavai.app/blog/zh-cn/2026/04/19/tavernai-2026-%E8%AF%84%E6%B5%8B%EF%BC%9A%E5%BC%80%E6%BA%90-ai-%E8%A7%92%E8%89%B2%E6%89%AE%E6%BC%94%E5%85%A8%E6%8C%87%E5%8D%97/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://sider.ai/blog/ai-tools/best-sillytavern-alternatives-for-roleplay-chat-and-llm-control",
+          "source_kind": "榜单指南"
+        },
+        {
+          "source_url": "https://www.reddit.com/r/replika/comments/12joiak/replika_alternatives_experiences/",
+          "source_kind": "Reddit"
+        }
+      ]
+    },
+    {
+      "name": "TheraMind",
+      "aliases": [
+        "TheraMind"
+      ],
+      "hosts": [
+        "www.theramind.org"
+      ],
+      "source_tier": "external",
+      "evidence": "title「theramind.org」",
+      "sources": [
+        {
+          "source_url": "https://app.aibase.com/zh/class/%E6%83%85%E6%84%9F%E9%99%AA%E4%BC%B4",
+          "source_kind": "导航目录"
+        }
+      ]
+    },
+    {
+      "name": "Trystique",
+      "aliases": [
+        "Trystique"
+      ],
+      "hosts": [
+        "trystique.ai"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Trystique — AI Roleplay &amp; Interactive Stories」",
+      "sources": [
+        {
+          "source_url": "https://app.aibase.com/zh/class/%E6%83%85%E6%84%9F%E9%99%AA%E4%BC%B4",
+          "source_kind": "导航目录"
+        }
+      ]
+    },
+    {
+      "name": "Uncensy",
+      "aliases": [
+        "Uncensy"
+      ],
+      "hosts": [
+        "uncensy.com"
+      ],
+      "source_tier": "external",
+      "evidence": "title「Uncensy - Uncensored AI Companion Platform | AI Girlfriend Chat」",
+      "sources": [
+        {
+          "source_url": "https://www.reddit.com/r/Chatbots/comments/17sghja/what_are_your_best_ai_girlfriend_app/",
+          "source_kind": "Reddit"
+        }
+      ]
+    },
+    {
+      "name": "Venus AI",
+      "aliases": [
+        "Venus AI"
+      ],
+      "hosts": [
+        "myvenus.ai"
+      ],
+      "source_tier": "external",
+      "evidence": "title「MyVenus.ai - Vos Compagnons IA Personnalisés」",
+      "sources": [
+        {
+          "source_url": "https://theaisurf.com/ai-roleplay-tools/",
+          "source_kind": "目录站"
+        }
+      ]
+    },
+    {
+      "name": "WeavAI",
+      "aliases": [
+        "WeavAI",
+        "AI 織夢"
+      ],
+      "hosts": [
+        "weavai.app"
+      ],
+      "source_tier": "vendor_article",
+      "evidence": "title「WeavAI - Immersive AI Roleplay and Interactive Fiction Platform」",
+      "sources": [
+        {
+          "source_url": "https://www.bladerpg.com/ai-roleplay/",
+          "source_kind": "盘点文章"
+        }
+      ]
+    },
+    {
+      "name": "Xoul AI",
+      "aliases": [
+        "Xoul AI"
+      ],
+      "hosts": [
+        "multiuser.xoul.ai"
+      ],
+      "source_tier": "external",
+      "evidence": "title「xoul.ai」",
+      "sources": [
+        {
+          "source_url": "https://www.rankred.com/character-ai-alternatives/",
+          "source_kind": "榜单指南"
+        }
+      ]
+    },
+    {
+      "name": "aiga_",
+      "aliases": [
+        "aiga_"
+      ],
+      "hosts": [
+        "www.aiga.io"
+      ],
+      "source_tier": "vendor_article",
+      "evidence": "title「Shared Worlds | aiga_」",
+      "sources": [
+        {
+          "source_url": "https://www.aiga.io/cn/blog/best-ai-roleplay-apps-2026",
+          "source_kind": "盘点文章"
+        }
+      ]
+    },
+    {
+      "name": "叨叨",
+      "aliases": [
+        "叨叨"
+      ],
+      "hosts": [
+        "www.daodao.cn"
+      ],
+      "source_tier": "external",
+      "evidence": "title「叨叨官网——我会一直陪着你」",
+      "sources": [
+        {
+          "source_url": "https://blog.csdn.net/sinat_37574187/article/details/143816082",
+          "source_kind": "媒体报道"
+        }
+      ]
+    },
+    {
+      "name": "彩云小梦",
+      "aliases": [
+        "彩云小梦"
+      ],
+      "hosts": [
+        "caiyunaicn.com"
+      ],
+      "source_tier": "external",
+      "evidence": "title「彩云小梦官网」",
+      "sources": [
+        {
+          "source_url": "",
+          "source_kind": "本管线实跑发现"
+        },
+        {
+          "source_url": "https://blog.csdn.net/sinat_37574187/article/details/143816082",
+          "source_kind": "媒体报道"
+        },
+        {
+          "source_url": "https://apps.apple.com/cn/app/%E5%BD%A9%E4%BA%91%E5%B0%8F%E6%A2%A6/id1564619616?uo=4",
+          "source_kind": "App Store"
+        }
+      ]
+    },
+    {
+      "name": "心语陪伴",
+      "aliases": [
+        "心语陪伴"
+      ],
+      "hosts": [
+        "app-73hmrdpkojcx.appmiaoda.com"
+      ],
+      "source_tier": "external",
+      "evidence": "title「心语陪伴」",
+      "sources": [
+        {
+          "source_url": "https://www.163.com/dy/article/L2HOQR3D0556M8LH.html",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.sohu.com/a/1055848182_121872074",
+          "source_kind": "盘点文章"
+        }
+      ]
+    },
+    {
+      "name": "我在AI",
+      "aliases": [
+        "我在AI"
+      ],
+      "hosts": [
+        "xingye-ai.cn"
+      ],
+      "source_tier": "external",
+      "evidence": "title「我在AI - 超甜虚拟恋人AI聊天软件，24小时在线陪伴」",
+      "sources": [
+        {
+          "source_url": "",
+          "source_kind": "本管线实跑发现"
+        },
+        {
+          "source_url": "https://blog.csdn.net/sinat_37574187/article/details/143816082",
+          "source_kind": "媒体报道"
+        }
+      ]
+    },
+    {
+      "name": "捏Ta",
+      "aliases": [
+        "捏Ta"
+      ],
+      "hosts": [
+        "nieta.art"
+      ],
+      "source_tier": "external",
+      "evidence": "title「捏Ta」",
+      "sources": [
+        {
+          "source_url": "https://www.aigc.cn/favorites/ai-role-play-chatbot",
+          "source_kind": "导航目录"
+        },
+        {
+          "source_url": "https://www.nieta.art/use-cases/zh-Hans/the-best-ai-roleplay-platforms",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.nieta.art/use-cases/zh-Hans/the-best-ai-rp-platforms",
+          "source_kind": "盘点文章"
+        }
+      ]
+    },
+    {
+      "name": "捡手机文学",
+      "aliases": [
+        "捡手机文学",
+        "talkmaker"
+      ],
+      "hosts": [
+        "talkmaker.cn"
+      ],
+      "source_tier": "external",
+      "evidence": "title「talkmaker官网 - 中文原版 AI 角色互动与捡手机文学创作平台」",
+      "sources": [
+        {
+          "source_url": "https://www.xiaohongshu.com/explore/69c4ee73000000002102f84a",
+          "source_kind": "社区帖子"
+        }
+      ]
+    },
+    {
+      "name": "星漫",
+      "aliases": [
+        "星漫"
+      ],
+      "hosts": [
+        "mh.xingmanai.com"
+      ],
+      "source_tier": "external",
+      "evidence": "title「星漫AI」",
+      "sources": [
+        {
+          "source_url": "https://android.18183.com/sj/202606/8965229.html",
+          "source_kind": "盘点文章"
+        }
+      ]
+    },
+    {
+      "name": "星野",
+      "aliases": [
+        "星野"
+      ],
+      "hosts": [
+        "www.xingyeai.com",
+        "xingyeai.com",
+        "m.xingyeai.com",
+        "ai-xingye.cn",
+        "xingyeai.net"
+      ],
+      "source_tier": "sample_verified",
+      "evidence": "title「星野_沉浸式智能体社区_星野官网_星野app」；备用域名 title「星野 - 可定制 AI 角色设定的 AI 陪伴应用」（2026-10-29 复测时按同产品多域名约定补入）",
+      "sources": [
+        {
+          "source_url": "",
+          "source_kind": "本管线实跑发现"
+        },
+        {
+          "source_url": "https://foreverse.cn/zh/ai-roleplay-apps",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.moonfox.cn/insight/report/1813",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://news.qq.com/rain/a/20240929A02YXO00",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://xueqiu.com/9057196330/324285947",
+          "source_kind": "社区帖子"
+        },
+        {
+          "source_url": "https://www.36kr.com/p/3001856796144776",
+          "source_kind": "媒体报道"
+        },
+        {
+          "source_url": "https://blog.csdn.net/sinat_37574187/article/details/143816082",
+          "source_kind": "媒体报道"
+        },
+        {
+          "source_url": "https://www.huxiu.com/article/3608463.html",
+          "source_kind": "媒体报道"
+        },
+        {
+          "source_url": "https://www.flowpixai.com/ai-tools/ai-companion-app-comparison.html",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://teasa.ai/zh-CN/guides/best-ai-roleplay-apps",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.maigoo.com/top/444878.html",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://www.jiuzyoung.com/info/introduce-5-companion-apps/",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://ai-bot.cn/app/10462.html",
+          "source_kind": "导航目录"
+        },
+        {
+          "source_url": "https://hub.baai.ac.cn/view/36965",
+          "source_kind": "社区帖子"
+        },
+        {
+          "source_url": "https://post.smzdm.com/p/aom0lror/",
+          "source_kind": "社区帖子"
+        },
+        {
+          "source_url": "https://xueqiu.com/8980528183/391521173",
+          "source_kind": "社区帖子"
+        },
+        {
+          "source_url": "https://xueqiu.com/5149251894/292170408",
+          "source_kind": "社区帖子"
+        }
+      ]
+    },
+    {
+      "name": "未伴",
+      "aliases": [
+        "未伴"
+      ],
+      "hosts": [
+        "www.futurecompanion.net"
+      ],
+      "source_tier": "external",
+      "evidence": "title「未伴纪元｜AI互动毛绒与角色数字化平台」",
+      "sources": [
+        {
+          "source_url": "https://blog.csdn.net/sinat_37574187/article/details/143816082",
+          "source_kind": "媒体报道"
+        }
+      ]
+    },
+    {
+      "name": "给麦",
+      "aliases": [
+        "给麦"
+      ],
+      "hosts": [
+        "mmr.geimaiapp.com"
+      ],
+      "source_tier": "external",
+      "evidence": "title「给麦 - 官网」",
+      "sources": [
+        {
+          "source_url": "https://www.sohu.com/a/766287049_121649907",
+          "source_kind": "盘点文章"
+        }
+      ]
+    },
+    {
+      "name": "萌伴",
+      "aliases": [
+        "萌伴"
+      ],
+      "hosts": [
+        "www.moemateapp.com"
+      ],
+      "source_tier": "external",
+      "evidence": "title「萌伴 MoeMate｜寵物社群與溫暖陪伴」",
+      "sources": [
+        {
+          "source_url": "https://android.18183.com/sj/202606/8965229.html",
+          "source_kind": "盘点文章"
+        },
+        {
+          "source_url": "https://m.18183.com/android/sj/202606/8953677.html",
+          "source_kind": "盘点文章"
+        }
+      ]
+    },
+    {
+      "name": "蔚蓝陪伴",
+      "aliases": [
+        "蔚蓝陪伴"
+      ],
+      "hosts": [
+        "weilanpeiban.com",
+        "momotalk.top"
+      ],
+      "source_tier": "sample_verified",
+      "evidence": "title「蔚蓝陪伴平台- AI跨次元聊天| 官网」/「蔚蓝陪伴- 跨次元聊天平台|Momotalk桃信蔚蓝档案ai对话」",
+      "sources": []
+    },
+    {
+      "name": "飞船",
+      "aliases": [
+        "飞船"
+      ],
+      "hosts": [
+        "www.chimelong.com"
+      ],
+      "source_tier": "external",
+      "evidence": "title「横琴长隆飞船官网|横琴长隆度假区」",
+      "sources": [
+        {
+          "source_url": "https://www.36kr.com/p/3001856796144776",
+          "source_kind": "媒体报道"
+        }
+      ]
+    }
+  ]
+}

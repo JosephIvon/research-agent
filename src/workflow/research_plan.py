@@ -119,12 +119,49 @@ PRIORITY_MULTIPLIER = {"primary": 1.5, "secondary": 1.0, "ignore": 0.5}
 DEFAULT_MIN_COMPETITORS = 3
 DEFAULT_MAX_COMPETITORS = 5
 DEFAULT_CANDIDATE_POOL = 10   # 候选池先抓 8–12，取打分前 N
-DEFAULT_ADMISSION_RULE = "必须有官网 + 至少 2 个维度有数据"
+# 默认口径里加上「同赛道」：这一条**以前判不了**（被归到"不是可执行条件"），
+# 于是跨行业候选（talkie.ai 的医疗分诊、hoshinoresorts 的度假村）会占名额。
+# 现在按名册 + 赛道词 + 跨行业词判（见 src/workflow/track_scope.py）；
+# 判据是**保守**的：只有明确命中跨行业词才拦，其余放行。
+DEFAULT_ADMISSION_RULE = "必须有官网 + 同赛道竞品 + 至少 2 个维度有数据"
 # 入选分数线：0.5 = "像产品自己的官网"。发现阶段没有维度数据可看，
 # 门槛只能定在**发现阶段拿得到**的那一层（站点类型 + 词面相关）。
 MIN_ADMISSION_SCORE = 0.5
 COMPETITOR_LAYERS = ("direct", "alternative", "adjacent")
 DEFAULT_LAYERS = ("direct",)
+
+# ---- 同分块（tie）的次序键 --------------------------------------------
+# 排序键是 (-分数, 路径深度, 名字)：**同分块内按名字字母序**。
+# 而候选的分数几乎全是并列 0.5（像产品官网 0.5 + 无维度 + 无词面重合），
+# 所以字母序实际上在决定"谁能进名额"——这在评测文献里叫
+# "tie-break 规则就是排序规则的一部分"（FRAME'26 @ RecSys'26）。
+# 后果实测：真竞品被字母序挤掉（"丢在截断"里混着假象），
+# 入选名单的稳定性也跟着抖。
+# 所以把同分块内的次序键**做成可插拔的**：生产默认仍用名字（行为不变），
+# 评测侧用 "random"（给种子，换种子就换一次同分块次序）来算
+# "同分下的期望指标"，而不是报某一次字母序的结果。
+TIE_BREAK_MODES = ("name", "hash", "random")
+
+
+def _stable_hash(text: str) -> str:
+    """跨进程稳定的哈希（Python 内置 hash() 带随机盐，不能用）。"""
+    import hashlib
+
+    return hashlib.sha1(text.encode("utf-8", "ignore")).hexdigest()
+
+
+def _tie_key(item: Dict[str, Any], mode: str, seed: int) -> str:
+    """同分块内的次序键。"""
+    if mode not in TIE_BREAK_MODES:
+        raise ValueError(f"未知的同分排序键: {mode}")
+    identity = f"{item.get('url') or ''}|{item.get('name') or ''}"
+    if mode == "name":
+        return str(item.get("name") or "")
+    if mode == "hash":
+        return _stable_hash(f"{seed}|{identity}")
+    # "random"：按种子派生的伪随机键 —— 同一种子结果可复现，
+    # 换种子等价于换一次同分块的随机次序（蒙特卡洛要用）。
+    return _stable_hash(f"rand|{seed}|{identity}")
 
 # ---- 搜索四段式 ------------------------------------------------------
 SEARCH_STAGES = ("entity_anchor", "competitor_discovery", "per_competitor_verify", "counter_evidence")
@@ -1164,6 +1201,65 @@ def score_candidate(candidate: Dict[str, Any], plan: ResearchPlan) -> Dict[str, 
     }
 
 
+def select_competitors(
+    scored: Sequence[Dict[str, Any]],
+    max_count: int,
+    must_include: Sequence[str] = (),
+    min_score: float = MIN_ADMISSION_SCORE,
+    tie_break: str = "name",
+    seed: int = 0,
+) -> List[Dict[str, Any]]:
+    """从已打分候选里选出最终竞品集合（名额、同主机去重、同分次序都在这里）。
+
+    `tie_break` 决定**同分块内**的次序：
+    - "name"：按名字（历史行为，生产默认，不改）
+    - "hash"：按 url+种子的稳定哈希（可复现的单一排序）
+    - "random"：按种子派生的伪随机键 —— 评测侧换种子就换一次同分块次序，
+      用来算"同分下的期望指标"（见 docs/retrieval-literature-review.md §3.1）。
+
+    同一站点只算一家：character.ai/ 与 character.ai/about 是同一个竞品，
+    算两家会白占一个名额（实测：8 个入选里有 2 个是同一站点的两个页面）。
+    """
+    ordered = sorted(
+        scored,
+        key=lambda item: (
+            -float(item.get("score") or 0.0),
+            _path_depth(str(item.get("url") or "")),
+            _tie_key(item, tie_break, seed),
+        ),
+    )
+    selected: List[Dict[str, Any]] = []
+    selected_hosts = set()
+    for item in ordered:
+        if len(selected) >= max_count:
+            break
+        if not item.get("gate_passed", True):
+            continue
+        host = _host_key(item["url"])
+        if host and host in selected_hosts:
+            continue
+        if any(token and token in item["name"] for token in must_include):
+            selected.append(item)
+            if host:
+                selected_hosts.add(host)
+    for item in ordered:
+        if len(selected) >= max_count:
+            break
+        if item in selected:
+            continue
+        if not item.get("gate_passed", True):
+            continue
+        host = _host_key(item["url"])
+        if host and host in selected_hosts:
+            continue
+        if float(item.get("score") or 0.0) < min_score:
+            continue
+        selected.append(item)
+        if host:
+            selected_hosts.add(host)
+    return selected
+
+
 def admit_competitors(
     candidates: Sequence[Dict[str, Any]],
     plan: ResearchPlan,
@@ -1184,42 +1280,18 @@ def admit_competitors(
     rule = parse_admission_rule(plan.criteria.get("admission_rule"), plan.criteria)
     gate_failed: List[Dict[str, Any]] = []
     for item in scored:
-        passed, reasons = evaluate_discovery(item, rule)
+        passed, reasons = evaluate_discovery(item, rule, plan.track_keywords or [])
         item["gate_passed"] = passed
         item["gate_reasons"] = reasons
         if not passed:
             gate_failed.append(item)
-    selected: List[Dict[str, Any]] = []
-    # 同一站点只算一家：character.ai/ 与 character.ai/about 是同一个竞品，
-    # 算两家会白占一个名额（实测：8 个入选里有 2 个是同一站点的两个页面）。
-    selected_hosts = set()
-    for item in scored:
-        if len(selected) >= plan.max_count:
-            break
-        if not item.get("gate_passed", True):
-            continue
-        host = _host_key(item["url"])
-        if host and host in selected_hosts:
-            continue
-        if any(token and token in item["name"] for token in must_include):
-            selected.append(item)
-            if host:
-                selected_hosts.add(host)
-    for item in scored:
-        if len(selected) >= plan.max_count:
-            break
-        if item in selected:
-            continue
-        if not item.get("gate_passed", True):
-            continue
-        host = _host_key(item["url"])
-        if host and host in selected_hosts:
-            continue
-        if item["score"] < MIN_ADMISSION_SCORE:
-            continue
-        selected.append(item)
-        if host:
-            selected_hosts.add(host)
+    selected = select_competitors(
+        scored,
+        max_count=plan.max_count,
+        must_include=must_include,
+        min_score=MIN_ADMISSION_SCORE,
+        tie_break="name",
+    )
     return {
         "selected": selected[:plan.max_count],
         "scored": scored,

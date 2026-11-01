@@ -30,6 +30,39 @@ LOST_NOT_FOUND = "未被发现"
 LOST_SITE_TYPE = "站点类型过滤"
 LOST_GATE = "准入闸门"
 LOST_CUT = "名额截断"
+# 同名合并：产品**找到了**，但管线把它并进了另一个域的 URL，
+# 金标准记的域不在里面 → 匹配不上（不是闸门挡的 ✗）
+LOST_MERGE = "同名合并"
+
+
+def _norm_name(name: str) -> str:
+    """名字归一化（判断"是不是同一个产品名"用）。
+
+    只做保守归一：小写 + 去空白 + 去非字母数字。
+    刻意**不做**拼音/罗马化（那是实体归并三段式的事，F 项还没做），
+    这里只用来区分"闸门挡的"和"同名合并的"两种丢法。
+    """
+    import re as _re
+
+    return _re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", (name or "").strip().lower())
+
+
+def _norm_page(url: str) -> str:
+    """页面 URL 归一化（比来源用）：去协议差异、去 www、去尾部斜杠、去查询串。"""
+    raw = (url or "").strip().lower()
+    if not raw:
+        return ""
+    if "//" not in raw:
+        raw = "http://" + raw
+    try:
+        parts = urlparse(raw)
+    except ValueError:
+        return raw
+    host = (parts.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    path = (parts.path or "").rstrip("/")
+    return f"{host}{path}"
 
 
 def host_key(url: str) -> str:
@@ -81,7 +114,8 @@ class GoldenSet:
         self.entries = list(entries)
 
     @classmethod
-    def from_file(cls, path: str, subject: Optional[str] = None) -> "GoldenSet":
+    def from_file(cls, path: str, subject: Optional[str] = None,
+                  split: Optional[str] = None) -> "GoldenSet":
         import json
         from pathlib import Path
 
@@ -90,7 +124,10 @@ class GoldenSet:
         # 两个主体（猫箱、百度搭子）共用同一份赛道全集时用它。
         top = data.get("golden")
         if isinstance(top, list) and top:
-            return cls(list(top))
+            entries = list(top)
+            if split:
+                entries = [e for e in entries if str(e.get("split") or "") == split]
+            return cls(entries)
         subjects = data.get("subjects") or {}
         if subject and subject in subjects:
             entries = (subjects[subject] or {}).get("golden") or []
@@ -103,7 +140,29 @@ class GoldenSet:
                     if key and key not in merged:
                         merged[key] = entry
             entries = list(merged.values())
+        if split:
+            entries = [e for e in entries if str(e.get("split") or "") == split]
         return cls(entries)
+
+    def exclude_by_source(self, urls: Iterable[str]) -> "GoldenSet":
+        """剔掉"来源正好是这些页"的条目（通道自证条目）。
+
+        为什么要有这一步：C3 目录页通道读的就是外部目录页，
+        而赛道金标准里有一部分条目**也来自那些页**。
+        通道读到那张表再"发现"上面的产品，那叫**读答案**，不是发现。
+        所以这些条目不能留在测量分母里（分子分母都剔 ✓）。
+        """
+        wanted = {_norm_page(u) for u in urls or [] if u}
+        if not wanted:
+            return GoldenSet(self.entries)
+        kept: List[Dict[str, Any]] = []
+        for entry in self.entries:
+            sources = {_norm_page(str(s.get("source_url") or ""))
+                       for s in (entry.get("sources") or []) if isinstance(s, dict)}
+            if sources & wanted:
+                continue
+            kept.append(entry)
+        return GoldenSet(kept)
 
     def __len__(self) -> int:
         return len(self.entries)
@@ -204,17 +263,30 @@ def funnel_metrics(run: Dict[str, Any], golden: GoldenSet) -> Dict[str, Any]:
             detail = f"被站点类型判定剔掉（判成 {site_type or '未知'}）"
             gate_reasons = []
         elif name not in hits["L2"]:
-            reason = LOST_GATE
+            # 这里有两种完全不同的丢法，必须分开：
+            # ① **闸门真的挡了它**（scored 里有它且 gate_passed=False）；
+            # ② **同名合并把它并进了另一个域**（scored 里有同名的另一条 URL，
+            #    而金标准记的是另一个域 → 匹配不上）。
+            # 把②算成①会得出"新闸门误杀了金标准产品"的错误结论 ✗✗。
             site_type = None
-            gate_reasons = []
-            # 闸门的理由记在 scored 上（gate_passed=False 的那些也在里面）
+            gate_reasons: List[str] = []
+            merged_item = None
+            key = _norm_name(name)
             for item in all_scored:
                 got = golden.match(item.get("url", ""))
                 if got and (got.get("name") or "") == name:
                     gate_reasons = list(item.get("gate_reasons") or [])
                     site_type = item.get("site_type")
                     break
-            detail = "被准入闸门挡下" + (f"（{'; '.join(gate_reasons)}）" if gate_reasons else "")
+                if _norm_name(item.get("name", "")) == key and not got:
+                    merged_item = item
+            if not gate_reasons and merged_item is not None:
+                reason = LOST_MERGE
+                detail = (f"同名合并到了另一个域（{merged_item.get('url')}），"
+                          f"金标准记的域不在其中 → 匹配不上（不是闸门挡的）")
+            else:
+                reason = LOST_GATE
+                detail = "被准入闸门挡下" + (f"（{'; '.join(gate_reasons)}）" if gate_reasons else "")
         else:
             reason = LOST_CUT
             site_type = None
@@ -297,3 +369,174 @@ def verdict(name: str, value: Optional[float], threshold: float,
     ok = value >= threshold if higher_is_better else value <= threshold
     return {"line": name, "value": value, "threshold": threshold, "pass": ok,
             "status": "PASS" if ok else "FAIL"}
+
+
+# ----------------------------------------------------------------------
+# 同分块（tie）稳健性
+# ----------------------------------------------------------------------
+# 为什么要有这块：排序键是 (-分数, 路径深度, 名字)，而候选分数几乎全是
+# 并列 0.5 → **同分块内按名字字母序**，也就是字母序在决定谁能进名额。
+# 评测文献（FRAME'26 @ RecSys'26）把这件事说得很直白：
+# **tie-break 规则就是排序规则的一部分**——同分块跨过 top-k 边界时，
+# 谁进榜由这条规则决定；报某一次字母序结果，等于报一个任意值。
+# 那篇论文给出的诚实口径是"同分下的期望指标"：
+# 解析式（单相关文档时 E[Hit@k]=max{0,min(t,k-a)}/t），
+# 或"重复随机 tie-break 取均值±方差"（论文实测两者一致到 0.0012）。
+# 这里实现后者：换种子 = 换一次同分块次序，跑 N 次取分布。
+
+def _path_depth(url: str) -> int:
+    path = urlparse(url).path or ""
+    return len([seg for seg in path.split("/") if seg])
+
+
+def _tie_blocks(scored: Sequence[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+    """把已打分候选按 (分数, 路径深度) 分成同分块（按当前排序键的次序排好）。"""
+    ordered = sorted(
+        scored,
+        key=lambda item: (
+            -float(item.get("score") or 0.0),
+            _path_depth(str(item.get("url") or "")),
+            str(item.get("name") or ""),
+        ),
+    )
+    blocks: List[List[Dict[str, Any]]] = []
+    current: List[Dict[str, Any]] = []
+    current_key: Optional[Tuple[float, int]] = None
+    for item in ordered:
+        key = (float(item.get("score") or 0.0), _path_depth(str(item.get("url") or "")))
+        if current_key is not None and key == current_key:
+            current.append(item)
+            continue
+        if current:
+            blocks.append(current)
+        current = [item]
+        current_key = key
+    if current:
+        blocks.append(current)
+    return blocks
+
+
+def tie_stats(run: Dict[str, Any]) -> Dict[str, Any]:
+    """一次运行的同分情况：同分流行度、最大同分块、有没有同分块跨过名额边界。"""
+    scored = [s for s in (run.get("scored") or []) if s.get("gate_passed")]
+    blocks = _tie_blocks(scored)
+    selected_urls = {str(item.get("url") or "") for item in (run.get("selected") or [])}
+    tied_candidates = sum(len(b) for b in blocks if len(b) > 1)
+    crossing = 0
+    for block in blocks:
+        if len(block) < 2:
+            continue
+        inside = [b for b in block if str(b.get("url") or "") in selected_urls]
+        outside = [b for b in block if str(b.get("url") or "") not in selected_urls]
+        if inside and outside:
+            crossing += 1
+    return {
+        "candidates": len(scored),
+        "tie_blocks": sum(1 for b in blocks if len(b) > 1),
+        "tied_candidates": tied_candidates,
+        "tied_ratio": round(tied_candidates / len(scored), 4) if scored else None,
+        "max_block": max((len(b) for b in blocks), default=0),
+        "blocks_crossing_cutoff": crossing,
+        "selected": len(selected_urls),
+    }
+
+
+def _mean(values: Sequence[float]) -> Optional[float]:
+    return sum(values) / len(values) if values else None
+
+
+def tie_expected_metrics(
+    runs: Sequence[Dict[str, Any]],
+    golden: GoldenSet,
+    seeds: int = 100,
+    seed_base: int = 0,
+) -> Dict[str, Any]:
+    """同分下的**期望指标**：换种子就换一次同分块次序，跑 N 次取分布。
+
+    只有 L3（入选名单）依赖 tie-break，所以：
+    - R1/R2（L0/L1 的量）与 tie 无关，不重算；
+    - R3（keep_L3）与 S1（入选名单稳定性）重算。
+
+    需要 run 记录里有 `selection`（max_count / must_include / min_score）——
+    那是"当时按什么口径选的"；缺了就**不判**（computable=False），
+    不能拿现在的默认值假装能复算。
+    """
+    from src.workflow.research_plan import select_competitors
+
+    if not runs:
+        return {"computable": False, "reason": "没有可用的运行记录"}
+    missing = [i for i, r in enumerate(runs) if not (r.get("selection") or {}).get("max_count")]
+    if missing:
+        return {
+            "computable": False,
+            "reason": f"{len(missing)} 条运行记录缺 selection 口径（max_count），无法复算同分下的期望值",
+        }
+
+    # L2 的命中数与 tie 无关（闸门在排序之前就判完了）
+    l2_hits: List[int] = []
+    for run in runs:
+        golden_l2 = set()
+        for item in (run.get("scored") or []):
+            if not item.get("gate_passed"):
+                continue
+            entry = golden.match(str(item.get("url") or ""))
+            if entry:
+                golden_l2.add(entry.get("name") or "")
+        l2_hits.append(len(golden_l2))
+
+    per_seed: List[Dict[str, Optional[float]]] = []
+    for k in range(seeds):
+        seed = seed_base + k
+        selected_sets: List[set] = []
+        l3_hits: List[int] = []
+        for run in runs:
+            scored = [s for s in (run.get("scored") or []) if s.get("gate_passed")]
+            meta = run.get("selection") or {}
+            chosen = select_competitors(
+                scored,
+                max_count=int(meta.get("max_count") or 0),
+                must_include=list(meta.get("must_include") or []),
+                min_score=float(meta.get("min_admission_score") or 0.0),
+                tie_break="random",
+                seed=seed,
+            )
+            selected_sets.append({str(c.get("url") or "") for c in chosen})
+            hit_names = set()
+            for c in chosen:
+                entry = golden.match(str(c.get("url") or "") or "")
+                if entry:
+                    hit_names.add(entry.get("name") or "")
+            l3_hits.append(len(hit_names))
+        keep_l3: List[float] = []
+        for l2, l3 in zip(l2_hits, l3_hits):
+            keep_l3.append(l3 / l2 if l2 else None)
+        pairs = [
+            _jaccard(selected_sets[i], selected_sets[j])
+            for i in range(len(selected_sets))
+            for j in range(i + 1, len(selected_sets))
+        ]
+        per_seed.append({
+            "keep_l3": _mean([v for v in keep_l3 if v is not None]),
+            "stability": (sum(pairs) / len(pairs)) if pairs else None,
+        })
+
+    def _dist(key: str) -> Dict[str, Any]:
+        values = [row[key] for row in per_seed if row.get(key) is not None]
+        if not values:
+            return {"mean": None, "sd": None, "min": None, "max": None, "n": 0}
+        mean = sum(values) / len(values)
+        var = sum((v - mean) ** 2 for v in values) / len(values)
+        return {
+            "mean": round(mean, 4),
+            "sd": round(var ** 0.5, 4),
+            "min": round(min(values), 4),
+            "max": round(max(values), 4),
+            "n": len(values),
+        }
+
+    return {
+        "computable": True,
+        "seeds": seeds,
+        "keep_l3": _dist("keep_l3"),
+        "stability": _dist("stability"),
+    }

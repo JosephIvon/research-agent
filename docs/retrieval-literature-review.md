@@ -260,18 +260,40 @@ B-2 MMR 名额分配 · D-2 计划冻结 · S3 自动补判扩全集 · 长尾�
 
 ---
 
-## 7. 需要拍板的三件事
+## 7. 需要拍板的三件事（2026-11-01 已拍板）
 
 1. **多通道的通道集合**：C3（目录分类页）与 C4（商店）先上哪个？
-   建议 **C3 先上**（实测入口已找到，且能直接喂"仅独立来源"那一层的长尾）。
+   → **拍板：先上 C3**（实测入口已找到，且能直接喂"仅独立来源"那一层的长尾）。
 2. **同赛道判据源**：只用"品类词表 + 模型提名 + LLM 裁决"，还是允许用赛道名册？
-   **若用名册，必须留出集**（否则测量自证）——本轮仍建议**只用词表+提名+LLM 裁决**。
+   → **拍板：允许用赛道名册**，但**必须留出集**——名册是闸门的知识，
+   留出集才是测量的分母，两者互斥（否则测量自证）。
+   本轮已按此落地：固定哈希把赛道全集切成**名册 83 条 / 留出集 206 条**，
+   切分规则与种子写进 `evals/discovery_golden/track_universe.json` 的 `split_policy` ✓。
 3. **tie 口径**：R3/keep_L3/S1 是否统一改报 **tie 期望值**（而非单次字母序结果）？
-   建议**改**，并在报告里同时留"单次结果"以便与历史轮次对齐。
+   → **拍板：改**，并在报告里同时留"单次结果"以便与历史轮次对齐。
+   注意这**不是调阈值**：判定线（R3 ≥0.60、S1 ≥0.50）一条没动，
+   改的是**指标定义**（单次字母序结果 → 同分下的期望值）✓。
 
 ---
 
-## 8. 引用清单
+## 8. 落地状态（2026-11-01，第九轮）
+
+| 方案项 | 状态 | 落地形态 |
+|---|---|---|
+| **B-0 tie-aware 评测** | ✅ 已实现 | 排序键可插拔（`name`/`hash`/`random`，见 `select_competitors`）；`tie_stats()` 报同分流行度、最大同分块、跨名额边界的同分块数；`tie_expected_metrics()` 用 100 个种子算 keep_L3 与稳定性的均值±标准差；报告 §6 同分稳健性。**R3/S1 的判定改用期望值**，单次值保留对照。 |
+| **D-1 计划落盘** | ✅ 已实现 | 运行记录新增 `plan`（实体、赛道词、准入规则原文、各阶段查询词）与 `selection`（max_count / must_include / 分数地板）——没有后者就无法事后复算同分期望值。 |
+| **E 多通道（先上 C3）** | ✅ 已实现（通道归因未做） | `src/tools/list_pages.py`：目录站清单 → `site:` 检索找赛道分类页 → 抓页抽条目 → 以 `{title,url,content}` 同形并入候选池；跑记录记 `channel_pages`（测量时据此剔除"通道自证条目"）。**RRF 融合与逐通道归因还没做**（当前只有一条通道，通道间分数不可比的问题尚未出现）。 |
+| **A 同赛道闸门（名册版）** | ✅ 已实现（listwise/LLM 裁决未做） | `src/workflow/track_scope.py` + `assets/track_scope.json`：跨行业词 → 名册站点 → 名册品牌 → 赛道词，四段判据；规则里的"同赛道/同客群/同品类"等条款**从"不可执行"变成可执行**。LLM 列表式重排 + 置换自洽仍未做（当前靠词面判据 + 名册）。 |
+| **C 空响应契约** | ❌ 未做 | LLM 空响应仍按"解析失败→退回默认计划"处理，没有显式异常与降级标注。 |
+| **B-1 截断归因细分 + 名额账** | ❌ 未做 | 归因仍只有四类（未发现/站点类型/闸门/截断），没有"名额给了谁"的账。 |
+| **F 实体归并三段式** | ❌ 未做 | 仍是"规范化品牌名 + 域名主标签"，非 ASCII 品牌仍匹配不上；聚类仍靠首个候选胜出。 |
+| **B-2 MMR / D-2 冻结 / S3 补判 / 长尾指标** | ❌ 未做 | — |
+
+**第九轮实测见** [`docs/discovery-recall-measurement.md`](discovery-recall-measurement.md) §8.12。
+
+---
+
+## 9. 引用清单
 
 1. Guo, Chen, Zhu, Li. *Tie Handling Is Part of the Evaluation Protocol: An Order-Invariance Audit for Tie-Heavy Recommender Scores.* FRAME'26 @ RecSys 2026. <https://arxiv.org/abs/2609.26977>（工件：<https://github.com/Guoo123/tie-evaluation-audit>）
 2. Tang, Zhang, Ma, Lin, Ture. *Found in the Middle: Permutation Self-Consistency Improves Listwise Ranking in Large Language Models.* NAACL 2024. <https://aclanthology.org/2024.naacl-long.129/>（代码：<https://github.com/castorini/perm-sc>）

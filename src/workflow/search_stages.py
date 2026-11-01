@@ -249,6 +249,10 @@ class DiscoveryResult:
     # 整组结论作废还看不出原因。
     search_failed: bool = False
     search_failures: List[Dict[str, Any]] = field(default_factory=list)
+    # C3 目录页通道读过的页面（测量时要拿它剔除"通道自证条目"）
+    channel_pages: List[str] = field(default_factory=list)
+    # 通道贡献的候选（按 URL 记）
+    channel_candidates: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -260,15 +264,23 @@ class DiscoveryResult:
             "notes": self.notes,
             "search_failed": self.search_failed,
             "search_failures": self.search_failures,
+            "channel_pages": list(self.channel_pages),
+            "channel_candidates": list(self.channel_candidates),
         }
 
 
 class SearchStageRunner:
     """按计划执行搜索阶段。search_tool 是既有 SearchTool（可注入替身）。"""
 
-    def __init__(self, search_tool: Any, num_results: int = 8):
+    def __init__(self, search_tool: Any, num_results: int = 8,
+                 enable_directory_channel: bool = True):
         self.search_tool = search_tool
         self.num_results = num_results
+        # C3 目录页通道（默认开）：模型不知道、搜索也搜不到的长尾产品，
+        # 大量只在目录站的**分类页**上（一页几十个，服务端渲染 ✓）。
+        # 通道读过的页要记进 result.channel_pages —— 测量时要把
+        # "来源正好是这些页"的金标准条目从分母里剔掉（那叫读答案 ✓）。
+        self.enable_directory_channel = enable_directory_channel
         # 主体锚定的结果缓存：竞品发现阶段要据此排除"主体自己的官方页"
         self._entity_pages: List[Dict[str, Any]] = []
         # 主体自己官网的域名：按"实体锚定阶段排名最高的官网"判定。
@@ -371,6 +383,23 @@ class SearchStageRunner:
         by_name: Dict[str, Candidate] = {}
         title_by_name: Dict[str, str] = {}
         model_names = [n.strip() for n in (plan.competitor_candidates or []) if n.strip()]
+        # -- C3 目录页通道 ------------------------------------------------
+        # 在**合并同名**之前把通道条目并进来：它们和搜索结果是同形
+        # （title/url/content ✓），走同一套去重、站点类型判定与闸门 ✓。
+        if self.enable_directory_channel and (plan.track_keywords or []):
+            try:
+                from src.tools.list_pages import collect_channel_items
+
+                channel_items, channel_notes, channel_pages = collect_channel_items(
+                    lambda query: self._search(query, "competitor_discovery"),
+                    plan.track_keywords or [],
+                )
+                results.extend(channel_items)
+                result.channel_pages = list(channel_pages)
+                result.channel_candidates = [item["url"] for item in channel_items]
+                result.notes.extend(channel_notes)
+            except Exception as exc:  # noqa: BLE001 —— 通道失败不能拖垮整轮
+                result.notes.append(f"C3 通道异常（已跳过）：{type(exc).__name__}")
         for item in results:
             url = item["url"]
             if url in seen:

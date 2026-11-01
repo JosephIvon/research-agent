@@ -49,6 +49,12 @@ _MIN_DIM_BEFORE = re.compile(
 _MIN_DIM_AFTER = re.compile(r"(\d+)\s*个?\s*(?:维度|维)\s*(?:以上|及以上|起|或更多)")
 _LAYER_TOKEN = re.compile(r"(直接层|替代层|邻近层|direct|alternative|adjacent)", re.IGNORECASE)
 
+# 「同赛道」类条款：现在**可执行**了（名册 + 赛道词 + 跨行业词）
+_SAME_TRACK_TOKEN = re.compile(
+    r"(同赛道|同一赛道|同类目|同类产品|同品类|同类型|同客群|同场景|同领域|"
+    r"属于本赛道|同类竞品|same\s+track)", re.IGNORECASE
+)
+
 
 @dataclass
 class AdmissionRule:
@@ -58,6 +64,8 @@ class AdmissionRule:
     require_product_site: bool = True
     must_include: List[str] = field(default_factory=list)
     must_exclude: List[str] = field(default_factory=list)
+    # 同赛道（名册 + 赛道词 + 跨行业词，见 src/workflow/track_scope.py）
+    require_same_track: bool = False
     # 抓后阶段才判的（发现阶段拿不到）
     min_dimensions: int = DEFAULT_MIN_DIMENSIONS
     # 不可执行的（层归属要语义判断）
@@ -79,6 +87,7 @@ class AdmissionRule:
             "layers": list(self.layers),
             "must_include": list(self.must_include),
             "must_exclude": list(self.must_exclude),
+            "require_same_track": self.require_same_track,
             "executable": list(self.executable),
             "not_executable": list(self.not_executable),
         }
@@ -113,9 +122,16 @@ def parse_admission_rule(
     saw_site = False
     saw_dimension = False
     saw_layer = False
+    saw_same_track = False
 
     for clause in clauses:
         hit = False
+        # 0) 同赛道要求（名册/赛道词/跨行业词 → 可执行）
+        if _SAME_TRACK_TOKEN.search(clause):
+            rule.require_same_track = True
+            saw_same_track = True
+            executable_clauses.append(f"{clause}（按赛道名册 + 赛道词 + 跨行业词判定）")
+            hit = True
         # 1) 官网要求
         if _SITE_NEGATED.search(clause):
             rule.require_product_site = False
@@ -185,11 +201,15 @@ def parse_admission_rule(
 def evaluate_discovery(
     candidate: Dict[str, Any],
     rule: AdmissionRule,
+    track_keywords: Sequence[str] = (),
 ) -> Tuple[bool, List[str]]:
-    """发现阶段能执行的门槛：站点类型 + 排除项。
+    """发现阶段能执行的门槛：站点类型 + 排除项 + （可选）同赛道。
 
     返回 (是否通过, 理由)。理由会原样进"为什么没入选"的清单——
     用户要能看懂为什么某家没进来。
+
+    `track_keywords` 是**计划里模型给的赛道词**（当轮口径），
+    和生产侧的 `assets/track_scope.json` 一起喂给同赛道判据。
     """
     reasons: List[str] = []
     url = str(candidate.get("url") or "")
@@ -204,6 +224,18 @@ def evaluate_discovery(
     excluded = [t for t in rule.must_exclude if t and t in (name + description)]
     if excluded:
         reasons.append("命中排除项: " + "、".join(excluded))
+
+    if rule.require_same_track:
+        from src.workflow.track_scope import check_same_track
+
+        ok, why = check_same_track(
+            name=name,
+            url=url,
+            description=description,
+            extra_keywords=list(track_keywords or []),
+        )
+        if not ok:
+            reasons.append(why)
 
     return (not reasons), reasons
 

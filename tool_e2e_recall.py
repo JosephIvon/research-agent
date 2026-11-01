@@ -104,6 +104,29 @@ async def run_once(llm: Any, search_tool: Any, subject: str, style: str,
     ]
     record["notes"] = list(discovery.notes)
     record["search_failed"] = bool(discovery.search_failed)
+    # C3 通道读过的目录页与它贡献的候选：
+    # 测量时要把"来源正好是这些页"的金标准条目从分母里剔掉（读答案≠发现 ✓）。
+    record["channel_pages"] = list(getattr(discovery, "channel_pages", []) or [])
+    record["channel_candidates"] = list(getattr(discovery, "channel_candidates", []) or [])
+    # **当时按什么口径选的**：max_count / must_include / 分数地板。
+    # 这三样决定"名额怎么分"，不存下来就无法在事后复算
+    # "同分块换一种次序会怎样"（tie 期望值，见 src/tools/recall_metrics.py）。
+    record["selection"] = {
+        "max_count": int(plan.max_count),
+        "min_admission_score": float(rp.MIN_ADMISSION_SCORE),
+        "must_include": list((plan.criteria or {}).get("must_include") or []),
+    }
+    # **计划快照**：事后要能复算"这轮当时的口径是什么"（含命名、赛道词、
+    # 准入规则原文），否则跨轮的差异分不清是"计划变了"还是"管线变了"。
+    record["plan"] = {
+        "entity_name": plan.entity_name,
+        "source": plan.source,
+        "track_keywords": list(plan.track_keywords or []),
+        "competitor_candidates": list(plan.competitor_candidates or []),
+        "criteria": dict(plan.criteria or {}),
+        "queries": {stage: plan.queries_for(stage)
+                    for stage in ("entity_anchor", "competitor_discovery")},
+    }
     record["search_failures"] = list(discovery.search_failures)
     record["entity_pages"] = len(anchor_pages)
     record["elapsed_s"] = round(time.time() - started, 1)
@@ -160,6 +183,25 @@ def _tier_subsets(golden: rm.GoldenSet) -> Dict[str, rm.GoldenSet]:
     return {k: v for k, v in subsets.items() if len(v) > 0}
 
 
+def _split_subsets(golden: rm.GoldenSet) -> Dict[str, rm.GoldenSet]:
+    """按 split 切成"名册集 / 留出集"两个口径视图。
+
+    为什么要有这两个视图：**名册是闸门的知识**（同赛道判据允许用名册 ✓），
+    留出集是**闸门没见过的那一半**。两个数必须分开报——
+    混在一起报，闸门的知识会把自己的成绩算进去（自证）。
+    """
+    entries = list(golden.entries)
+    if not any(e.get("split") for e in entries):
+        return {}
+    subsets = {
+        "口径：留出集（闸门没见过）": rm.GoldenSet(
+            [e for e in entries if e.get("split") == "heldout"]),
+        "口径：名册集（闸门见过）": rm.GoldenSet(
+            [e for e in entries if e.get("split") == "registry"]),
+    }
+    return {k: v for k, v in subsets.items() if len(v) > 0}
+
+
 def analyze_denominators(runs: List[Dict[str, Any]],
                          goldens: Dict[str, rm.GoldenSet]) -> List[Dict[str, Any]]:
     """**同一批实跑**在多份金标准下的召回对照（换分母，不重跑）。
@@ -171,6 +213,10 @@ def analyze_denominators(runs: List[Dict[str, Any]],
     """
     valid = [r for r in runs if not _invalid(r)]
     all_goldens: Dict[str, rm.GoldenSet] = dict(goldens)
+    # 通道自证条目：来源正好是 C3 通道读过的页 → 不进任何口径的分母
+    channel_pages = sorted({p for r in valid for p in (r.get("channel_pages") or [])})
+    if channel_pages:
+        all_goldens = {k: v.exclude_by_source(channel_pages) for k, v in all_goldens.items()}
 
     def hostset(g: rm.GoldenSet):
         return frozenset(h for e in g.entries for h in (e.get("hosts") or []))
@@ -182,6 +228,14 @@ def analyze_denominators(runs: List[Dict[str, Any]],
             if hostset(subset) in {hostset(x) for x in all_goldens.values()}:
                 continue
             all_goldens[f"{label}·{sub_label}"] = subset
+        # 带 split 的再加"留出集/名册集"两个视图（闸门见过没见过的区别）
+        for sub_label, subset in _split_subsets(g).items():
+            if hostset(subset) in {hostset(x) for x in all_goldens.values()}:
+                continue
+            all_goldens[f"{label}·{sub_label}"] = subset
+    # 分层视图也要剔通道自证条目（否则"全集"视图含自证、留出集视图不含 ✗）
+    if channel_pages:
+        all_goldens = {k: v.exclude_by_source(channel_pages) for k, v in all_goldens.items()}
     out: List[Dict[str, Any]] = []
     for label, golden in all_goldens.items():
         per_run = [rm.funnel_metrics(rec, golden) for rec in valid]
@@ -208,11 +262,18 @@ def analyze_denominators(runs: List[Dict[str, Any]],
 
 
 def analyze(runs: List[Dict[str, Any]], golden: rm.GoldenSet) -> Dict[str, Any]:
-    """算全部指标：每次运行的漏斗 + 每组的稳定性 + 跨句式对照。"""
+    """算全部指标：每次运行的漏斗 + 每组的稳定性 + 跨句式对照。
+
+    **通道自证条目要剔掉**：C3 目录页通道读的就是外部目录页，
+    而金标准里有一部分条目也来自那些页 —— 通道读到那张表再"发现"上面的
+    产品，那叫读答案。所以这些条目不进分母（分子分母一起剔 ✓）。
+    """
     valid = [r for r in runs if not _invalid(r)]
+    channel_pages = sorted({p for r in valid for p in (r.get("channel_pages") or [])})
+    measured = golden.exclude_by_source(channel_pages)
     per_run = []
     for rec in valid:
-        m = rm.funnel_metrics(rec, golden)
+        m = rm.funnel_metrics(rec, measured)
         per_run.append({
             "subject": rec["subject"], "style": rec["style"], "attempt": rec.get("attempt"),
             "elapsed_s": rec.get("elapsed_s"),
@@ -259,13 +320,77 @@ def analyze(runs: List[Dict[str, Any]], golden: rm.GoldenSet) -> Dict[str, Any]:
         })
     return {
         "golden_total": len(golden),
+        "golden_measured": len(measured),
+        "channel_excluded": len(golden) - len(measured),
+        "channel_pages": channel_pages,
         "runs_total": len(runs),
         "runs_valid": len(valid),
         "runs_invalid": len(runs) - len(valid),
         "per_run": per_run,
         "stability": stability,
         "cross_phrasing": cross,
+        "tie": tie_analysis(valid, measured),
     }
+
+
+def tie_analysis(valid: List[Dict[str, Any]], golden: rm.GoldenSet) -> Dict[str, Any]:
+    """同分块（tie）的情况与**同分下的期望指标**。
+
+    为什么要这块：候选分数几乎全是并列 0.5，同分块内按名字字母序 →
+    **字母序在决定谁能进名额**。报某一次字母序结果等于报一个任意值
+    （FRAME'26 @ RecSys'26：tie-break 规则就是排序规则的一部分）。
+    这里报两样：① 同分流行度与"有没有同分块跨过名额边界"；
+    ② 换 100 个种子（同分块换 100 次次序）后的 keep_L3 与稳定性分布。
+
+    口径与单次结果对齐：分组（主体×句式）内各算一次，再按组取均值——
+    和 line_results 的聚合方式一致，两个数才能并排比。
+    """
+    stats = [rm.tie_stats(rec) for rec in valid]
+    tied_ratio = rm._mean([s["tied_ratio"] for s in stats if s.get("tied_ratio") is not None])
+    crossing = rm._mean([float(s["blocks_crossing_cutoff"]) for s in stats])
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for rec in valid:
+        groups.setdefault(f"{rec.get('subject')}/{rec.get('style')}", []).append(rec)
+    per_group: Dict[str, Any] = {}
+    keep_l3_means: List[float] = []
+    stability_means: List[float] = []
+    computable = True
+    reason = ""
+    for gname, gruns in sorted(groups.items()):
+        if len(gruns) < 2:
+            continue
+        exp = rm.tie_expected_metrics(gruns, golden, seeds=100)
+        per_group[gname] = exp
+        if not exp.get("computable"):
+            computable = False
+            reason = exp.get("reason") or ""
+            continue
+        k = exp["keep_l3"].get("mean")
+        s = exp["stability"].get("mean")
+        if k is not None:
+            keep_l3_means.append(k)
+        if s is not None:
+            stability_means.append(s)
+    return {
+        "per_run": stats,
+        "tied_ratio_mean": round(tied_ratio, 4) if tied_ratio is not None else None,
+        "max_block": max((s["max_block"] for s in stats), default=0),
+        "blocks_crossing_cutoff_mean": round(crossing, 2) if crossing is not None else None,
+        "per_group": per_group,
+        "computable": computable,
+        "reason": reason,
+        "keep_l3_mean": round(sum(keep_l3_means) / len(keep_l3_means), 4) if keep_l3_means else None,
+        "keep_l3_sd": round(_sd(keep_l3_means), 4) if keep_l3_means else None,
+        "stability_mean": round(sum(stability_means) / len(stability_means), 4) if stability_means else None,
+        "stability_sd": round(_sd(stability_means), 4) if stability_means else None,
+    }
+
+
+def _sd(values: List[float]) -> float:
+    if len(values) < 2:
+        return 0.0
+    mean = sum(values) / len(values)
+    return (sum((v - mean) ** 2 for v in values) / len(values)) ** 0.5
 
 
 def _agg(values: List[float]) -> float | None:
@@ -309,6 +434,20 @@ def line_results(analysis: Dict[str, Any]) -> Dict[str, Any]:
         "overall": overall,
         "verdict": rm.verdict("S1", overall, LINES["S1"][2]),
     }
+    # ---- 同分下的期望值（决策：R3/keep_L3/S1 统一改报 tie 期望值） ----
+    # 单次结果保留在 single_run_* 里，便于与历史轮次并排看；
+    # 判定用期望值（线不变，**指标定义变了**，报告里写清楚）。
+    tie = analysis.get("tie") or {}
+    if tie.get("computable") and tie.get("keep_l3_mean") is not None:
+        out["R3"]["single_run_overall"] = out["R3"]["overall"]
+        out["R3"]["overall"] = tie["keep_l3_mean"]
+        out["R3"]["tie_sd"] = tie.get("keep_l3_sd")
+        out["R3"]["verdict"] = rm.verdict("R3", tie["keep_l3_mean"], LINES["R3"][2])
+    if tie.get("computable") and tie.get("stability_mean") is not None:
+        out["S1"]["single_run_overall"] = out["S1"]["overall"]
+        out["S1"]["overall"] = tie["stability_mean"]
+        out["S1"]["tie_sd"] = tie.get("stability_sd")
+        out["S1"]["verdict"] = rm.verdict("S1", tie["stability_mean"], LINES["S1"][2])
     return out
 
 
@@ -319,6 +458,11 @@ def render_markdown(analysis: Dict[str, Any], lines: Dict[str, Any],
     out.append("")
     out.append(f"- 生成时间：{meta['generated_at']}")
     out.append(f"- 金标准：`{meta['golden_file']}`（{analysis['golden_total']} 条，人核对过官网）")
+    if analysis.get("channel_excluded"):
+        out.append(f"- **通道自证条目已剔除 {analysis['channel_excluded']} 条**"
+                   f"（来源正好是 C3 通道读过的目录页："
+                   f"{'、'.join(analysis.get('channel_pages') or [])[:120]}）——"
+                   f"实际分母 {analysis.get('golden_measured')} 条")
     out.append(f"- 运行：{analysis['runs_valid']} 次有效 / {analysis['runs_total']} 次"
                f"（无效 {analysis['runs_invalid']} 次：搜索后端失败或计划报错）")
     out.append(f"- 判定线来源：`docs/discovery-recall-measurement.md` §4（实跑前定稿）")
@@ -363,18 +507,19 @@ def render_markdown(analysis: Dict[str, Any], lines: Dict[str, Any],
     out.append("")
     out.append("## 3. 召回丢在哪一步（每个金标准产品逐条归因）")
     out.append("")
-    out.append("| 主体/句式 | 次数 | 金标准 | 丢在发现 | 丢在站点类型 | 丢在闸门 | 丢在截断 |")
-    out.append("|---|---|---|---|---|---|---|")
+    out.append("| 主体/句式 | 次数 | 金标准 | 丢在发现 | 丢在站点类型 | 丢在闸门 | 丢在同名合并 | 丢在截断 |")
+    out.append("|---|---|---|---|---|---|---|---|")
     for item in analysis["per_run"]:
         lost = item["metrics"]["lost"]
         buckets = {rm.LOST_NOT_FOUND: 0, rm.LOST_SITE_TYPE: 0,
-                   rm.LOST_GATE: 0, rm.LOST_CUT: 0}
+                   rm.LOST_GATE: 0, rm.LOST_CUT: 0, rm.LOST_MERGE: 0}
         for entry in lost:
             buckets[entry["reason"]] = buckets.get(entry["reason"], 0) + 1
         out.append(
             f"| {item['subject']}/{item['style']} | {item['attempt']} | "
             f"{item['metrics']['golden_total']} | {buckets[rm.LOST_NOT_FOUND]} | "
-            f"{buckets[rm.LOST_SITE_TYPE]} | {buckets[rm.LOST_GATE]} | {buckets[rm.LOST_CUT]} |")
+            f"{buckets[rm.LOST_SITE_TYPE]} | {buckets[rm.LOST_GATE]} | "
+            f"{buckets[rm.LOST_MERGE]} | {buckets[rm.LOST_CUT]} |")
     out.append("")
     out.append("### 3.1 逐条明细（第一次运行）")
     out.append("")
@@ -408,9 +553,40 @@ def render_markdown(analysis: Dict[str, Any], lines: Dict[str, Any],
                    f"{', '.join(c['only_task']) or '（无）'} | "
                    f"{', '.join(c['only_search']) or '（无）'} |")
     out.append("")
+    out.append("## 6. 同分（tie）稳健性")
+    out.append("")
+    tie = analysis.get("tie") or {}
+    if not tie:
+        out.append("（本轮没有可用的同分统计）")
+    else:
+        out.append(f"- 裁决池里同分候选占比（各轮均值）：{tie.get('tied_ratio_mean')}；"
+                   f"最大同分块 {tie.get('max_block')} 个；"
+                   f"**跨过名额边界的同分块**平均每轮 {tie.get('blocks_crossing_cutoff_mean')} 个")
+        if tie.get("computable"):
+            out.append(f"- 同分下的期望值（换 100 个种子 = 同分块换 100 次次序）："
+                       f"keep_L3 = {tie.get('keep_l3_mean')}"
+                       f"（组间标准差 {tie.get('keep_l3_sd')}）；"
+                       f"入选稳定性 = {tie.get('stability_mean')}"
+                       f"（组间标准差 {tie.get('stability_sd')}）")
+            out.append("")
+            out.append("| 主体/句式 | keep_L3 期望 | keep_L3 标准差 | 稳定性期望 | 稳定性标准差 |")
+            out.append("|---|---|---|---|---|")
+            for gname, exp in (tie.get("per_group") or {}).items():
+                if not exp.get("computable"):
+                    continue
+                out.append(f"| {gname} | {exp['keep_l3'].get('mean')} | {exp['keep_l3'].get('sd')} | "
+                           f"{exp['stability'].get('mean')} | {exp['stability'].get('sd')} |")
+            out.append("")
+            out.append("> **判定线未改，指标定义改了**：R3/S1 现在报的是"
+                       "**同分下的期望值**（单次结果保留在上表对照）。"
+                       "单次结果里的同分块成员由名字字母序决定，"
+                       "换一种次序结果就会变——报单次数等于报一个任意值。")
+        else:
+            out.append(f"- 同分期望值**不可算**：{tie.get('reason') or '缺少 selection 口径'}")
+    out.append("")
     denominators = meta.get("denominators") or []
     if denominators:
-        out.append("## 6. 口径对照（同一批实跑，换分母）")
+        out.append("## 7. 口径对照（同一批实跑，换分母）")
         out.append("")
         out.append("| 金标准口径 | 条目数 | recall_L0 | keep_L1 | keep_L3 | R1 判定（线 ≥0.70） |")
         out.append("|---|---|---|---|---|---|")
@@ -434,7 +610,8 @@ def render_markdown(analysis: Dict[str, Any], lines: Dict[str, Any],
 
 
 async def main_async(args) -> int:
-    golden = rm.GoldenSet.from_file(str(args.golden), subject=None)
+    golden = rm.GoldenSet.from_file(str(args.golden), subject=None,
+                                   split=getattr(args, "golden_split", None))
     llm = get_llm_client()
     search_tool = get_search_tool()
     runs: List[Dict[str, Any]] = []
@@ -459,6 +636,7 @@ async def main_async(args) -> int:
     lines = line_results(analysis)
     goldens = {"主口径：" + Path(args.golden).stem: golden}
     for extra in (args.golden_extra or []):
+        # 对照口径是**别的文件**，不套主口径的 split 过滤（各文件各有自己的口径）
         goldens["对照口径：" + Path(extra).stem] = rm.GoldenSet.from_file(str(extra))
     denominators = analyze_denominators(runs, goldens)
     meta = {"generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -488,6 +666,10 @@ async def main_async(args) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="发现召回实跑（只跑发现阶段）")
     parser.add_argument("--golden", default=str(GOLDEN_FILE), help="金标准文件")
+    parser.add_argument("--golden-split", default=None,
+                        choices=["heldout", "registry"],
+                        help="只取金标准里的某一半：heldout=测量主口径（闸门没见过），"
+                             "registry=名册那半（闸门见过）")
     parser.add_argument("--golden-extra", nargs="*", default=None,
                         help="对照口径的金标准文件（同一批实跑换分母，不重跑）")
     parser.add_argument("--repeats", type=int, default=3, help="每种句式重复几次")
@@ -498,12 +680,14 @@ def main() -> int:
     args = parser.parse_args()
     if args.analyze:
         data = json.loads(Path(args.analyze).read_text(encoding="utf-8"))
-        golden = rm.GoldenSet.from_file(str(args.golden), subject=None)
+        golden = rm.GoldenSet.from_file(str(args.golden), subject=None,
+                                   split=getattr(args, "golden_split", None))
         analysis = analyze(data["runs"], golden)
         lines = line_results(analysis)
         meta = data.get("meta") or {}
         goldens = {"主口径：" + Path(args.golden).stem: golden}
         for extra in (args.golden_extra or []):
+            # 对照口径是**别的文件**，不套主口径的 split 过滤（各文件各有自己的口径）
             goldens["对照口径：" + Path(extra).stem] = rm.GoldenSet.from_file(str(extra))
         meta["denominators"] = analyze_denominators(data["runs"], goldens)
         md = Path(args.analyze).with_suffix(".md")

@@ -25,7 +25,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AI Character Chat",
@@ -44,7 +45,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AI Dungeon",
@@ -99,7 +101,8 @@
           "source_kind": "Wikipedia"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AI Friend 3D - Talking Buddy",
@@ -118,7 +121,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AI Game Master - Dungeon RPG",
@@ -141,7 +145,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AI Girlfriend: Chat & Roleplay",
@@ -164,7 +169,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AI Peeps",
@@ -183,7 +189,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AI Tales",
@@ -202,7 +209,8 @@
           "source_kind": "Reddit"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "AIAllure",
@@ -221,7 +229,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AIKO: AI Girlfriend 3D Game",
@@ -240,7 +249,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AIPal",
@@ -259,7 +269,8 @@
           "source_kind": "Reddit"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AIgirlfriends AI",
@@ -282,7 +293,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "AI剧情",
@@ -297,7 +309,8 @@
       "evidence": "title「AI 角色聊天与多角色互动剧本 | AI剧情」（两个域名同一产品）",
       "source_tier": "sample_verified",
       "sources": [],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "AI女友",
@@ -320,7 +333,8 @@
           "source_kind": "安卓商店"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AI情感陪伴",
@@ -339,7 +353,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AI智能陪伴",
@@ -358,7 +373,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AI极昼",
@@ -377,7 +393,8 @@
           "source_kind": "安卓商店"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AI聊天",
@@ -396,7 +413,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AI虚拟伴侣",
@@ -415,7 +433,8 @@
           "source_kind": "安卓商店"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AI风月",
@@ -433,7 +452,8 @@
       "evidence": "title「风月AI官网 - AI角色广场与创作入口」/「AI风月 - 中文AI角色扮演网站」",
       "source_tier": "sample_verified",
       "sources": [],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AdventureAI: Text-based RPG",
@@ -452,7 +472,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Afizzy - AI Character Chat",
@@ -471,7 +492,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Agnai",
@@ -494,7 +516,8 @@
           "source_kind": "Reddit"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Ai Boyfriend Chat",
@@ -513,7 +536,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AiCasso AI Personas",
@@ -532,7 +556,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Aihime - AI Waifu Girlfriend",
@@ -551,7 +576,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Aihime - Anime Waifu Chat",
@@ -570,7 +596,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Aimora AI Girlfriend Simulator",
@@ -592,7 +619,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Aisekai",
@@ -611,7 +639,8 @@
           "source_kind": "Reddit"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AiyuChat",
@@ -630,7 +659,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Ai侣 - 全球首款3D实时互动人工智能虚拟伴侣/女友/恋人",
@@ -649,7 +679,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Ai妄想",
@@ -668,7 +699,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AlienChat",
@@ -691,7 +723,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Amby Uni",
@@ -710,7 +743,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AmorLink AI",
@@ -729,7 +763,8 @@
           "source_kind": "导航目录"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Angel AI",
@@ -752,7 +787,8 @@
           "source_kind": "导航目录"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AnuNeko",
@@ -771,7 +807,8 @@
           "source_kind": "社区帖子"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "AnyDoor",
@@ -790,7 +827,8 @@
           "source_kind": "导航目录"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "ArcaneLand",
@@ -809,7 +847,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Backstage: AI Boyfriend Chat",
@@ -832,7 +871,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Beast AI: Text Adventures",
@@ -851,7 +891,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Botify AI",
@@ -878,7 +919,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Bubio.ai",
@@ -897,7 +939,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "CHAI",
@@ -938,7 +981,8 @@
           "source_kind": "Wikipedia"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Cakumi",
@@ -957,7 +1001,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Candy.AI",
@@ -1020,7 +1065,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Caveduck",
@@ -1039,7 +1085,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Character Cafe",
@@ -1058,7 +1105,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Character.AI",
@@ -1254,7 +1302,8 @@
           "source_kind": "Wikipedia"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Charisma",
@@ -1273,7 +1322,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "ChatFAI",
@@ -1296,7 +1346,8 @@
           "source_kind": "Reddit"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "ChatGAI",
@@ -1315,7 +1366,8 @@
           "source_kind": "导航目录"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Chatmosphere",
@@ -1334,7 +1386,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "CherryPop AI",
@@ -1353,7 +1406,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Chub.ai",
@@ -1380,7 +1434,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Ciallo",
@@ -1399,7 +1454,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Crush Chat",
@@ -1418,7 +1474,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "CrushOn.ai",
@@ -1508,7 +1565,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Crushr",
@@ -1527,7 +1585,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Darlink AI",
@@ -1554,7 +1613,8 @@
           "source_kind": "Reddit"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Deuces - AI Companion Chat",
@@ -1573,7 +1633,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "DiscordPal",
@@ -1592,7 +1653,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Dolores",
@@ -1615,7 +1677,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Dopple.ai",
@@ -1634,7 +1697,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "DreamCompanion",
@@ -1665,7 +1729,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "EVA AI Soulmate",
@@ -1688,7 +1753,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Emochi",
@@ -1715,7 +1781,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Eternal AI",
@@ -1734,7 +1801,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Eve Ai",
@@ -1753,7 +1821,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "FLAI",
@@ -1772,7 +1841,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "FeelinAI",
@@ -1792,7 +1862,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "FictionLab",
@@ -1812,7 +1883,8 @@
           "source_kind": "榜单指南"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Fictional",
@@ -1831,7 +1903,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "First Person Viewpoint",
@@ -1850,7 +1923,8 @@
           "source_kind": "导航目录"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Flipped Chat: AI Characters",
@@ -1869,7 +1943,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Friendify – AI Character Chat",
@@ -1888,7 +1963,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "GF Spicy Chat - Mira Mate",
@@ -1907,7 +1983,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "GPTGirlfriend",
@@ -1934,7 +2011,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Girlfriend Simulator",
@@ -1953,7 +2031,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "GirlfriendGPT",
@@ -1976,7 +2055,8 @@
           "source_kind": "榜单指南"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "GoLove",
@@ -1996,7 +2076,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Hangjam: AI Stories",
@@ -2015,7 +2096,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Harpy chat",
@@ -2034,7 +2116,8 @@
           "source_kind": "Reddit"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Heartmeet · AI原生社交平台，找到真正同频的人",
@@ -2053,7 +2136,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "HeraHaven",
@@ -2072,7 +2156,8 @@
           "source_kind": "榜单指南"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "HiWaifu",
@@ -2091,7 +2176,8 @@
           "source_kind": "榜单指南"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "HoneyGF",
@@ -2110,7 +2196,8 @@
           "source_kind": "Reddit"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Human or Not?",
@@ -2129,7 +2216,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Husby: AI Partner & AI BF Chat",
@@ -2148,7 +2236,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "ImagiPortal: AI Companion",
@@ -2167,7 +2256,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Instinct",
@@ -2186,7 +2276,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Interflexion",
@@ -2205,7 +2296,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Intimate - AI Girlfriend",
@@ -2224,7 +2316,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Inworld AI",
@@ -2247,7 +2340,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Janitor AI",
@@ -2343,7 +2437,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Joi",
@@ -2362,7 +2457,8 @@
           "source_kind": "导航目录"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Joi AI",
@@ -2381,7 +2477,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Joyland",
@@ -2400,7 +2497,8 @@
           "source_kind": "导航目录"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Joyland AI",
@@ -2419,7 +2517,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Juicy AI",
@@ -2438,7 +2537,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Juicy Chat",
@@ -2457,7 +2557,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "KindredMind",
@@ -2476,7 +2577,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Kindroid",
@@ -2563,7 +2665,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "KoboldAI",
@@ -2586,7 +2689,8 @@
           "source_kind": "Reddit"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Koko AI",
@@ -2609,7 +2713,8 @@
           "source_kind": "媒体报道"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Kuki",
@@ -2636,7 +2741,8 @@
           "source_kind": "Wikipedia"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Kupid",
@@ -2667,7 +2773,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Kupid AI",
@@ -2698,7 +2805,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Kyndred AI",
@@ -2717,7 +2825,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Life Again",
@@ -2736,7 +2845,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "LoverBot",
@@ -2755,7 +2865,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Lovescape",
@@ -2782,7 +2893,8 @@
           "source_kind": "榜单指南"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "LumiChat",
@@ -2805,7 +2917,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "LunaTalk",
@@ -2827,7 +2940,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "MIRAI: Interactive Romance",
@@ -2846,7 +2960,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Maze AI",
@@ -2865,7 +2980,8 @@
           "source_kind": "导航目录"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Me.bot",
@@ -2884,7 +3000,8 @@
           "source_kind": "导航目录"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Melting - AI Character chat",
@@ -2903,7 +3020,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "MikuGG",
@@ -2922,7 +3040,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "MiraiMind",
@@ -2953,7 +3072,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "MoMood",
@@ -2972,7 +3092,8 @@
           "source_kind": "安卓商店"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Moemate",
@@ -2991,7 +3112,8 @@
           "source_kind": "Reddit"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Moescape AI",
@@ -3011,7 +3133,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Monologue Group",
@@ -3030,7 +3153,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Muah AI",
@@ -3053,7 +3177,8 @@
           "source_kind": "Reddit"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "MufyAI",
@@ -3072,7 +3197,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "My AI Friend",
@@ -3091,7 +3217,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Nastia AI",
@@ -3119,7 +3246,8 @@
           "source_kind": "Reddit"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Nectar",
@@ -3142,7 +3270,8 @@
           "source_kind": "导航目录"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Nectar AI",
@@ -3161,7 +3290,8 @@
           "source_kind": "榜单指南"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Nexus Bond AI",
@@ -3180,7 +3310,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Nezaton",
@@ -3199,7 +3330,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Niini",
@@ -3218,7 +3350,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Nika AI",
@@ -3237,7 +3370,8 @@
           "source_kind": "导航目录"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Nomi",
@@ -3327,7 +3461,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Nomi Sim - Life Simulation",
@@ -3349,7 +3484,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "OMate",
@@ -3363,7 +3499,8 @@
       "evidence": "title「OMate — AI 角色扮演 App｜兼容 SillyTavern 角色卡·世界书·预设」（注意：www.omate.com 是可穿戴设备公司，不同物）",
       "source_tier": "sample_verified",
       "sources": [],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Otherhalf AI",
@@ -3382,7 +3519,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "OurDream",
@@ -3420,7 +3558,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Pada",
@@ -3439,7 +3578,8 @@
           "source_kind": "安卓商店"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Palaura",
@@ -3458,7 +3598,8 @@
           "source_kind": "导航目录"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "ParadiseAI",
@@ -3477,7 +3618,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Paradot",
@@ -3508,7 +3650,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "PechTak",
@@ -3527,7 +3670,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "PersonaAI: Your AI Companion",
@@ -3546,7 +3690,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Pirr",
@@ -3565,7 +3710,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "PixelChat",
@@ -3584,7 +3730,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Plaitoon: AI Character Chat",
@@ -3603,7 +3750,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Playerly.AI",
@@ -3622,7 +3770,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Plotty AI",
@@ -3641,7 +3790,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "PolyBuzz",
@@ -3688,7 +3838,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Praktika",
@@ -3707,7 +3858,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Privee AI",
@@ -3726,7 +3878,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "PurrlyAI酒馆",
@@ -3745,7 +3898,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Pygmalion AI",
@@ -3772,7 +3926,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Questas",
@@ -3791,7 +3946,8 @@
           "source_kind": "导航目录"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "RP Nowz: Roleplay with Friends",
@@ -3810,7 +3966,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "RealmWeave",
@@ -3829,7 +3986,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Realyn - 3D AI Companions",
@@ -3848,7 +4006,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Replika",
@@ -4031,7 +4190,8 @@
           "source_kind": "Wikipedia"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Replika - AI Companion Chat",
@@ -4050,7 +4210,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Rochat",
@@ -4069,7 +4230,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "RolePlai",
@@ -4088,7 +4250,8 @@
           "source_kind": "榜单指南"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Romantic AI",
@@ -4111,7 +4274,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Rosytalk- AI Character Chat",
@@ -4134,7 +4298,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Rubii",
@@ -4154,7 +4319,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "SENSY AI",
@@ -4173,7 +4339,8 @@
           "source_kind": "导航目录"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Saylo",
@@ -4205,7 +4372,8 @@
           "source_kind": "导航目录"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Scowld - AI Voice Companion",
@@ -4224,7 +4392,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Second Me-My AI Identity",
@@ -4243,7 +4412,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Secret Desires",
@@ -4262,7 +4432,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Secret Desires AI",
@@ -4285,7 +4456,8 @@
           "source_kind": "榜单指南"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Secrets AI",
@@ -4308,7 +4480,8 @@
           "source_kind": "榜单指南"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Seduced",
@@ -4327,7 +4500,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Selira AI",
@@ -4346,7 +4520,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Settlein",
@@ -4365,7 +4540,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "SextingCompanion",
@@ -4384,7 +4560,8 @@
           "source_kind": "Reddit"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Shine AI",
@@ -4404,7 +4581,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Shine拾光",
@@ -4423,7 +4601,8 @@
           "source_kind": "安卓商店"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Shine探光",
@@ -4437,7 +4616,8 @@
       "evidence": "title「Shine探光_沉浸式剧情_海外二次元_Shine官网」",
       "source_tier": "sample_verified",
       "sources": [],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "SillyTavern",
@@ -4512,7 +4692,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "SimSimi",
@@ -4535,7 +4716,8 @@
           "source_kind": "Wikipedia"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Siya - AI Soulmate",
@@ -4558,7 +4740,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Solli",
@@ -4577,7 +4760,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "SoulAI",
@@ -4601,7 +4785,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "SoulChat AI",
@@ -4620,7 +4805,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "SoulLink",
@@ -4639,7 +4825,8 @@
           "source_kind": "榜单指南"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Soulmate AI",
@@ -4662,7 +4849,8 @@
           "source_kind": "Reddit"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "SpicyChat",
@@ -4737,7 +4925,8 @@
           "source_kind": "Reddit"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "TIYA",
@@ -4756,7 +4945,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Talefy",
@@ -4779,7 +4969,8 @@
           "source_kind": "榜单指南"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Talkie",
@@ -4891,7 +5082,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Talkie AI",
@@ -4910,7 +5102,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "TalkieMate",
@@ -4929,7 +5122,8 @@
           "source_kind": "榜单指南"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "TavernAI",
@@ -4964,7 +5158,8 @@
           "source_kind": "Reddit"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Teasa",
@@ -4986,7 +5181,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "TheOne陪伴",
@@ -5005,7 +5201,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "TheraMind",
@@ -5024,7 +5221,8 @@
           "source_kind": "导航目录"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "TiKie: AI Fantasy & Roleplay",
@@ -5043,7 +5241,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "TingleChat",
@@ -5062,7 +5261,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Tipsy Chat",
@@ -5081,7 +5281,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Tofai · 你的专属AI灵魂伴侣",
@@ -5102,7 +5303,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Tolan",
@@ -5125,7 +5327,8 @@
           "source_kind": "榜单指南"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Toos",
@@ -5144,7 +5347,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Trystique",
@@ -5163,7 +5367,8 @@
           "source_kind": "导航目录"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Uncensy",
@@ -5182,7 +5387,8 @@
           "source_kind": "Reddit"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "VSoul微灵AI",
@@ -5201,7 +5407,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Veline AI",
@@ -5224,7 +5431,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Venus AI",
@@ -5243,7 +5451,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "WeavAI",
@@ -5265,7 +5474,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Woebot",
@@ -5284,7 +5494,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Worldo: Living AI Worlds",
@@ -5303,7 +5514,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "X Eva",
@@ -5331,7 +5543,8 @@
           "source_kind": "导航目录"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Xoul AI",
@@ -5350,7 +5563,8 @@
           "source_kind": "榜单指南"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "Yapo",
@@ -5369,7 +5583,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Yollo AI",
@@ -5388,7 +5603,8 @@
           "source_kind": "目录站"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "Yunbow",
@@ -5407,7 +5623,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "aiga_",
@@ -5426,7 +5643,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "bimobimo",
@@ -5445,7 +5663,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "bubbly",
@@ -5464,7 +5683,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "channel ai",
@@ -5487,7 +5707,8 @@
           "source_kind": "Reddit"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "echomeai",
@@ -5506,7 +5727,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "loveai",
@@ -5525,7 +5747,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "meimodu",
@@ -5545,7 +5768,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "niini AI",
@@ -5564,7 +5788,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "seele",
@@ -5583,7 +5808,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "sible - AI Companions",
@@ -5602,7 +5828,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "talai",
@@ -5621,7 +5848,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "tavoai",
@@ -5640,7 +5868,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "云湖",
@@ -5659,7 +5888,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "亲语",
@@ -5678,7 +5908,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "人工智能男友聊天",
@@ -5697,7 +5928,8 @@
           "source_kind": "Google Play"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "伴Ai",
@@ -5716,7 +5948,8 @@
           "source_kind": "安卓商店"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "半月湾",
@@ -5735,7 +5968,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "叨叨",
@@ -5754,7 +5988,8 @@
           "source_kind": "媒体报道"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "哄哄",
@@ -5774,7 +6009,8 @@
           "source_kind": "媒体报道"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "多朋 - AI专注搭子",
@@ -5793,7 +6029,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "夜色AI",
@@ -5807,7 +6044,8 @@
       "evidence": "title「夜色ai - 可自定义角色的沉浸式AI陪伴对话应用」",
       "source_tier": "sample_verified",
       "sources": [],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "如梦",
@@ -5826,7 +6064,8 @@
           "source_kind": "安卓商店"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "崽在",
@@ -5845,7 +6084,8 @@
           "source_kind": "安卓商店"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "幻语ai",
@@ -5864,7 +6104,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "幽光",
@@ -5883,7 +6124,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "彩云小梦",
@@ -5910,7 +6152,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "心伴",
@@ -5929,7 +6172,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "心语陪伴",
@@ -5952,7 +6196,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "快连：对隐私有严格要求的首选",
@@ -5971,7 +6216,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "怦怦",
@@ -5990,7 +6236,8 @@
           "source_kind": "安卓商店"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "怦然心动-AI恋人虚拟恋爱聊天对话软件",
@@ -6009,7 +6256,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "悦流",
@@ -6028,7 +6276,8 @@
           "source_kind": "社区帖子"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "戏格",
@@ -6047,7 +6296,8 @@
           "source_kind": "安卓商店"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "我在AI",
@@ -6070,7 +6320,8 @@
           "source_kind": "媒体报道"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "捏Ta",
@@ -6097,7 +6348,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "捡手机文学",
@@ -6119,7 +6371,8 @@
           "source_kind": "社区帖子"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "时空爱豆",
@@ -6138,7 +6391,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "星宠ai",
@@ -6157,7 +6411,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "星朋友",
@@ -6184,7 +6439,8 @@
           "source_kind": "安卓商店"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "星梦语",
@@ -6203,7 +6459,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "星漫",
@@ -6222,7 +6479,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "星见AI",
@@ -6242,7 +6500,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "星野",
@@ -6329,7 +6588,8 @@
           "source_kind": "社区帖子"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "春宵AI",
@@ -6348,7 +6608,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "未伴",
@@ -6367,7 +6628,8 @@
           "source_kind": "媒体报道"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "梦信",
@@ -6386,7 +6648,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "梦纪元 - 开启AI新纪元",
@@ -6405,7 +6668,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "梦舟",
@@ -6424,7 +6688,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "梦艾",
@@ -6443,7 +6708,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "次元钥匙",
@@ -6462,7 +6728,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "灵悉",
@@ -6481,7 +6748,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "燃渊",
@@ -6500,7 +6768,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "爱聊",
@@ -6519,7 +6788,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "独响",
@@ -6548,7 +6818,8 @@
           "source_kind": "社区帖子"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "破次元恋人",
@@ -6567,7 +6838,8 @@
           "source_kind": "安卓商店"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "筑梦岛",
@@ -6637,7 +6909,8 @@
           "source_kind": "社区帖子"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "絮语 - AI 陪伴",
@@ -6656,7 +6929,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "给麦",
@@ -6675,7 +6949,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "络希",
@@ -6694,7 +6969,8 @@
           "source_kind": "安卓商店"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "花屿AI · 沉浸式 AI 角色互动与故事创作平台",
@@ -6713,7 +6989,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "萌伴",
@@ -6736,7 +7013,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "蔚蓝陪伴",
@@ -6751,7 +7029,8 @@
       "evidence": "title「蔚蓝陪伴平台- AI跨次元聊天| 官网」/「蔚蓝陪伴- 跨次元聊天平台|Momotalk桃信蔚蓝档案ai对话」",
       "source_tier": "sample_verified",
       "sources": [],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "虚拟世界",
@@ -6774,7 +7053,8 @@
           "source_kind": "安卓商店"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "虚拟恋人",
@@ -6793,7 +7073,8 @@
           "source_kind": "安卓商店"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "逗逗",
@@ -6823,7 +7104,8 @@
           "source_kind": "媒体报道"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "造梦次元",
@@ -6846,7 +7128,8 @@
           "source_kind": "盘点文章"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "酒馆AI",
@@ -6865,7 +7148,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "陪伴星球",
@@ -6884,7 +7168,8 @@
           "source_kind": "安卓商店"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "雾屿之外 - 缓解情绪的AI陪伴世界",
@@ -6903,7 +7188,8 @@
           "source_kind": "App Store"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "飞船",
@@ -6922,7 +7208,8 @@
           "source_kind": "媒体报道"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "registry"
     },
     {
       "name": "香草",
@@ -6941,7 +7228,8 @@
           "source_kind": "本管线实跑发现"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     },
     {
       "name": "麦芽岛",
@@ -6960,7 +7248,20 @@
           "source_kind": "社区帖子"
         }
       ],
-      "verified_at": "2026-11-01"
+      "verified_at": "2026-11-01",
+      "split": "heldout"
     }
-  ]
+  ],
+  "split_policy": {
+    "version": 1,
+    "seed": "research-agent/track-split/v1",
+    "registry_bucket_lt": 50,
+    "registry_tiers": [
+      "external",
+      "sample_verified",
+      "vendor_article"
+    ],
+    "rule": "有官网 + 独立来源证据的条目，按 sha1(种子|规范化名) 分桶，桶号 <50 进名册（生产侧），其余进留出集（测量主口径）。",
+    "why": "名册是闸门的知识，不能同时当测量的分母——否则闸门放行名册产品就会自己把 keep 率涨上去（自证）。"
+  }
 }

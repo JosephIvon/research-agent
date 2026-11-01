@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "track": "AI 情感陪伴 / AI 角色扮演",
+  "note": "生产侧的赛道口径。同赛道闸门用它判『这个候选是不是同一个赛道』：名册命中 → 放行；命中跨行业词 → 拦；命中赛道词 → 放行；都没有 → 放行但记『未判定』（宁可漏杀也不误杀，保证召回）。",
+  "positive_keywords": [
+    "AI 陪伴", "AI陪伴", "AI 角色扮演", "AI角色扮演", "角色扮演", "roleplay", "role play",
+    "情感陪伴", "虚拟恋人", "虚拟女友", "虚拟男友", "AI 女友", "AI女友", "AI 男友", "AI男友",
+    "角色卡", "互动叙事", "AI 聊天", "AI聊天", "智能陪聊", "AI character", "companion app",
+    "AI girlfriend", "AI boyfriend", "character chat", "virtual companion", "AI 智能体", "AI 智能体"
+  ],
+  "off_track_keywords": [
+    "医疗", "问诊", "挂号", "诊所", "医院", "患者", "药店", "病历",
+    "酒店", "度假", "度假村", "民宿", "客房",
+    "机票", "航班", "火车票", "船票",
+    "股票", "基金", "理财", "保险", "期货",
+    "二手车", "房产", "装修", "租房",
+    "外卖", "生鲜配送", "快递",
+    "网课", "考研", "考公", "题库",
+    "招聘", "简历", "找工作",
+    "博彩", "彩票", "赌场",
+    "影视", "剧集", "电影", "电视剧",
+    "medical", "clinic", "patient", "receptionist", "hospital", "pharmacy", "dental",
+    "hotel", "resort", "booking hotel", "flight booking", "airline ticket",
+    "stock trading", "investment fund", "insurance quote", "casino", "betting",
+    "real estate", "grocery delivery", "food delivery", "online course",
+    "job board", "resume builder", "movies", "cinema", "tv series"
+  ],
+  "off_track_note": "跨行业词来自实测到的假阳性：talkie.ai 的标题是『AI Medical Receptionist for Better Patient Access』（医疗分诊，不是角色扮演）、hoshinoresorts.com 是星野集团的度假村站、mewatch.sg 是影视直播站。判定用整词匹配，避免『预约』『人才』这类常用词误伤。"
+}
