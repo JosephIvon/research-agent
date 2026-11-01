@@ -1253,7 +1253,10 @@ def parse_must_include(clauses: Sequence[str]) -> List[str]:
         text = str(clause or "").strip()
         if not text:
             continue
-        parts = [p for p in re.split(r"[、，,/；;\s]+", text) if p]
+        # 冒号也要拆：模型实测会把 must_include 写成"星野：中文AI角色陪伴与
+        # 互动产品"（名字：描述，2026-11-01 计划冒烟实测）✗——不拆就整句
+        # 匹配不上任何品牌，点名又静默失效 ✗。
+        parts = [p for p in re.split(r"[、，,/；;：:\s]+", text) if p]
         for part in parts or [text]:
             if part not in out:
                 out.append(part)

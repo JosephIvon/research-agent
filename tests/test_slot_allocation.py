@@ -43,6 +43,16 @@ def test_must_include_clause_is_split_into_names():
     assert rp.parse_must_include(["Talkie, Character.AI"]) == ["Talkie", "Character.AI"]
 
 
+def test_must_include_name_colon_description_is_split():
+    """模型实测写法（2026-11-01 计划冒烟）："星野：中文AI角色陪伴与互动产品"
+    ——不按冒号拆就整句匹配不上，点名又静默失效 ✗。"""
+    out = rp.parse_must_include(["星野：中文AI角色陪伴与互动产品",
+                                 "筑梦岛：角色创建与剧情互动产品"])
+    assert "星野" in out and "筑梦岛" in out
+    assert rp._match_named("星野", out)
+    assert rp._match_named("筑梦岛App", out)
+
+
 def test_must_include_description_clause_stays_inert():
     """描述性条款拆出来的整句不能匹配任何品牌（否则会误伤）。"""
     out = rp.parse_must_include(["有可核验的官网、官方说明页或应用商店页面"])
