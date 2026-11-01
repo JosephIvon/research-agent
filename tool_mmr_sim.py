@@ -11,12 +11,12 @@
   3. MMR + "模型提名名额上限"：提名的产品最多占 N 个名额，
      其余名额留给别的候选（证据分相同时的确定性问题）
 
-相似度用的是**产品名词元的 Jaccard**（代理指标 ⚠️）：artifact 里的
-scored 记录没有描述字段（只有 url/name/score/gate_passed/gate_reasons）。
+相似度两种模式：**产品名词元 Jaccard**（`name`，对本赛道实测是空操作 ⚠️）与
+**名字+描述词元 Jaccard**（`description`，第十轮起 scored 记录带 description ✓）。
 真实现应该用 名称 + 描述 + 维度；这里是可复算的近似。
 
 用法：
-    python tool_mmr_sim.py output/recall_20261101_101613.json
+    python tool_mmr_sim.py output/recall_20261101_154601.json
 """
 from __future__ import annotations
 
@@ -62,11 +62,13 @@ def select_mmr(scored: Sequence[Dict[str, Any]],
                tie_break: str = "name",
                seed: int = 0,
                nominated_cap: Optional[int] = None,
-               nominated: Optional[Set[str]] = None) -> List[Dict[str, Any]]:
+               nominated: Optional[Set[str]] = None,
+               similarity: str = "name") -> List[Dict[str, Any]]:
     """MMR 选择：λ·归一化分数 − (1−λ)·与已选集合的最大相似度。
 
     - 分数先按本轮的最高分归一化到 [0,1]（不同轮的分数尺度不一样 ✗）。
-    - 相似度用名字词元 Jaccard（代理指标 ⚠️）。
+    - 相似度：`name` = 名字词元 Jaccard（空操作 ⚠️）；
+      `description` = 名字+描述词元 Jaccard（第十轮起产物带描述 ✓）。
     - `nominated_cap`：模型提名的候选最多占几个名额（None = 不限 ✓）。
     - 同分仍走可插拔的 tie_break ✓（评测侧换种子算期望值 ✓）。
     """
@@ -75,6 +77,12 @@ def select_mmr(scored: Sequence[Dict[str, Any]],
         return []
     top = max(float(i.get("score") or 0.0) for i in pool) or 1.0
     nominated = nominated or set()
+
+    def item_toks(item: Dict[str, Any]) -> Set[str]:
+        text = str(item.get("name") or "")
+        if similarity == "description":
+            text += " " + str(item.get("description") or "")
+        return _tokens(text)
 
     def order_key(item):
         return (-float(item.get("score") or 0.0),
@@ -100,10 +108,10 @@ def select_mmr(scored: Sequence[Dict[str, Any]],
             is_nom = brand in nominated
             if nominated_cap is not None and is_nom and used_nominated >= nominated_cap:
                 continue
-            toks = _tokens(str(item.get("name") or ""))
+            toks = item_toks(item)
             max_sim = 0.0
             for chosen in selected:
-                max_sim = max(max_sim, _sim_tokens(toks, _tokens(str(chosen.get("name") or ""))))
+                max_sim = max(max_sim, _sim_tokens(toks, item_toks(chosen)))
             mmr = lam * (score / top) - (1.0 - lam) * max_sim
             # 排序键：MMR 值降序 → 分数降序 → 稳定次序（tie_break ✓）
             key = (-round(mmr, 6), -score, order_key(item)[2])
@@ -171,6 +179,10 @@ def main() -> int:
         ("MMR λ=0.6 + 提名上限4", dict(lam=0.6, nominated_cap=4)),
         ("MMR λ=0.6 + 提名上限5", dict(lam=0.6, nominated_cap=5)),
         ("MMR λ=0.4 + 提名上限5", dict(lam=0.4, nominated_cap=5)),
+        # 描述相似度（第十轮起产物带 description ✓）
+        ("MMR λ=0.7 描述相似", dict(lam=0.7, similarity="description")),
+        ("MMR λ=0.5 描述相似", dict(lam=0.5, similarity="description")),
+        ("MMR λ=0.3 描述相似", dict(lam=0.3, similarity="description")),
     ]
 
     print(f"artifact: {args.artifact}")
@@ -208,7 +220,8 @@ def main() -> int:
               f"{srcs.get('模型提名',0)/n:>9.2f} {srcs.get('搜索',0)/n:>6.2f}")
     print()
     print("（每行 = 平均每轮的名额数；金标准命中 = 命中数/轮；C3通道 = 通道产品占的名额数/轮）")
-    print(f"注意：本模拟用的是**名字词元 Jaccard** 相似度（artifact 的 scored 没有描述字段 ⚠️）。")
+    print("注意：未标注「描述相似」的行用**名字词元 Jaccard**（对本赛道是空操作 ⚠️）；"
+          "「描述相似」行用 名字+描述 词元 Jaccard（第十轮起产物带 description ✓）。")
     return 0
 
 
