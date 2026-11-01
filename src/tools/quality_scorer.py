@@ -309,6 +309,8 @@ class QualityScorer:
         # 证据对照表：正文每个 [e:标记] 都能在这里查到 id → 原文（key/url/value）
         # （llm-judge-kit 校准裁决 2026-10-26：选项 A）。渲染收在 EvidenceStore，
         # ReAct 路径的降级交付走同一张表，口径不分叉。
+        section += self._freshness_section()
+
         store = EvidenceStore.from_extracted_data(
             item for comp in self.competitors for item in comp.get("extracted_data", []))
         section += "\n" + store.appendix_table() + "\n"
@@ -316,3 +318,30 @@ class QualityScorer:
         # 机器附录标记：本节由确定性代码生成，引用校验（agent.citations）会
         # 跳过标记内内容——这里的数字来自程序计算，不是模型的事实主张。
         return f"<!--machine-appendix-->\n{section}<!--/machine-appendix-->"
+
+    def _freshness_section(self) -> str:
+        """信息时效：源站声明的发布/更新日期。
+
+        报告要能回答"这些结论依据的数据是什么时候的"，唯一外部证据是页面自己
+        写的日期（`src/crawler/page_dates.py` 抽取）。**抓取时间不写进报告**：
+        它只说明何时取回，不代表数据时点；写进去会让"报告里最旧的日期"这条
+        判据把没有源站日期的报告算成最新。页面没写日期就如实写"未标注"——
+        下游据此判"无时效支撑"，而不是拿抓取日充数。
+        """
+        rows = []
+        for comp in self.competitors:
+            for page in comp.get("page_dates") or []:
+                dates = page.get("dates") or []
+                rows.append((str(page.get("url") or comp.get("url") or ""),
+                             "、".join(dates) if dates else "未标注"))
+        if not rows:
+            return ""
+        lines = [
+            "\n#### 🕒 信息时效\n",
+            "> 下列日期是源站页面自己声明的发布/更新时间；未标注表示页面没有声明。",
+            "> 抓取时间不计入本节——它只说明何时取回，不代表数据本身的时点。\n\n",
+            "| 来源页面 | 源站发布/更新日期 |\n|---|---|",
+        ]
+        for url, dates in rows:
+            lines.append(f"| {url} | {dates} |")
+        return "\n".join(lines) + "\n"

@@ -66,6 +66,7 @@ import re
 import logging
 
 from src.crawler.concurrency import get_concurrency_controller
+from src.crawler.page_dates import extract_page_dates
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1973,12 +1974,23 @@ class MVPWorkflow:
                 }
                 for page in profile.get("pages", [])
             ]
+            # 页面自己声明的发布/更新日期：报告要能回答"这些数据是什么时候的"，
+            # 唯一外部证据就是页面上的日期。抓取时间不算——它只说明何时取回，
+            # 与数据本身的时点无关（上游矩阵的 as_of 列也是这个分工）。
+            page_dates = [
+                {
+                    "url": page.get("url"),
+                    "dates": extract_page_dates(page.get("html") or page.get("content") or ""),
+                }
+                for page in profile.get("pages", [])
+            ]
 
             return {
                 "name": name,
                 "url": url,
                 "extracted_data": extracted,
                 "raw_pages": page_summaries,
+                "page_dates": page_dates,
                 "discovered_urls": profile.get("discovered_urls", []),
                 "status": "success",
                 "error_message": None,
