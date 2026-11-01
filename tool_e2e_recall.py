@@ -23,6 +23,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List
+from collections import Counter
 
 REPO = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO))
@@ -88,18 +89,25 @@ async def run_once(llm: Any, search_tool: Any, subject: str, style: str,
 
     record["candidates"] = [
         {"url": c.url, "name": c.name, "site_type": c.site_type,
-         "aggregator": bool(c.is_aggregator)}
+         "aggregator": bool(c.is_aggregator),
+         "description": str(getattr(c, "description", "") or "")}
         for c in discovery.candidates
     ]
     record["scored"] = [
         {"url": item.get("url", ""), "name": item.get("name", ""),
          "score": item.get("score"), "gate_passed": bool(item.get("gate_passed")),
-         "gate_reasons": list(item.get("gate_reasons") or [])}
+         "gate_reasons": list(item.get("gate_reasons") or []),
+         "description": str(item.get("description") or ""),
+         "nominated": bool(item.get("nominated")),
+         "audit_flag": item.get("audit_flag"),
+         "track_verdict": item.get("track_verdict")}
         for item in discovery.scored
     ]
     record["selected"] = [
         {"url": item.get("url", ""), "name": item.get("name", ""),
-         "score": item.get("score"), "reasons": list(item.get("reasons") or [])}
+         "score": item.get("score"), "reasons": list(item.get("reasons") or []),
+         "description": str(item.get("description") or ""),
+         "source": item.get("source")}
         for item in discovery.selected
     ]
     record["notes"] = list(discovery.notes)
@@ -108,6 +116,10 @@ async def run_once(llm: Any, search_tool: Any, subject: str, style: str,
     # 测量时要把"来源正好是这些页"的金标准条目从分母里剔掉（读答案≠发现 ✓）。
     record["channel_pages"] = list(getattr(discovery, "channel_pages", []) or [])
     record["channel_candidates"] = list(getattr(discovery, "channel_candidates", []) or [])
+    # 通道自己的 site: 查询失败（**不**作废整轮 ✓，但要看得见）
+    record["channel_failures"] = list(getattr(discovery, "channel_failures", []) or [])
+    # 名额账：每个名额给了谁、依据是什么、谁被挤掉了（纯观测 ✓）
+    record["slot_ledger"] = dict(getattr(discovery, "slot_ledger", {}) or {})
     # **当时按什么口径选的**：max_count / must_include / 分数地板。
     # 这三样决定"名额怎么分"，不存下来就无法在事后复算
     # "同分块换一种次序会怎样"（tie 期望值，见 src/tools/recall_metrics.py）。
@@ -236,6 +248,16 @@ def analyze_denominators(runs: List[Dict[str, Any]],
     # 分层视图也要剔通道自证条目（否则"全集"视图含自证、留出集视图不含 ✗）
     if channel_pages:
         all_goldens = {k: v.exclude_by_source(channel_pages) for k, v in all_goldens.items()}
+    # **含通道自证条目的对照口径**：通道找到的产品恰恰来自那些页，
+    # 剔除后它的功劳在量测上就看不见了（第九轮：名额里的金标准命中
+    # 0.76/轮 → 0.66/轮，差额几乎全是筑梦岛 8/12 轮 ✗）。
+    # 所以额外并列报一个**含自证条目**的口径（明确标注，
+    # 它不是判定口径，只用来回答"通道到底带来了多少" ✓）。
+    if channel_pages:
+        for label, g in list(goldens.items()):
+            key = f"{label}·口径：含通道自证条目"
+            if hostset(g) not in {hostset(x) for x in all_goldens.values()}:
+                all_goldens[key] = g
     out: List[Dict[str, Any]] = []
     for label, golden in all_goldens.items():
         per_run = [rm.funnel_metrics(rec, golden) for rec in valid]
@@ -278,6 +300,7 @@ def analyze(runs: List[Dict[str, Any]], golden: rm.GoldenSet) -> Dict[str, Any]:
             "subject": rec["subject"], "style": rec["style"], "attempt": rec.get("attempt"),
             "elapsed_s": rec.get("elapsed_s"),
             "metrics": m,
+            "slot_ledger": rec.get("slot_ledger") or {},
         })
 
     # 同一主体同一句式的重复稳定性
@@ -606,6 +629,52 @@ def render_markdown(analysis: Dict[str, Any], lines: Dict[str, Any],
         out.append("> 两个口径的分母不同，**数值不可直接相减**；"
                    "判定线（R1 ≥ 0.70）实跑前定稿，未改动。")
         out.append("")
+    out.append(_render_slot_ledger(analysis))
+    return "\n".join(out)
+
+
+def _render_slot_ledger(analysis: Dict[str, Any]) -> str:
+    """名额账：名额给了谁、依据是什么、谁被挤掉了（纯观测 ✗ 不改行为）。"""
+    per_run = analysis.get("per_run") or []
+    ledgers = [(item["subject"], item["style"], item["attempt"],
+                item.get("slot_ledger") or {})
+               for item in per_run]
+    ledgers = [x for x in ledgers if x[3].get("slots")]
+    if not ledgers:
+        return ""
+    out: List[str] = []
+    out.append("## 8. 名额账（8 个名额给了谁）")
+    out.append("")
+    counter: Counter = Counter()
+    named_hit = 0
+    audited = 0
+    for _, _, _, ledger in ledgers:
+        counter.update(ledger.get("source_counter") or {})
+        named_hit += int(ledger.get("must_include_hit") or 0)
+        audited += sum(1 for s in (ledger.get("slots") or []) if s.get("audit_flag"))
+    total = sum(counter.values()) or 1
+    out.append(f"- 轮次 {len(ledgers)}，名额合计 {total} 个")
+    out.append(f"- 名额来源：计划点名 {counter.get('计划点名', 0)}、"
+               f"模型提名 {counter.get('模型提名', 0)}"
+               f"（{counter.get('模型提名', 0) / total:.1%}）、"
+               f"发现（搜索/通道） {counter.get('发现', 0)}"
+               f"（{counter.get('发现', 0) / total:.1%}）")
+    out.append(f"- 计划点名兑现：{named_hit} 个名额；"
+               f"带审计标记（提名但无赛道证据，已降权）的名额：{audited} 个")
+    out.append("")
+    out.append("| 主体/句式 | 次数 | 名额 | 产品 | 分数 | 来源 | 依据 |")
+    out.append("|---|---|---|---|---|---|---|")
+    for subject, style, attempt, ledger in ledgers:
+        for slot in (ledger.get("slots") or []):
+            out.append(
+                f"| {subject}/{style} | {attempt} | {slot.get('slot')} | "
+                f"{slot.get('name')} | {slot.get('score')} | {slot.get('source')} | "
+                f"{'；'.join(slot.get('reasons') or [])} |")
+    out.append("")
+    out.append("> 名额来源是**观测值**，不是判定线："
+               "「模型提名占比高」说明模型的点名决定了名单，"
+               "不代表名单不好（头部竞品本来就该在）。")
+    out.append("")
     return "\n".join(out)
 
 

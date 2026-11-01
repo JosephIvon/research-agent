@@ -226,16 +226,24 @@ def evaluate_discovery(
         reasons.append("命中排除项: " + "、".join(excluded))
 
     if rule.require_same_track:
-        from src.workflow.track_scope import check_same_track
+        from src.workflow.track_scope import same_track_verdict
 
-        ok, why = check_same_track(
+        verdict, why = same_track_verdict(
             name=name,
             url=url,
             description=description,
             extra_keywords=list(track_keywords or []),
         )
-        if not ok:
+        # 把判定档位记在候选上（提名审计要用 "unknown" 这一档 ✗）
+        candidate["track_verdict"] = verdict
+        if verdict == "reject":
             reasons.append(why)
+        elif verdict == "unknown" and candidate.get("nominated"):
+            # **提名审计**：模型点了名，但这个产品既不在名册、
+            # 也没有任何赛道词证据 ⇒ 证据不足。
+            # 实测（2026-11-01）：赛道全集 289 条里只有 8% 的名字含赛道词，
+            # 所以这里**只能降权、不能挡** ✗✗（挡了会错杀 69% 的真竞品 ✓）。
+            candidate["audit_flag"] = why + "（提名但无赛道证据）"
 
     return (not reasons), reasons
 

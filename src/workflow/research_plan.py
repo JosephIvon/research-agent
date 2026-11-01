@@ -127,6 +127,10 @@ DEFAULT_ADMISSION_RULE = "必须有官网 + 同赛道竞品 + 至少 2 个维度
 # 入选分数线：0.5 = "像产品自己的官网"。发现阶段没有维度数据可看，
 # 门槛只能定在**发现阶段拿得到**的那一层（站点类型 + 词面相关）。
 MIN_ADMISSION_SCORE = 0.5
+# 提名审计的降权幅度：模型点了名、但没有任何赛道证据的产品，
+# 分数扣这么多（提名加成是 0.25，这里扣 0.1 ⇒ 仍高于普通候选 0.5 ✓，
+# 只是不再稳坐前排 ✗）。**不挡人**——实测 92% 的真竞品名字里没有赛道词 ✗。
+NOMINATION_AUDIT_PENALTY = 0.1
 COMPETITOR_LAYERS = ("direct", "alternative", "adjacent")
 DEFAULT_LAYERS = ("direct",)
 
@@ -1147,6 +1151,7 @@ def score_candidate(candidate: Dict[str, Any], plan: ResearchPlan) -> Dict[str, 
 
     reasons: List[str] = []
     score = 0.0
+    nominated_hit = False
 
     site_type = candidate.get("site_type")
     if not site_type:
@@ -1185,6 +1190,7 @@ def score_candidate(candidate: Dict[str, Any], plan: ResearchPlan) -> Dict[str, 
         if brand and brand in nominated:
             score += 0.25
             reasons.append("是模型提名的同赛道竞品")
+            nominated_hit = True
 
     excluded = [t for t in (plan.criteria.get("must_exclude") or []) if t and t in (name + description)]
     if excluded:
@@ -1198,7 +1204,85 @@ def score_candidate(candidate: Dict[str, Any], plan: ResearchPlan) -> Dict[str, 
         "dimensions": dimensions,
         "site_type": site_type,
         "reasons": reasons,
+        "nominated": nominated_hit,
+        # 描述留着：MMR 的相似度要用它（名字相似度实测是空操作 ⚠️），
+        # 名额账也要能看出"这个产品是干什么的"
+        "description": description,
     }
+
+
+def _match_named(name: str, wanted: Sequence[str]) -> bool:
+    """这个候选是不是"被点名的那一个"？
+
+    坑（实测 2026-11-01）：计划里的 must_include 有两种写法——
+    ① 产品名清单："星野、筑梦岛"；② 描述性条款："有可核验的官网…"。
+    原来的实现做的是**子串匹配**（token in name），
+    结果两种写法**都永远匹配不上**：①里的 token 是"星野、筑梦岛"整串 ✗，
+    ②里的 token 是整句描述 ✗ → 12 轮实跑的 must_include 命中数是 **0** ✗✗
+    （用户点名的竞品被静默丢掉 ✓）。
+
+    现在：先把条款按 、，,/ 和空白拆成**单个名字** ✓，
+    再用**规范化品牌**比较（相等，或 ≥3 字符的前缀包含）✓。
+    描述性条款拆出来的整句不会等于任何品牌名 ✓ → 不会误伤 ✓。
+    """
+    brand = normalized_brand(name)
+    if not brand:
+        return False
+    for token in wanted:
+        token = str(token or "").strip()
+        if not token:
+            continue
+        want = normalized_brand(token)
+        if not want:
+            continue
+        if brand == want:
+            return True
+        if len(want) >= 3 and brand.startswith(want):
+            return True
+    return False
+
+
+def parse_must_include(clauses: Sequence[str]) -> List[str]:
+    """把 must_include 条款拆成**产品名候选**（去重、保序）。
+
+    拆不开的（整句描述）也留着——它们匹配不上任何品牌名 ✓，
+    但出现在名额账里能让人看见"计划点名的东西到底写成了什么" ✓。
+    """
+    out: List[str] = []
+    for clause in clauses or []:
+        text = str(clause or "").strip()
+        if not text:
+            continue
+        parts = [p for p in re.split(r"[、，,/；;\s]+", text) if p]
+        for part in parts or [text]:
+            if part not in out:
+                out.append(part)
+    return out
+
+
+def _name_tokens(name: str) -> set:
+    """产品名的词元（中文按字、英文按词）——MMR 相似度用。"""
+    text = (name or "").lower()
+    return set(re.findall(r"[一-鿿]", text)) | set(re.findall(r"[a-z0-9]{2,}", text))
+
+
+def _similarity(a: Dict[str, Any], b: Dict[str, Any], mode: str = "name") -> float:
+    """两个候选的相似度（Jaccard）。
+
+    - "name"：只用产品名 ✓（实测：对本赛道**是空操作** ⚠️——
+      头部产品之间没有任何词元重叠，而长尾彼此同质 ✗）。
+    - "description"：名字 + 描述 ✓（下一轮有数据才能评估 ⚠️）。
+    """
+    if mode == "description":
+        text_a = f"{a.get('name') or ''} {a.get('description') or ''}"
+        text_b = f"{b.get('name') or ''} {b.get('description') or ''}"
+    else:
+        text_a = str(a.get("name") or "")
+        text_b = str(b.get("name") or "")
+    ta, tb = _name_tokens(text_a), _name_tokens(text_b)
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
 
 
 def select_competitors(
@@ -1208,6 +1292,7 @@ def select_competitors(
     min_score: float = MIN_ADMISSION_SCORE,
     tie_break: str = "name",
     seed: int = 0,
+    diversity: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """从已打分候选里选出最终竞品集合（名额、同主机去重、同分次序都在这里）。
 
@@ -1217,9 +1302,19 @@ def select_competitors(
     - "random"：按种子派生的伪随机键 —— 评测侧换种子就换一次同分块次序，
       用来算"同分下的期望指标"（见 docs/retrieval-literature-review.md §3.1）。
 
+    `diversity` 开启 MMR（默认 None = 现行行为 ✓）：
+    - `{"lam": 0.7, "similarity": "name"|"description"}`
+    - λ·(分数/最高分) − (1−λ)·与已选集合的最大相似度 ✓
+    - **默认关闭 ✓**：实测在本赛道用名字相似度时 λ 从 0.8 到 0.2 结果完全相同
+      （空操作 ⚠️），先当开关留着，等描述相似度有数据再评估。
+
     同一站点只算一家：character.ai/ 与 character.ai/about 是同一个竞品，
     算两家会白占一个名额（实测：8 个入选里有 2 个是同一站点的两个页面）。
     """
+    if diversity:
+        return _select_mmr(scored, max_count, min_score, tie_break, seed,
+                           diversity, must_include)
+
     ordered = sorted(
         scored,
         key=lambda item: (
@@ -1238,7 +1333,7 @@ def select_competitors(
         host = _host_key(item["url"])
         if host and host in selected_hosts:
             continue
-        if any(token and token in item["name"] for token in must_include):
+        if _match_named(str(item.get("name") or ""), must_include):
             selected.append(item)
             if host:
                 selected_hosts.add(host)
@@ -1260,6 +1355,69 @@ def select_competitors(
     return selected
 
 
+def _select_mmr(scored: Sequence[Dict[str, Any]],
+                max_count: int,
+                min_score: float,
+                tie_break: str,
+                seed: int,
+                diversity: Dict[str, Any],
+                must_include: Sequence[str] = ()) -> List[Dict[str, Any]]:
+    """MMR 选择（开关式，默认关）。λ=1.0 时必须与现行规则**逐条等价** ✓。"""
+    lam = float(diversity.get("lam", 0.7))
+    sim_mode = str(diversity.get("similarity") or "name")
+    pool = [i for i in scored if i.get("gate_passed", True)]
+    if not pool:
+        return []
+    top = max(float(i.get("score") or 0.0) for i in pool) or 1.0
+
+    def order_key(item):
+        return (-float(item.get("score") or 0.0),
+                _path_depth(str(item.get("url") or "")),
+                _tie_key(item, tie_break, seed))
+
+    selected: List[Dict[str, Any]] = []
+    selected_hosts = set()
+    remaining = sorted(pool, key=order_key)
+    # 被点名的先占名额（与现行规则一致 ✓）
+    for item in list(remaining):
+        if len(selected) >= max_count:
+            break
+        if not _match_named(str(item.get("name") or ""), must_include):
+            continue
+        host = _host_key(item["url"])
+        if host and host in selected_hosts:
+            continue
+        selected.append(item)
+        remaining = [i for i in remaining if i is not item]
+        if host:
+            selected_hosts.add(host)
+    while remaining and len(selected) < max_count:
+        best = None
+        best_key = None
+        for item in remaining:
+            host = _host_key(item["url"])
+            if host and host in selected_hosts:
+                continue
+            score = float(item.get("score") or 0.0)
+            if score < min_score:
+                continue
+            max_sim = 0.0
+            for chosen in selected:
+                max_sim = max(max_sim, _similarity(item, chosen, sim_mode))
+            mmr = lam * (score / top) - (1.0 - lam) * max_sim
+            key = (-round(mmr, 6), -score, order_key(item)[2])
+            if best_key is None or key < best_key:
+                best, best_key = item, key
+        if best is None:
+            break
+        selected.append(best)
+        remaining = [i for i in remaining if i is not best]
+        host = _host_key(str(best.get("url") or ""))
+        if host:
+            selected_hosts.add(host)
+    return selected
+
+
 def admit_competitors(
     candidates: Sequence[Dict[str, Any]],
     plan: ResearchPlan,
@@ -1274,7 +1432,8 @@ def admit_competitors(
     """
     scored = [score_candidate(c, plan) for c in candidates]
     scored.sort(key=lambda item: (-item["score"], _path_depth(item["url"]), item["name"]))
-    must_include = [t for t in (plan.criteria.get("must_include") or []) if t]
+    # must_include：把条款拆成**产品名候选**再比（原来的子串匹配 12 轮命中 0 ✗）
+    must_include = parse_must_include(plan.criteria.get("must_include") or [])
     # 准入规则按**可执行形态**判（不是另起一套打分口径）：
     # 计划里写的那句口径，代码判的就是它；判不了的条款记在规则里。
     rule = parse_admission_rule(plan.criteria.get("admission_rule"), plan.criteria)
@@ -1285,6 +1444,13 @@ def admit_competitors(
         item["gate_reasons"] = reasons
         if not passed:
             gate_failed.append(item)
+            continue
+        # 提名审计的**降权**：模型点了名但没有任何赛道证据 ⇒ 分数打折。
+        # 为什么只降权不挡：赛道全集 289 条里只有 8% 的名字含赛道词 ✗，
+        # 挡了会错杀 69% 的真竞品（实测 2026-11-01）✓。
+        if item.get("audit_flag"):
+            item["score"] = round(
+                max(0.0, float(item["score"]) - NOMINATION_AUDIT_PENALTY), 4)
     selected = select_competitors(
         scored,
         max_count=plan.max_count,
@@ -1292,6 +1458,11 @@ def admit_competitors(
         min_score=MIN_ADMISSION_SCORE,
         tie_break="name",
     )
+    ledger = build_slot_ledger(scored, selected, plan)
+    # 把名额来源标到每个入选项上（前端/报告都能直接看到"这个名额是凭什么拿到的"）
+    source_by_url = {str(s.get("url") or ""): s.get("source") for s in ledger["slots"]}
+    for item in selected:
+        item["source"] = source_by_url.get(str(item.get("url") or ""), "发现")
     return {
         "selected": selected[:plan.max_count],
         "scored": scored,
@@ -1302,6 +1473,90 @@ def admit_competitors(
         "max_count": plan.max_count,
         "met_minimum": len(selected) >= plan.min_count,
         "pool_size": len(candidates),
+        "must_include_parsed": must_include,
+        "slot_ledger": ledger,
+    }
+
+
+def build_slot_ledger(
+    scored: Sequence[Dict[str, Any]],
+    selected: Sequence[Dict[str, Any]],
+    plan: "ResearchPlan",
+) -> Dict[str, Any]:
+    """名额账：8 个名额给了谁、依据是什么、谁被挤掉了。
+
+    为什么要有它（实测 2026-11-01）：第九轮 80 个名额里，
+    **90% 给了模型提名的产品、10% 给了 C3 通道找的、0% 给了纯搜索找到的**——
+    管线自己发现的东西几乎不进入交付物 ✗。
+    这种事实靠"看结果"看不出来，只能**逐名额记账** ✓。
+
+    名额的来源分三类 ✓：
+    - "计划点名"：must_include 点名且匹配上的 ✓（占用名额 ✓）
+    - "模型提名"：计划提名表里的产品 ✓
+    - "发现"：其余（搜索或通道找到的 ✓）
+    """
+    nominated = {
+        normalized_brand(n) for n in (plan.competitor_candidates or []) if str(n).strip()
+    }
+    must_include = parse_must_include(plan.criteria.get("must_include") or [])
+    selected_urls = {str(s.get("url") or "") for s in selected}
+    selected_hosts = {_host_key(str(s.get("url") or "")) for s in selected}
+
+    slots: List[Dict[str, Any]] = []
+    for i, item in enumerate(selected, 1):
+        name = str(item.get("name") or "")
+        brand = normalized_brand(name)
+        named = _match_named(name, must_include)
+        source = ("计划点名" if named
+                  else "模型提名" if brand in nominated
+                  else "发现")
+        slots.append({
+            "slot": i,
+            "url": item.get("url"),
+            "name": name,
+            "host": _host_key(str(item.get("url") or "")),
+            "score": item.get("score"),
+            "reasons": list(item.get("reasons") or []),
+            "source": source,
+            "audit_flag": item.get("audit_flag"),
+        })
+
+    displaced: List[Dict[str, Any]] = []
+    for item in scored:
+        url = str(item.get("url") or "")
+        if url in selected_urls or not item.get("gate_passed", True):
+            continue
+        score = float(item.get("score") or 0.0)
+        host = _host_key(url)
+        if host and host in selected_hosts:
+            why = "同一站点重复"
+        elif score < MIN_ADMISSION_SCORE:
+            why = f"分数低于地板 {MIN_ADMISSION_SCORE}"
+        else:
+            why = "名额已满"
+        name = str(item.get("name") or "")
+        brand = normalized_brand(name)
+        displaced.append({
+            "url": url,
+            "name": name,
+            "score": score,
+            "why": why,
+            "source": ("计划点名" if _match_named(name, must_include)
+                       else "模型提名" if brand in nominated
+                       else "发现"),
+        })
+
+    return {
+        "max_count": plan.max_count,
+        "min_score": MIN_ADMISSION_SCORE,
+        "must_include": must_include,
+        "must_include_hit": sum(1 for s in slots if s["source"] == "计划点名"),
+        "slots": slots,
+        "displaced": displaced,
+        "source_counter": {
+            key: sum(1 for s in slots if s["source"] == key)
+            for key in ("计划点名", "模型提名", "发现")
+        },
     }
 
 

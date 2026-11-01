@@ -38,6 +38,9 @@ class TrackScope:
     track: str = ""
     positive_keywords: Tuple[str, ...] = ()
     off_track_keywords: Tuple[str, ...] = ()
+    # 通用助手类品牌（chatgpt / 豆包 / 元宝…）：**按品牌名全等**判，
+    # 不按子串——否则"ChatGPT 角色扮演"这类克隆产品会被误伤 ✗。
+    off_track_brands: Tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TrackScope":
@@ -45,6 +48,9 @@ class TrackScope:
             track=str(data.get("track") or ""),
             positive_keywords=tuple(str(k) for k in (data.get("positive_keywords") or []) if k),
             off_track_keywords=tuple(str(k) for k in (data.get("off_track_keywords") or []) if k),
+            off_track_brands=tuple(
+                sorted({normalized_brand(str(k)) for k in (data.get("off_track_brands") or []) if k})
+            ),
         )
 
 
@@ -121,6 +127,34 @@ def check_same_track(
     理由要能落到人话上——闸门的判定理由会写进报告，
     "为什么星野集团度假村被拦"必须说得清。
     """
+    verdict, reason = same_track_verdict(
+        name=name, url=url, description=description,
+        extra_keywords=extra_keywords, scope=scope, registry=registry,
+    )
+    return verdict != "reject", reason
+
+
+def same_track_verdict(
+    name: str,
+    url: str = "",
+    description: str = "",
+    extra_keywords: Sequence[str] = (),
+    scope: Optional[TrackScope] = None,
+    registry: Optional[TrackRegistry] = None,
+) -> Tuple[str, str]:
+    """同赛道判定，返回 (判定, 理由)。
+
+    判定有三档（不只是"过/不过" ✗）：
+    - "pass"：有正面证据（名册站点 / 名册品牌 / 赛道词）✓
+    - "reject"：有反面证据（跨行业词 / 通用助手品牌）✓
+    - "unknown"：**没有证据**——放行但记账 ✓
+
+    为什么要多一档 "unknown" ✓：**提名审计**要用它 ✗
+    （"模型点名了，但既不在名册、也没有任何赛道词" ⇒ 证据不足 ⇒ 降权 ✓）。
+    实测（2026-11-01）：赛道全集 289 条里，只有 8% 的**名字**含赛道词、
+    31% 的名字+证据含赛道词 → 所以 "unknown" 只能用来**降权**，
+    绝不能用来**挡人** ✗✗（否则会错杀 69% 的真竞品 ✓）。
+    """
     scope = scope if scope is not None else load_scope()
     registry = registry if registry is not None else load_registry()
     text = " ".join([name or "", url or "", description or ""])
@@ -131,7 +165,7 @@ def check_same_track(
 
     # 1) 名册里的**站点** → 放行（这个站点就是那个产品，不用再判）
     if host and (bare in registry.hosts or host in registry.hosts):
-        return True, f"同赛道（名册里的站点：{host}）"
+        return "pass", f"同赛道（名册里的站点：{host}）"
 
     # 2) 跨行业词命中 → 拦
     #    注意要在"名册品牌"之前判：talkie.ai 的标题是
@@ -140,18 +174,24 @@ def check_same_track(
     #    但 talkie.ai 这个**站点**是医疗分诊，不是同一个赛道。
     off = _hit(text, scope.off_track_keywords)
     if off:
-        return False, f"跨行业（命中跨行业词：{off}）"
+        return "reject", f"跨行业（命中跨行业词：{off}）"
 
     # 3) 名册里的**品牌** → 放行
     brand = normalized_brand(name or "")
     if brand and brand in registry.brands:
-        return True, f"同赛道（名册里的品牌：{name}）"
+        return "pass", f"同赛道（名册里的品牌：{name}）"
+
+    # 3b) 通用助手品牌（chatgpt / 豆包 / 元宝…）→ 拦
+    #     按**品牌全等**判（不是子串 ✗）："ChatGPT 角色扮演"是本赛道的克隆
+    #     产品，不能因为名字里带 chatgpt 就被误伤 ✓。
+    if brand and brand in scope.off_track_brands:
+        return "reject", f"非本赛道（通用助手品牌：{name}）"
 
     # 4) 赛道词命中 → 放行
     positive = list(scope.positive_keywords) + [k for k in extra_keywords if k]
     hit = _hit(text, positive)
     if hit:
-        return True, f"同赛道（命中赛道词：{hit}）"
+        return "pass", f"同赛道（命中赛道词：{hit}）"
 
     # 5) 没证据 → 放行但记账（不误杀）
-    return True, "未判定（无名册/赛道词/跨行业证据）"
+    return "unknown", "未判定（无名册/赛道词/跨行业证据）"

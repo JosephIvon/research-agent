@@ -253,6 +253,10 @@ class DiscoveryResult:
     channel_pages: List[str] = field(default_factory=list)
     # 通道贡献的候选（按 URL 记）
     channel_candidates: List[str] = field(default_factory=list)
+    # 通道自己的 site: 查询失败记录（**不**算整轮无效的依据 ✗）
+    channel_failures: List[Dict[str, Any]] = field(default_factory=list)
+    # 名额账（谁占了名额、依据、谁被挤掉）
+    slot_ledger: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -266,6 +270,8 @@ class DiscoveryResult:
             "search_failures": self.search_failures,
             "channel_pages": list(self.channel_pages),
             "channel_candidates": list(self.channel_candidates),
+            "channel_failures": list(self.channel_failures),
+            "slot_ledger": dict(self.slot_ledger),
         }
 
 
@@ -290,17 +296,33 @@ class SearchStageRunner:
         self._entity_official_host: str = ""
         # 搜索后端的失败记录（引擎集体超时/限流）——见 DiscoveryResult.search_failed
         self.search_failures: List[Dict[str, Any]] = []
+        # **辅助通道**的失败单独记：通道是补充渠道，它的 site: 查询失败
+        # 不代表"这轮候选池不完整"（实测 2026-11-01：www.ai-bot.cn 的
+        # site: 查询稳定失败，而主搜索全部成功 ⇒ 不该作废整轮 ✗）。
+        self.channel_failures: List[Dict[str, Any]] = []
 
     # -- 单次查询 --------------------------------------------------------
-    def _search(self, query: str, stage: str) -> List[Dict[str, Any]]:
+    def _search(self, query: str, stage: str,
+                count_failure: bool = True) -> List[Dict[str, Any]]:
         try:
             results = self.search_tool.search(query, num_results=self.num_results)
         except SearchBackendError as exc:
             # 后端整轮没给出结果（引擎超时/限流）：这是**本轮数据无效**，
             # 不是"这个查询没找到"。记下来，别让它伪装成 0 家竞品。
-            self.search_failures.append({
-                "stage": stage, "query": query, "error": str(exc),
-            })
+            #
+            # 但**辅助通道**的搜索失败不该作废整轮 ✗✗：
+            # 实测（2026-11-01 第十轮）C3 通道的 `site:` 查询
+            # 在 www.ai-bot.cn 上稳定报"搜索引擎无响应"，
+            # 而这一轮的主搜索全部成功 ⇒ 整轮被误判为无效 ✗✗。
+            # 所以通道的失败单独记（channel_failures ✓），不影响主链路 ✓。
+            if count_failure:
+                self.search_failures.append({
+                    "stage": stage, "query": query, "error": str(exc),
+                })
+            else:
+                self.channel_failures.append({
+                    "stage": stage, "query": query, "error": str(exc),
+                })
             return []
         except Exception:  # noqa: BLE001 —— 其它搜索失败不该拖垮链路
             return []
@@ -391,13 +413,18 @@ class SearchStageRunner:
                 from src.tools.list_pages import collect_channel_items
 
                 channel_items, channel_notes, channel_pages = collect_channel_items(
-                    lambda query: self._search(query, "competitor_discovery"),
+                    lambda query: self._search(query, "competitor_discovery",
+                                               count_failure=False),
                     plan.track_keywords or [],
                 )
                 results.extend(channel_items)
                 result.channel_pages = list(channel_pages)
                 result.channel_candidates = [item["url"] for item in channel_items]
                 result.notes.extend(channel_notes)
+                if self.channel_failures:
+                    result.notes.append(
+                        f"C3 通道有 {len(self.channel_failures)} 次 site: 查询失败"
+                        f"（不作为本轮无效的依据 ✗——主搜索成功即数据有效）")
             except Exception as exc:  # noqa: BLE001 —— 通道失败不能拖垮整轮
                 result.notes.append(f"C3 通道异常（已跳过）：{type(exc).__name__}")
         for item in results:
@@ -544,6 +571,8 @@ class SearchStageRunner:
         admission = admit_competitors([c.to_dict() for c in pool], plan)
         result.selected = admission["selected"]
         result.scored = admission["scored"]
+        # 名额账：每个名额给了谁、依据是什么、谁被挤掉了（纯观测 ✗）
+        result.slot_ledger = admission.get("slot_ledger") or {}
         if not admission["met_minimum"]:
             result.notes.append(
                 f"入选 {len(admission['selected'])} 家，低于计划下限 {admission['min_count']} 家"
@@ -557,6 +586,9 @@ class SearchStageRunner:
                 f"⚠ 本轮有 {len(self.search_failures)} 次搜索后端失败（阶段：{'、'.join(stages)}）"
                 f"——候选池不完整，本轮数据不能当作『没找到竞品』"
             )
+        # 通道的失败**不**进 search_failed：通道是辅助渠道，
+        # 它的 site: 查询挂掉不影响主链路数据的完整性（2026-11-01 决策 ✓）。
+        result.channel_failures = list(self.channel_failures)
         return result
 
     # -- 阶段 3/4：逐家验证与反证 ----------------------------------------

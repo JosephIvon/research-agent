@@ -167,6 +167,42 @@ def test_empty_candidate_pool_says_so_instead_of_blaming_media_pages(monkeypatch
     assert not any("只有媒体/社区页" in note for note in result.notes)
 
 
+def test_a_channel_site_query_failure_does_not_invalidate_the_round(monkeypatch):
+    """**回归（2026-11-01 第十轮实测）**：C3 通道的 ``site:`` 查询在
+    www.ai-bot.cn 上稳定报"搜索引擎无响应"，而主搜索全部成功——
+    旧逻辑把通道失败记进 search_failures ⇒ **整轮被误判无效** ✗✗，
+    12 轮全废。通道是辅助渠道：它的失败要单独记（channel_failures ✓），
+    主搜索成功 ⇒ 数据有效 ✓。"""
+    from src.workflow import search_stages as ss
+
+    class _MainOkChannelFails:
+        def search(self, query, num_results=None):
+            if query.startswith("site:"):
+                raise SearchBackendError("搜索引擎无响应（['sogou', 'unexpected crash']）")
+            return [{"url": "https://xingye.example/", "title": "星野",
+                     "content": "AI角色扮演应用"}]
+
+    # 通道拿到 site: 结果后要去抓分类页——测试里不许碰网络
+    import src.tools.list_pages as lp
+
+    def _no_fetch(url, timeout=20):
+        raise RuntimeError("offline test")
+
+    monkeypatch.setattr(lp, "fetch_html", _no_fetch)
+    lp._CATEGORY_CACHE.clear()
+    lp._ENTRIES_CACHE.clear()
+
+    runner = ss.SearchStageRunner(_MainOkChannelFails())
+    plan = _stub_plan()
+    plan.track_keywords = ["AI角色扮演"]
+    runner.run_entity_anchor(plan)
+    result = runner.run_competitor_discovery(plan)
+    assert result.search_failed is False, "通道失败不该作废整轮"
+    assert runner.channel_failures, "通道的失败要单独记账"
+    assert result.to_dict()["channel_failures"]
+    assert result.search_failures == []
+
+
 def _stub_plan():
     from src.workflow.research_plan import ResearchPlan, SearchStage
 

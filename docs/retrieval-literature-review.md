@@ -285,11 +285,13 @@ B-2 MMR 名额分配 · D-2 计划冻结 · S3 自动补判扩全集 · 长尾�
 | **E 多通道（先上 C3）** | ✅ 已实现（通道归因未做） | `src/tools/list_pages.py`：目录站清单 → `site:` 检索找赛道分类页 → 抓页抽条目 → 以 `{title,url,content}` 同形并入候选池；跑记录记 `channel_pages`（测量时据此剔除"通道自证条目"）。**RRF 融合与逐通道归因还没做**（当前只有一条通道，通道间分数不可比的问题尚未出现）。 |
 | **A 同赛道闸门（名册版）** | ✅ 已实现（listwise/LLM 裁决未做） | `src/workflow/track_scope.py` + `assets/track_scope.json`：跨行业词 → 名册站点 → 名册品牌 → 赛道词，四段判据；规则里的"同赛道/同客群/同品类"等条款**从"不可执行"变成可执行**。LLM 列表式重排 + 置换自洽仍未做（当前靠词面判据 + 名册）。 |
 | **C 空响应契约** | ❌ 未做 | LLM 空响应仍按"解析失败→退回默认计划"处理，没有显式异常与降级标注。 |
-| **B-1 截断归因细分 + 名额账** | ❌ 未做 | 归因仍只有四类（未发现/站点类型/闸门/截断），没有"名额给了谁"的账。 |
+| **B-1 截断归因细分 + 名额账** | ✅ 已实现（第十轮实跑前） | 管线内 `slot_ledger`：每个名额 `{slot,url,name,host,score,reasons,source,audit_flag}`（来源 = 计划点名/模型提名/发现）+ 被挤掉者及原因；产物与报告落盘（报告 §8 名额账）。归因新增"同名合并"类（与闸门分开）。 |
 | **F 实体归并三段式** | ❌ 未做 | 仍是"规范化品牌名 + 域名主标签"，非 ASCII 品牌仍匹配不上；聚类仍靠首个候选胜出。 |
-| **B-2 MMR / D-2 冻结 / S3 补判 / 长尾指标** | ❌ 未做 | — |
+| **B-2 MMR 名额分配** | ✅ 开关已实现（默认关，待实跑评估） | `select_competitors(diversity={"lam","similarity"})`：λ·归一分 − (1−λ)·与已选集最大相似度；相似度可插拔（`name`/`description`，scored 记录已带描述 ✓）；λ 预注册 0.7；λ=1.0 与现行逐条等价（有测试 ✓）。名字相似度实测在本赛道是空操作（§7），**默认关**；开启与否待第十轮的描述相似度离线评估。 |
+| **D-2 冻结 / S3 补判 / 长尾指标** | ❌ 未做 | — |
+| **提名审计（新增，2026-11-01 拍板）** | ✅ 已实现 | 通用助手品牌（chatgpt/豆包/元宝/文心一言/Kimi/Claude/Gemini/DeepSeek…，资产 `off_track_brands`）**品牌全等**命中 → 硬挡 ✓；被提名但无名册/赛道词证据 → **降权 0.1 不挡**（实测：全集 289 条仅 8% 名字含赛道词，按无证据就挡会错杀 69% 真竞品 ✗）。 |
 
-**第九轮实测见** [`docs/discovery-recall-measurement.md`](discovery-recall-measurement.md) §8.12。
+**第九轮实测见** [`docs/discovery-recall-measurement.md`](discovery-recall-measurement.md) §8.12；**名额账/MMR 方案与拍板**见 [`docs/slot-allocation-plan.md`](slot-allocation-plan.md) §8；第十轮实跑前落地记录见 §8.13。
 
 ---
 
