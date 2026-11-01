@@ -2082,7 +2082,8 @@
     {
       "name": "Hangjam: AI Stories",
       "hosts": [
-        "hangjam.ai"
+        "hangjam.ai",
+        "studio.hangjam.ai"
       ],
       "aliases": [
         "Hangjam: AI Stories"
@@ -3604,7 +3605,8 @@
     {
       "name": "ParadiseAI",
       "hosts": [
-        "paradiseai.app"
+        "paradiseai.app",
+        "paradise.app"
       ],
       "aliases": [
         "ParadiseAI"
@@ -6242,7 +6244,8 @@
     {
       "name": "怦然心动-AI恋人虚拟恋爱聊天对话软件",
       "hosts": [
-        "foxdata.com"
+        "foxdata.com",
+        "foxdata.cn"
       ],
       "aliases": [
         "怦然心动-AI恋人虚拟恋爱聊天对话软件"
