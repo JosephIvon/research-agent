@@ -131,6 +131,29 @@ MIN_ADMISSION_SCORE = 0.5
 # 分数扣这么多（提名加成是 0.25，这里扣 0.1 ⇒ 仍高于普通候选 0.5 ✓，
 # 只是不再稳坐前排 ✗）。**不挡人**——实测 92% 的真竞品名字里没有赛道词 ✗。
 NOMINATION_AUDIT_PENALTY = 0.1
+
+# **预注册（2026-11-01 第十轮拍板）**：名额分配启用 MMR 多样性，
+# λ=0.7 + 描述相似度（name+description 词元 Jaccard）。
+# 依据：第十轮 what-if（12 轮产物、主口径、已剔通道自证条目）——
+# 描述相似 λ=0.7 金标准命中 3.92→**4.17**/轮（首个优于基准的变体 ✓）；
+# 名字相似度实测是空操作 ✗（λ 0.8→0.2 结果全同，第九轮同结论）；
+# 提名上限伤命中（1.92/2.92 ✗）⇒ 维持不设上限 ✓。
+# 纪律：改 λ 或 similarity 必须先改这里 + docs/slot-allocation-plan.md 的预注册记录，
+# **不能看着结果调参**（判定线不动 ✓）；同一轮内不得换参。
+DEFAULT_DIVERSITY = {"lam": 0.7, "similarity": "description"}
+
+
+def effective_diversity(criteria: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """这个计划实际生效的 MMR 配置。
+
+    - criteria 里**没写** `diversity` 键 → 用预注册默认（DEFAULT_DIVERSITY ✓）；
+    - 显式写了 `null`/`False` → **关闭**（回退现行按分数截断 ✓）；
+    - 写了 dict → 用它的 lam/similarity（评测侧做 what-if 用 ✓）。
+    """
+    if criteria and "diversity" in criteria:
+        value = criteria.get("diversity")
+        return dict(value) if value else None
+    return dict(DEFAULT_DIVERSITY)
 COMPETITOR_LAYERS = ("direct", "alternative", "adjacent")
 DEFAULT_LAYERS = ("direct",)
 
@@ -1408,7 +1431,10 @@ def _select_mmr(scored: Sequence[Dict[str, Any]],
             for chosen in selected:
                 max_sim = max(max_sim, _similarity(item, chosen, sim_mode))
             mmr = lam * (score / top) - (1.0 - lam) * max_sim
-            key = (-round(mmr, 6), -score, order_key(item)[2])
+            # 同 MMR 同分时：**首页优先**（路径浅优先 ✓——与现行规则一致，
+            # 丢掉这一级的话 character.ai/about 会按名字序压过 character.ai/ ✗）
+            key = (-round(mmr, 6), -score,
+                   _path_depth(str(item.get("url") or "")), order_key(item)[2])
             if best_key is None or key < best_key:
                 best, best_key = item, key
         if best is None:
@@ -1460,6 +1486,7 @@ def admit_competitors(
         must_include=must_include,
         min_score=MIN_ADMISSION_SCORE,
         tie_break="name",
+        diversity=effective_diversity(plan.criteria),
     )
     ledger = build_slot_ledger(scored, selected, plan)
     # 把名额来源标到每个入选项上（前端/报告都能直接看到"这个名额是凭什么拿到的"）
@@ -1477,6 +1504,7 @@ def admit_competitors(
         "met_minimum": len(selected) >= plan.min_count,
         "pool_size": len(candidates),
         "must_include_parsed": must_include,
+        "diversity": effective_diversity(plan.criteria),
         "slot_ledger": ledger,
     }
 

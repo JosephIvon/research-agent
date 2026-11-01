@@ -253,6 +253,9 @@ class DiscoveryResult:
     channel_pages: List[str] = field(default_factory=list)
     # 通道贡献的候选（按 URL 记）
     channel_candidates: List[str] = field(default_factory=list)
+    # C4 应用商店通道：读过的分类/榜单页 + 贡献的候选（同 C3 的观测口径 ✓）
+    store_pages: List[str] = field(default_factory=list)
+    store_candidates: List[str] = field(default_factory=list)
     # 通道自己的 site: 查询失败记录（**不**算整轮无效的依据 ✗）
     channel_failures: List[Dict[str, Any]] = field(default_factory=list)
     # 名额账（谁占了名额、依据、谁被挤掉）
@@ -270,6 +273,8 @@ class DiscoveryResult:
             "search_failures": self.search_failures,
             "channel_pages": list(self.channel_pages),
             "channel_candidates": list(self.channel_candidates),
+            "store_pages": list(self.store_pages),
+            "store_candidates": list(self.store_candidates),
             "channel_failures": list(self.channel_failures),
             "slot_ledger": dict(self.slot_ledger),
         }
@@ -279,7 +284,8 @@ class SearchStageRunner:
     """按计划执行搜索阶段。search_tool 是既有 SearchTool（可注入替身）。"""
 
     def __init__(self, search_tool: Any, num_results: int = 8,
-                 enable_directory_channel: bool = True):
+                 enable_directory_channel: bool = True,
+                 enable_store_channel: bool = True):
         self.search_tool = search_tool
         self.num_results = num_results
         # C3 目录页通道（默认开）：模型不知道、搜索也搜不到的长尾产品，
@@ -287,6 +293,9 @@ class SearchStageRunner:
         # 通道读过的页要记进 result.channel_pages —— 测量时要把
         # "来源正好是这些页"的金标准条目从分母里剔掉（那叫读答案 ✓）。
         self.enable_directory_channel = enable_directory_channel
+        # C4 应用商店通道（默认开）：store_only 来源占全集 32% ✗，
+        # 商店 Web 版的深页在常规查询里不出现 ✓。
+        self.enable_store_channel = enable_store_channel
         # 主体锚定的结果缓存：竞品发现阶段要据此排除"主体自己的官方页"
         self._entity_pages: List[Dict[str, Any]] = []
         # 主体自己官网的域名：按"实体锚定阶段排名最高的官网"判定。
@@ -427,6 +436,26 @@ class SearchStageRunner:
                         f"（不作为本轮无效的依据 ✗——主搜索成功即数据有效）")
             except Exception as exc:  # noqa: BLE001 —— 通道失败不能拖垮整轮
                 result.notes.append(f"C3 通道异常（已跳过）：{type(exc).__name__}")
+        # -- C4 应用商店通道 -----------------------------------------------
+        # 商店 Web 版的详情/榜单页在常规查询里根本不出现 ✓（store_only 占
+        # 全集 32%，是 R1 最大的已知盲区）。条目会带**开发者官网链接**
+        # （官网富化 ✓），同形并入候选池；读过的榜单页记进 store_pages
+        # （测量时同 C3 一样剔"通道自证条目" ✓）。
+        if self.enable_store_channel and (plan.track_keywords or []):
+            try:
+                from src.tools.store_pages import collect_store_items
+
+                store_items, store_notes, store_page_list = collect_store_items(
+                    lambda query: self._search(query, "competitor_discovery",
+                                               count_failure=False),
+                    plan.track_keywords or [],
+                )
+                results.extend(store_items)
+                result.store_pages = list(store_page_list)
+                result.store_candidates = [item["url"] for item in store_items]
+                result.notes.extend(store_notes)
+            except Exception as exc:  # noqa: BLE001 —— 通道失败不能拖垮整轮
+                result.notes.append(f"C4 通道异常（已跳过）：{type(exc).__name__}")
         for item in results:
             url = item["url"]
             if url in seen:

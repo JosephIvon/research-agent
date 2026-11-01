@@ -208,3 +208,50 @@ def test_selected_items_carry_their_slot_source():
     plan = _plan(nominees=["星野"])
     out = rp.admit_competitors([_cand("星野", "https://xingye.example/")], plan)
     assert out["selected"][0]["source"] == "模型提名"
+
+
+# -- 第十一轮预注册：MMR 默认开（描述相似 λ=0.7） ---------------------------
+
+def test_effective_diversity_semantics():
+    assert rp.effective_diversity({}) == rp.DEFAULT_DIVERSITY          # 缺省 → 预注册 ✓
+    assert rp.effective_diversity({"diversity": None}) is None         # 显式 null → 关 ✓
+    assert rp.effective_diversity({"diversity": False}) is None
+    assert rp.effective_diversity({"diversity": {"lam": 0.5, "similarity": "name"}}) == \
+        {"lam": 0.5, "similarity": "name"}                              # 评测 what-if 用 ✓
+
+
+def test_admit_competitors_applies_mmr_by_default():
+    """同分且描述高度相似时，MMR 要把名额让给描述不同的那家（现行规则不会 ✓）。"""
+    plan = _plan(max_count=2)
+    plan.criteria["diversity"] = {"lam": 0.7, "similarity": "description"}
+    candidates = [
+        _cand("甲", "https://a.example/", description="AI角色扮演应用，陪伴聊天"),
+        _cand("乙", "https://b.example/", description="AI角色扮演应用，陪伴聊天"),
+        _cand("丙", "https://c.example/", description="完全不同的另一个产品"),
+    ]
+    out = rp.admit_competitors(candidates, plan)
+    names = [s["name"] for s in out["selected"]]
+    assert "丙" in names, "描述多样的候选要能进名单 ✓"
+    assert out["diversity"] == {"lam": 0.7, "similarity": "description"}
+
+
+def test_tie_replay_honors_recorded_diversity():
+    """重放同分期望值必须用**当时的** MMR 配置（否则 R3/S1 用错口径复算 ✗）。"""
+    from src.tools import recall_metrics as rm
+
+    scored = [
+        {"url": "https://a.example/", "name": "甲", "score": 0.75, "gate_passed": True,
+         "description": "AI角色扮演应用，陪伴聊天"},
+        {"url": "https://b.example/", "name": "乙", "score": 0.75, "gate_passed": True,
+         "description": "AI角色扮演应用，陪伴聊天"},
+        {"url": "https://c.example/", "name": "丙", "score": 0.75, "gate_passed": True,
+         "description": "完全不同的另一个产品"},
+    ]
+    golden = rm.GoldenSet([{"name": "丙", "hosts": ["c.example"], "aliases": []}])
+    run = {"scored": scored, "selection": {"max_count": 2, "min_admission_score": 0.5,
+                                           "must_include": [],
+                                           "diversity": {"lam": 0.7, "similarity": "description"}}}
+    out = rm.tie_expected_metrics([run], golden, seeds=5)
+    assert out.get("computable"), "带 diversity 的记录要能复算 ✓"
+    # λ=0.7 + 描述相似：第二个名额给"丙"（描述多样 ✓）→ 命中金标准的期望 = 1
+    assert out["keep_l3"]["mean"] == pytest.approx(1.0)

@@ -22,7 +22,7 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from collections import Counter
 
 REPO = Path(__file__).resolve().parent
@@ -63,8 +63,14 @@ LINE_LABELS = {
 
 
 async def run_once(llm: Any, search_tool: Any, subject: str, style: str,
-                   query: str, attempt: int) -> Dict[str, Any]:
-    """跑一次发现阶段，返回一条 run 记录。"""
+                   query: str, attempt: int,
+                   plan: Optional[rp.ResearchPlan] = None) -> Dict[str, Any]:
+    """跑一次发现阶段，返回一条 run 记录。
+
+    `plan` 传入时**直接复用**（D-2 计划冻结 ✓：同一 (主体×句式) 跨轮复用
+    同一份计划，消掉"查询词每轮不同"的 A/B 污染——第九轮实测两轮计划
+    Jaccard 只有 0.097 ✗，管线改动和计划波动分不开）；不传则现场生成。
+    """
     started = time.time()
     record: Dict[str, Any] = {
         "subject": subject,
@@ -72,8 +78,10 @@ async def run_once(llm: Any, search_tool: Any, subject: str, style: str,
         "query": query,
         "attempt": attempt,
         "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "plan_frozen": plan is not None,
     }
-    plan = await rp.build_research_plan(llm, query)
+    if plan is None:
+        plan = await rp.build_research_plan(llm, query)
     record["entity"] = {
         "name": plan.entity_name,
         "confidence": plan.resolved_confidence,
@@ -116,17 +124,22 @@ async def run_once(llm: Any, search_tool: Any, subject: str, style: str,
     # 测量时要把"来源正好是这些页"的金标准条目从分母里剔掉（读答案≠发现 ✓）。
     record["channel_pages"] = list(getattr(discovery, "channel_pages", []) or [])
     record["channel_candidates"] = list(getattr(discovery, "channel_candidates", []) or [])
+    # C4 应用商店通道：读过的分类/榜单页 + 贡献的候选（同 C3 的观测口径 ✓；
+    # 测量剔"通道自证条目"时与 channel_pages 取并集 ✓）
+    record["store_pages"] = list(getattr(discovery, "store_pages", []) or [])
+    record["store_candidates"] = list(getattr(discovery, "store_candidates", []) or [])
     # 通道自己的 site: 查询失败（**不**作废整轮 ✓，但要看得见）
     record["channel_failures"] = list(getattr(discovery, "channel_failures", []) or [])
     # 名额账：每个名额给了谁、依据是什么、谁被挤掉了（纯观测 ✓）
     record["slot_ledger"] = dict(getattr(discovery, "slot_ledger", {}) or {})
-    # **当时按什么口径选的**：max_count / must_include / 分数地板。
-    # 这三样决定"名额怎么分"，不存下来就无法在事后复算
+    # **当时按什么口径选的**：max_count / must_include / 分数地板 / MMR 配置。
+    # 这四样决定"名额怎么分"，不存下来就无法在事后复算
     # "同分块换一种次序会怎样"（tie 期望值，见 src/tools/recall_metrics.py）。
     record["selection"] = {
         "max_count": int(plan.max_count),
         "min_admission_score": float(rp.MIN_ADMISSION_SCORE),
         "must_include": list((plan.criteria or {}).get("must_include") or []),
+        "diversity": rp.effective_diversity(plan.criteria or {}),
     }
     # **计划快照**：事后要能复算"这轮当时的口径是什么"（含命名、赛道词、
     # 准入规则原文），否则跨轮的差异分不清是"计划变了"还是"管线变了"。
@@ -159,11 +172,17 @@ def _invalid(rec: Dict[str, Any]) -> bool:
     return False
 
 
-async def run_with_retry(llm, search_tool, subject, style, query, attempts=3):
-    """跑一次；数据无效就重试（最多 attempts 次），返回 (记录, 是否无效)。"""
+async def run_with_retry(llm, search_tool, subject, style, query, attempts=3,
+                         plan: Optional[rp.ResearchPlan] = None):
+    """跑一次；数据无效就重试（最多 attempts 次），返回 (记录, 是否无效)。
+
+    计划冻结时（plan 传入 ✓）重试也用同一份计划——无效只可能是搜索后端
+    抖动，不会是"这次计划生成得不一样"（那会把两种失效混在一起 ✗）。
+    """
     last = None
     for attempt in range(1, attempts + 1):
-        rec = await run_once(llm, search_tool, subject, style, query, attempt)
+        rec = await run_once(llm, search_tool, subject, style, query, attempt,
+                             plan=plan)
         last = rec
         if not _invalid(rec):
             return rec, False
@@ -171,6 +190,35 @@ async def run_with_retry(llm, search_tool, subject, style, query, attempts=3):
               flush=True)
         await asyncio.sleep(5)
     return last, True
+
+
+# -- D-2 计划冻结（2026-11-01 拍板） --------------------------------------
+
+def frozen_plan_path(frozen_dir: Path, subject: str, style: str) -> Path:
+    return frozen_dir / f"{subject}_{style}.json"
+
+
+async def load_or_build_plan(llm: Any, frozen_dir: Path,
+                             subject: str, style: str, query: str,
+                             regen: bool = False) -> tuple:
+    """同一 (主体×句式) 的计划**只生成一次、落盘、跨轮复用**（D-2 ✓）。
+
+    - 冻结粒度是 (主体×句式) 而不是主体 ✗：跨句式对照（task vs search）
+      是在测的维度 ✗，冻结成一份就把它测没了 ✗。
+    - 冻结文件入库（git ✓）：下一轮实跑直接复用这一份，
+      计划波动从"每轮都变"变成"只在明确重生成时才变" ✓。
+    - 副作用红利：一轮 12 次实跑的计划生成从 12 次降为 4 次 ✓
+      （省配额，也消掉"中途 429 把计划生成打断"这个失效源 ✓）。
+    """
+    path = frozen_plan_path(frozen_dir, subject, style)
+    if path.exists() and not regen:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return rp.ResearchPlan.from_dict(data), True
+    plan = await rp.build_research_plan(llm, query)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(plan.to_dict(), ensure_ascii=False, indent=2),
+                    encoding="utf-8")
+    return plan, False
 
 
 def _tier_subsets(golden: rm.GoldenSet) -> Dict[str, rm.GoldenSet]:
@@ -214,6 +262,15 @@ def _split_subsets(golden: rm.GoldenSet) -> Dict[str, rm.GoldenSet]:
     return {k: v for k, v in subsets.items() if len(v) > 0}
 
 
+def _self_serving_pages(runs: List[Dict[str, Any]]) -> List[str]:
+    """所有通道读过的"答案页"（C3 目录页 ∪ C4 商店榜单页）——剔自证条目用 ✓。"""
+    pages = set()
+    for r in runs:
+        pages.update(r.get("channel_pages") or [])
+        pages.update(r.get("store_pages") or [])
+    return sorted(pages)
+
+
 def analyze_denominators(runs: List[Dict[str, Any]],
                          goldens: Dict[str, rm.GoldenSet]) -> List[Dict[str, Any]]:
     """**同一批实跑**在多份金标准下的召回对照（换分母，不重跑）。
@@ -225,8 +282,9 @@ def analyze_denominators(runs: List[Dict[str, Any]],
     """
     valid = [r for r in runs if not _invalid(r)]
     all_goldens: Dict[str, rm.GoldenSet] = dict(goldens)
-    # 通道自证条目：来源正好是 C3 通道读过的页 → 不进任何口径的分母
-    channel_pages = sorted({p for r in valid for p in (r.get("channel_pages") or [])})
+    # 通道自证条目：来源正好是通道读过的页（C3 目录页 ∪ C4 商店榜单页）
+    # → 不进任何口径的分母（读答案≠发现 ✓）
+    channel_pages = _self_serving_pages(valid)
     if channel_pages:
         all_goldens = {k: v.exclude_by_source(channel_pages) for k, v in all_goldens.items()}
 
@@ -291,7 +349,7 @@ def analyze(runs: List[Dict[str, Any]], golden: rm.GoldenSet) -> Dict[str, Any]:
     产品，那叫读答案。所以这些条目不进分母（分子分母一起剔 ✓）。
     """
     valid = [r for r in runs if not _invalid(r)]
-    channel_pages = sorted({p for r in valid for p in (r.get("channel_pages") or [])})
+    channel_pages = _self_serving_pages(valid)
     measured = golden.exclude_by_source(channel_pages)
     per_run = []
     for rec in valid:
@@ -688,10 +746,18 @@ async def main_async(args) -> int:
     for subject in subjects:
         task_q, search_q = SUBJECTS[subject]
         for style, query in (("task", task_q), ("search", search_q)):
+            # D-2 计划冻结：同一 (主体×句式) 只生成/加载一次，重复轮全复用 ✓
+            plan, frozen = await load_or_build_plan(
+                llm, Path(args.frozen_plans_dir), subject, style, query,
+                regen=bool(args.regen_plans))
+            print(f"[recall] {'复用冻结计划' if frozen else '生成新计划（已冻结落盘）'}"
+                  f"：{subject}/{style} → {frozen_plan_path(Path(args.frozen_plans_dir), subject, style)}",
+                  flush=True)
             for repeat in range(1, args.repeats + 1):
                 print(f"[recall] {subject}/{style} 第 {repeat}/{args.repeats} 次 …", flush=True)
                 rec, invalid = await run_with_retry(llm, search_tool, subject, style,
-                                                    query, attempts=args.attempts)
+                                                    query, attempts=args.attempts,
+                                                    plan=plan)
                 rec["repeat"] = repeat
                 rec["invalid"] = invalid
                 runs.append(rec)
@@ -744,6 +810,10 @@ def main() -> int:
     parser.add_argument("--repeats", type=int, default=3, help="每种句式重复几次")
     parser.add_argument("--attempts", type=int, default=3, help="数据无效时最多重试几次")
     parser.add_argument("--pause", type=float, default=3.0, help="两次运行之间的间隔秒数")
+    parser.add_argument("--frozen-plans-dir", default=str(REPO / "evals" / "frozen_plans"),
+                        help="D-2 计划冻结目录：同一 (主体×句式) 的计划存这里、跨轮复用")
+    parser.add_argument("--regen-plans", action="store_true",
+                        help="忽略已冻结的计划、重新生成并覆盖（显式动作，不默认）")
     parser.add_argument("--subjects", nargs="*", default=None, help="只跑这些主体")
     parser.add_argument("--analyze", default=None, help="只对已有 artifact 做分析")
     args = parser.parse_args()

@@ -499,6 +499,9 @@ def tie_expected_metrics(
                 min_score=float(meta.get("min_admission_score") or 0.0),
                 tie_break="random",
                 seed=seed,
+                # **重放要用当时的 MMR 配置**（第十轮起 selection 带 diversity ✓；
+                # 旧产物没有这个键 → None → 现行按分数截断 ✓，口径不串 ✗）
+                diversity=meta.get("diversity"),
             )
             selected_sets.append({str(c.get("url") or "") for c in chosen})
             hit_names = set()
