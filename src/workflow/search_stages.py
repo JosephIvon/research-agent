@@ -54,6 +54,11 @@ MAX_QUERIES_PER_STAGE = 2
 # 模型提名的竞品最多核实几个（每个要发 2 条查询，词数会乘上去）
 MAX_MODEL_CANDIDATES = 8
 
+# 实体下钻的**结果**缓存（进程级）：同一品牌 12 轮只查一次 ✓——
+# 复用结果而不是只记"查过了"，否则下钻查询的搜索抖动会变成新的轮间噪声 ✗。
+# 键 = 规范化品牌名；值 = "<品牌> 官网" 的搜索结果（同形 {title,url,content} ✓）。
+_DEEP_DIVE_RESULTS: Dict[str, List[Dict[str, Any]]] = {}
+
 # 模型有时会写**占位符**而不是真词（实测："{竞品名} 官网"）。
 # 直接拿去搜索就是在搜字面量——必须先填成真的竞品名。
 _PLACEHOLDER_PATTERNS = (
@@ -256,6 +261,9 @@ class DiscoveryResult:
     # C4 应用商店通道：读过的分类/榜单页 + 贡献的候选（同 C3 的观测口径 ✓）
     store_pages: List[str] = field(default_factory=list)
     store_candidates: List[str] = field(default_factory=list)
+    # 实体下钻：补查过官网的品牌 + 新进池的候选（观测口径 ✓）
+    deep_dive_brands: List[str] = field(default_factory=list)
+    deep_dive_candidates: List[str] = field(default_factory=list)
     # 通道自己的 site: 查询失败记录（**不**算整轮无效的依据 ✗）
     channel_failures: List[Dict[str, Any]] = field(default_factory=list)
     # 名额账（谁占了名额、依据、谁被挤掉）
@@ -275,6 +283,8 @@ class DiscoveryResult:
             "channel_candidates": list(self.channel_candidates),
             "store_pages": list(self.store_pages),
             "store_candidates": list(self.store_candidates),
+            "deep_dive_brands": list(self.deep_dive_brands),
+            "deep_dive_candidates": list(self.deep_dive_candidates),
             "channel_failures": list(self.channel_failures),
             "slot_ledger": dict(self.slot_ledger),
         }
@@ -285,7 +295,9 @@ class SearchStageRunner:
 
     def __init__(self, search_tool: Any, num_results: int = 8,
                  enable_directory_channel: bool = True,
-                 enable_store_channel: bool = True):
+                 enable_store_channel: bool = True,
+                 enable_deep_dive: bool = True,
+                 max_deep_dives: int = 8):
         self.search_tool = search_tool
         self.num_results = num_results
         # C3 目录页通道（默认开）：模型不知道、搜索也搜不到的长尾产品，
@@ -296,6 +308,10 @@ class SearchStageRunner:
         # C4 应用商店通道（默认开）：store_only 来源占全集 32% ✗，
         # 商店 Web 版的深页在常规查询里不出现 ✓。
         self.enable_store_channel = enable_store_channel
+        # 实体下钻（默认开）：对**发现**的品牌补一击 "<品牌> 官网"，
+        # 让官方域进池（第十二轮实测：Talkie 12/12 轮域名没对上 ✗）。
+        self.enable_deep_dive = enable_deep_dive
+        self.max_deep_dives = max_deep_dives
         # 主体锚定的结果缓存：竞品发现阶段要据此排除"主体自己的官方页"
         self._entity_pages: List[Dict[str, Any]] = []
         # 主体自己官网的域名：按"实体锚定阶段排名最高的官网"判定。
@@ -456,76 +472,8 @@ class SearchStageRunner:
                 result.notes.extend(store_notes)
             except Exception as exc:  # noqa: BLE001 —— 通道失败不能拖垮整轮
                 result.notes.append(f"C4 通道异常（已跳过）：{type(exc).__name__}")
-        for item in results:
-            url = item["url"]
-            if url in seen:
-                continue
-            seen.add(url)
-            title = item["title"]
-            # 候选名优先用**模型提名**的名字：搜索结果的标题常是文章标题
-            # （"Lovie 常見問題：AI 角色陪伴、AI 聊天與角色扮演"），
-            # 拿它当竞品名会让后续的验证/反证查询全跑偏。
-            name = clean_candidate_name(title, url)
-            matched_model_name = ""
-            for proposed in model_names:
-                if proposed and (proposed in title or title.startswith(proposed)):
-                    name = proposed
-                    matched_model_name = proposed
-                    break
-            # 搜到的常常是产品官网的**子页**（星野 → xingyeai.com/create/login），
-            # 而"产品官网首页"是根路径或一层 → 子页会被判成非官网，**产品就此丢掉**。
-            # 实测（2026-10-29 召回测量）：星野/筑梦岛被找到的次数不少，
-            # 但每次都以子页形态出现，于是永远进不了候选池。
-            # 归一化只在这一种情况下做：页面标题**正好就是**模型提名的那个名字
-            # （下载站页面的标题是"星野下载-…"，不是"星野"，所以不会被误归一）。
-            if matched_model_name and _title_is_exactish(title, matched_model_name):
-                url = _canonical_product_url(url)
-            candidate = Candidate(
-                name=name,
-                url=url,
-                description=item["content"],
-                source_stage="competitor_discovery",
-                # 站点类型要连**标题**一起判：中文搜索结果里文章页的决定性
-                # 特征在标题里（盘点/对比/哪个好），域名未必看得出来。
-                site_type=classify_site(url, title),
-                is_aggregator=classify_site(url, title) != SITE_PRODUCT,
-            )
-            result.candidates.append(candidate)
-            # 同名去重：同一个产品常在多个页面里出现（官网 + 媒体盘点页，
-            # 或者是同产品的多个域名：replika.com / create.replika.com /
-            # myreplika.com）。留**官网**那份；同名里若有一份标题与名字**完全
-            # 一致**，它更像产品本身（"星野" vs 同名的酒店公司"星野集团"）。
-            # 合并键**忽略大小写**：同一产品的官网与移动站常常一个写 "Tofai"
-            # 一个写 "tofai"（实测第六轮：两个域名各占一个名额）。
-            #
-            # 合并键用**规范化品牌名**（去修饰词 + 去标点）：实测第八轮
-            # "Character.AI" 与 "Character AI中文版"（汉化站）名字不同，
-            # 于是同一个产品白占两个名额，把真竞品挤出去了。
-            merge_key = _normalized_brand(candidate.name)
-            if not merge_key:
-                merge_key = candidate.name.strip().casefold()
-            existing = by_name.get(merge_key)
-            if existing is None:
-                by_name[merge_key] = candidate
-                title_by_name[merge_key] = title
-            else:
-                better = False
-                if existing.is_aggregator and not candidate.is_aggregator:
-                    better = True
-                elif not existing.is_aggregator and not candidate.is_aggregator:
-                    # 同一家的两个站：留更像官网的那个（域名里带自己品牌、
-                    # 域名更短）。实测第八轮：汉化站（characterapp.cn）会把
-                    # 真官网（character.ai）挤掉——只按"标题更贴名字"判会选错。
-                    if _candidate_rank(candidate) > _candidate_rank(existing):
-                        better = True
-                    elif _candidate_rank(candidate) == _candidate_rank(existing):
-                        if _title_is_exactish(title, candidate.name) and not _title_is_exactish(
-                            title_by_name.get(merge_key, ""), candidate.name
-                        ):
-                            better = True
-                if better:
-                    by_name[merge_key] = candidate
-                    title_by_name[merge_key] = title
+        self._absorb_results(results, result, seen, by_name, title_by_name,
+                             model_names, entity_name=(plan.entity_name or "").strip())
         # 主体自己的官方页不是竞品。但"官方页"要判准：竞品官网的首页常提到主体
         # （"猫箱 - 与百度搭子对比"），若凡是出现在锚定结果里的 URL 都算主体页，
         # 就会把真竞品一起排掉（实测）。判准 = 标题里带主体名**且**页面就是主体页。
@@ -597,6 +545,51 @@ class SearchStageRunner:
                     "本轮可能找不到竞品"
                 )
             pool = []
+        # -- 实体下钻（实体归并的生产侧动作，2026-11-01 预注册）-------------
+        # 缺口（第十二轮实测 ✗）：Talkie 12/12 轮被发现在 talkieai.cc
+        # （别名/镜像域），官方域 talkie-ai.com 不在池里——"域名没对上"，
+        # host 口径记 0 分 ✗。模型提名的品牌早有 "<名> 官网" 补查 ✓，
+        # **发现**的品牌没有——下钻就是把这同一击补给它们。
+        # 有界（max_deep_dives ✓）+ 进程内**结果**缓存（12 轮只查一次 ✓，
+        # 复用结果还消掉下钻查询的搜索抖动 ✓）+ 失败单独记账不作废整轮 ✓。
+        if self.enable_deep_dive and pool:
+            brands: List[str] = []
+            for cand in sorted(pool, key=lambda c: _candidate_rank(c), reverse=True):
+                brand = _normalized_brand(cand.name) or cand.name.strip().casefold()
+                if brand and brand not in brands:
+                    brands.append(brand)
+                if len(brands) >= self.max_deep_dives:
+                    break
+            fresh: List[Dict[str, Any]] = []
+            for brand in brands:
+                if brand in _DEEP_DIVE_RESULTS:
+                    fresh.extend(_DEEP_DIVE_RESULTS[brand])
+                    continue
+                try:
+                    dive_items = self._search(f"{brand} 官网", "competitor_discovery",
+                                              count_failure=False) or []
+                except Exception as exc:  # noqa: BLE001 —— 下钻失败不拖垮整轮
+                    result.notes.append(f"实体下钻查询失败（{brand}）：{type(exc).__name__}")
+                    continue
+                _DEEP_DIVE_RESULTS[brand] = list(dive_items)
+                fresh.extend(dive_items)
+            before_urls = {c.url for c in result.candidates}
+            added = self._absorb_results(
+                fresh, result, seen, by_name, title_by_name, model_names,
+                skip_urls=frozenset(self_page_urls),
+                skip_hosts=frozenset(subject_hosts),
+                entity_name=entity_name,
+            )
+            result.deep_dive_brands = list(brands)
+            result.deep_dive_candidates = [
+                c.url for c in result.candidates if c.url not in before_urls
+            ]
+            if added:
+                by_name = _merge_brand_hosts(by_name)
+                pool = [c for c in by_name.values() if not c.is_aggregator]
+                result.notes.append(
+                    f"实体下钻：{len(brands)} 个品牌补查官网，新增 {added} 个候选"
+                    f"（{'、'.join(brands[:4])}…）")
         admission = admit_competitors([c.to_dict() for c in pool], plan)
         result.selected = admission["selected"]
         result.scored = admission["scored"]
@@ -619,6 +612,101 @@ class SearchStageRunner:
         # 它的 site: 查询挂掉不影响主链路数据的完整性（2026-11-01 决策 ✓）。
         result.channel_failures = list(self.channel_failures)
         return result
+
+    def _absorb_results(self, items: Sequence[Dict[str, Any]], result: "DiscoveryResult",
+                        seen: set, by_name: Dict[str, "Candidate"],
+                        title_by_name: Dict[str, str], model_names: Sequence[str],
+                        skip_urls: frozenset = frozenset(),
+                        skip_hosts: frozenset = frozenset(),
+                        entity_name: str = "") -> int:
+        """把搜索结果吸收进候选池（去重 → 清名 → 同名合并）。
+
+        主搜索与实体下钻**共用这一套规则**（两套规则必然漂移 ✗）。
+        返回新增的候选数。skip_urls/skip_hosts 给下钻用（主体自己的页
+        已在主路径被剔，下钻不许把它们又带回来 ✓；名字级防线双保险 ✓）。
+        """
+        added = 0
+        subject_skips = 0
+        for item in items:
+            url = item["url"]
+            if url in seen or url in skip_urls:
+                continue
+            if skip_hosts and _strip_www(host_of(url)) in skip_hosts:
+                continue
+            seen.add(url)
+            title = item["title"]
+            # 候选名优先用**模型提名**的名字：搜索结果的标题常是文章标题
+            # （"Lovie 常見問題：AI 角色陪伴、AI 聊天與角色扮演"），
+            # 拿它当竞品名会让后续的验证/反证查询全跑偏。
+            name = clean_candidate_name(title, url)
+            if entity_name and _is_subject_itself(name, entity_name):
+                subject_skips += 1
+                continue
+            matched_model_name = ""
+            for proposed in model_names:
+                if proposed and (proposed in title or title.startswith(proposed)):
+                    name = proposed
+                    matched_model_name = proposed
+                    break
+            # 搜到的常常是产品官网的**子页**（星野 → xingyeai.com/create/login），
+            # 而"产品官网首页"是根路径或一层 → 子页会被判成非官网，**产品就此丢掉**。
+            # 实测（2026-10-29 召回测量）：星野/筑梦岛被找到的次数不少，
+            # 但每次都以子页形态出现，于是永远进不了候选池。
+            # 归一化只在这一种情况下做：页面标题**正好就是**模型提名的那个名字
+            # （下载站页面的标题是"星野下载-…"，不是"星野"，所以不会被误归一）。
+            if matched_model_name and _title_is_exactish(title, matched_model_name):
+                url = _canonical_product_url(url)
+            candidate = Candidate(
+                name=name,
+                url=url,
+                description=item["content"],
+                source_stage="competitor_discovery",
+                # 站点类型要连**标题**一起判：中文搜索结果里文章页的决定性
+                # 特征在标题里（盘点/对比/哪个好），域名未必看得出来。
+                site_type=classify_site(url, title),
+                is_aggregator=classify_site(url, title) != SITE_PRODUCT,
+            )
+            result.candidates.append(candidate)
+            added += 1
+            # 同名去重：同一个产品常在多个页面里出现（官网 + 媒体盘点页，
+            # 或者是同产品的多个域名：replika.com / create.replika.com /
+            # myreplika.com）。留**官网**那份；同名里若有一份标题与名字**完全
+            # 一致**，它更像产品本身（"星野" vs 同名的酒店公司"星野集团"）。
+            # 合并键**忽略大小写**：同一产品的官网与移动站常常一个写 "Tofai"
+            # 一个写 "tofai"（实测第六轮：两个域名各占一个名额）。
+            #
+            # 合并键用**规范化品牌名**（去修饰词 + 去标点）：实测第八轮
+            # "Character.AI" 与 "Character AI中文版"（汉化站）名字不同，
+            # 于是同一个产品白占两个名额，把真竞品挤出去了。
+            merge_key = _normalized_brand(candidate.name)
+            if not merge_key:
+                merge_key = candidate.name.strip().casefold()
+            existing = by_name.get(merge_key)
+            if existing is None:
+                by_name[merge_key] = candidate
+                title_by_name[merge_key] = title
+            else:
+                better = False
+                if existing.is_aggregator and not candidate.is_aggregator:
+                    better = True
+                elif not existing.is_aggregator and not candidate.is_aggregator:
+                    # 同一家的两个站：留更像官网的那个（域名里带自己品牌、
+                    # 域名更短）。实测第八轮：汉化站（characterapp.cn）会把
+                    # 真官网（character.ai）挤掉——只按"标题更贴名字"判会选错。
+                    if _candidate_rank(candidate) > _candidate_rank(existing):
+                        better = True
+                    elif _candidate_rank(candidate) == _candidate_rank(existing):
+                        if _title_is_exactish(title, candidate.name) and not _title_is_exactish(
+                            title_by_name.get(merge_key, ""), candidate.name
+                        ):
+                            better = True
+                if better:
+                    by_name[merge_key] = candidate
+                    title_by_name[merge_key] = title
+        if subject_skips:
+            result.notes.append(
+                f"排除主体自身的 {subject_skips} 个页面（吸收阶段按名字剔）")
+        return added
 
     # -- 阶段 3/4：逐家验证与反证 ----------------------------------------
     def site_scoped_queries(self, plan: ResearchPlan, competitor: str, stage: str) -> List[str]:

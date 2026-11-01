@@ -128,6 +128,10 @@ async def run_once(llm: Any, search_tool: Any, subject: str, style: str,
     # 测量剔"通道自证条目"时与 channel_pages 取并集 ✓）
     record["store_pages"] = list(getattr(discovery, "store_pages", []) or [])
     record["store_candidates"] = list(getattr(discovery, "store_candidates", []) or [])
+    # 实体下钻：补查过官网的品牌 + 新进池的候选（观测口径 ✓；
+    # 测量时用它与金标准命中的交集回答"下钻带来了多少" ✓）
+    record["deep_dive_brands"] = list(getattr(discovery, "deep_dive_brands", []) or [])
+    record["deep_dive_candidates"] = list(getattr(discovery, "deep_dive_candidates", []) or [])
     # 通道自己的 site: 查询失败（**不**作废整轮 ✓，但要看得见）
     record["channel_failures"] = list(getattr(discovery, "channel_failures", []) or [])
     # 名额账：每个名额给了谁、依据是什么、谁被挤掉了（纯观测 ✓）
