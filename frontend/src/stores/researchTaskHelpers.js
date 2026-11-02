@@ -155,6 +155,18 @@ export function getCompetitorFailedPages(competitor = {}) {
   return Array.isArray(list) ? list : []
 }
 
+/**
+ * 报告 id 必须是**报告 id**，不是任务 id。
+ *
+ * 历史列表的载荷同时带 id（报告）与 task_id（任务）。早前取 id 时把 task_id
+ * 排在前面，于是卡片上的「查看 / 删除」拿着任务 id 去要报告——接口按报告 id
+ * 查，任务 id 查不到，库里那十几份真实报告点开全是空白页。
+ */
+export function resolveReportId(payload = {}) {
+  const raw = payload.id || payload.task_id || Date.now()
+  return String(raw)
+}
+
 export function buildSourceRows(report = {}) {
   return getReportCompetitors(report)
     .map((item, index) => {

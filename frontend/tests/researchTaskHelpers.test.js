@@ -19,9 +19,23 @@ import {
   normalizeDeliverables,
   mapBackendStageField,
   resolveFrontendStage,
+  resolveReportId,
   resolveStreamTerminal,
   STAGE_MAP
 } from '../src/stores/researchTaskHelpers.js'
+
+test('the report id is the report id, never the task id', () => {
+  // 历史列表同时带 id（报告）与 task_id（任务）。取错就等于让卡片拿着任务 id
+  // 去要报告——真实报告点「查看」全是空白页。
+  assert.equal(
+    resolveReportId({ id: 'research_report_20260101_000000_abcdef12', task_id: 'c05c6ecc-c519' }),
+    'research_report_20260101_000000_abcdef12'
+  )
+  // 只有任务 id 时（实时任务还没产出报告）退回任务 id
+  assert.equal(resolveReportId({ task_id: 'c05c6ecc-c519' }), 'c05c6ecc-c519')
+  // 两者都没有时不能返回空串——空串会把列表里的条目合并成一条
+  assert.ok(resolveReportId({}).length > 0)
+})
 
 test('normalizes deliverables with report and PRD enabled by default', () => {
   assert.deepEqual(normalizeDeliverables(), {

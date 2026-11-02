@@ -14,6 +14,7 @@ import {
   mergeReportMeta,
   normalizeDeliverables,
   resolveFrontendStage,
+  resolveReportId,
   resolveStreamTerminal
 } from './researchTaskHelpers'
 
@@ -46,7 +47,7 @@ function applyTraceExtras(target, payload = {}) {
 
 function normalizeReport(payload, request = {}) {
   const markdown = payload.markdown || payload.report || payload.competitive_report || ''
-  const id = String(payload.task_id || payload.id || Date.now())
+  const id = resolveReportId(payload)
   const competitors = Array.isArray(payload.competitors)
     ? payload.competitors.length
     : (payload.competitors ?? 0)
@@ -472,13 +473,18 @@ export const useResearchStore = defineStore('research', () => {
   }
 
   async function getReport(id) {
-    const cached = readJson(`${REPORT_PREFIX}${id}`, null)
-    if (cached) return cached
-
-    const result = await researchApi.getReport(id)
-    const report = normalizeReport(result)
-    cacheReport(report)
-    return report
+    // 先取服务端，缓存只当离线兜底。缓存优先会让用户永远看到第一次打开时
+    // 那一份：报告被重生成、或服务端补了字段之后，界面都不会更新。
+    try {
+      const result = await researchApi.getReport(id)
+      const report = normalizeReport(result)
+      cacheReport(report)
+      return report
+    } catch (error) {
+      const cached = readJson(`${REPORT_PREFIX}${id}`, null)
+      if (cached) return cached
+      throw error
+    }
   }
 
   function updateReport(id, patch) {
