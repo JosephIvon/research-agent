@@ -745,6 +745,25 @@ def verify_report(
     # 附录（数据完整度等）是程序算出来的，不是模型主张：校验只看主体
     body = strip_machine_appendices(report)
 
+    # 空正文不得判通过。空串会让下面三处"空集守卫"全部走 1.0 分支，
+    # 结果是"什么都没验"被记成"覆盖 100%、扎根 100%"——把没查说成查过了。
+    # 守卫放在函数内部：调用方各自挡空是巧合，不是约定。
+    if not (body or "").strip():
+        return {
+            "passed": False,
+            "citation_coverage": 0.0,
+            "citation_validity": 0.0,
+            "grounding": 0.0,
+            "hallucinated_urls": [],
+            "violations": [{"type": "empty_report", "detail": "报告正文为空，未做任何引用校验"}],
+            "violation_count": 1,
+            "derived_claims": [],
+            "derived_claim_count": 0,
+            "claims_checked": 0,
+            "citations_seen": 0,
+            "evidence_count": len(store),
+        }
+
     # --- 引用有效性：报告里引用的 id 必须存在 ---
     all_cited = CITATION_RE.findall(body)
     unknown_ids = sorted({eid for eid in all_cited if store.get(eid) is None})
@@ -871,6 +890,7 @@ VIOLATION_HINTS = {
     "ungrounded_claim": "句中的数值在所引证据原文里找不到，可能是记错或臆造",
     "unknown_citation": "引用了不存在的证据 id（只能从下方证据表里选）",
     "hallucinated_url": "出现了本次未抓取到的 URL",
+    "empty_report": "报告正文为空——什么都没写，不能按满分的引用覆盖交付",
 }
 
 

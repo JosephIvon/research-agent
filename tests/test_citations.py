@@ -249,10 +249,17 @@ def test_report_without_numeric_claims_passes(store):
     assert result["citation_coverage"] == 1.0
 
 
-def test_empty_report_passes_rather_than_raising(store):
+def test_empty_report_fails_instead_of_claiming_a_perfect_score(store):
+    """空正文不得判通过。
+
+    此前空串让三处"空集守卫"全走 1.0 分支，输出"覆盖 100%、扎根 100%"——
+    什么都没校验却报满分，把"没查"说成"查过了"。
+    """
     result = verify_report("", store)
-    assert result["passed"] is True
-    assert result["violations"] == []
+    assert result["passed"] is False
+    assert result["citation_coverage"] == 0.0
+    assert result["grounding"] == 0.0
+    assert [v["type"] for v in result["violations"]] == ["empty_report"]
 
 
 # --------------------------------------------------------------------------
