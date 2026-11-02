@@ -320,7 +320,8 @@ def build_default_tools(llm_client, workspace: Dict[str, Any], budget: Any = Non
             return cached
         from src.workflow import search_stages
         tool = search_factory()
-        runner = search_stages.SearchStageRunner(tool)
+        from src.tools.officiality import DEFAULT_CACHE_PATH as _OFFICIALITY_CACHE
+        runner = search_stages.SearchStageRunner(tool, officiality_cache_path=_OFFICIALITY_CACHE)
         result = runner.run_competitor_discovery(plan)
         payload = {
             "entity": plan.entity_name,

@@ -118,7 +118,8 @@ async def run_group(
     ]
 
     # ---- 2. 搜索四段式（真实搜索引擎）------------------------------
-    runner = ss.SearchStageRunner(search_tool)
+    from src.tools.officiality import DEFAULT_CACHE_PATH
+    runner = ss.SearchStageRunner(search_tool, officiality_cache_path=DEFAULT_CACHE_PATH)
     stage_log: List[Dict[str, Any]] = []
 
     def _queries(name: str) -> List[str]:

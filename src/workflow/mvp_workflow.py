@@ -1000,7 +1000,8 @@ class MVPWorkflow:
             # 澄清与定界前置（计划已在模式分支之前生成，两种模式共用）
             if enable_search and not state["target_urls"]:
                 state["status"] = "researching"
-                runner = search_stages.SearchStageRunner(self._get_search_tool())
+                from src.tools.officiality import DEFAULT_CACHE_PATH as _OFFICIALITY_CACHE
+                runner = search_stages.SearchStageRunner(self._get_search_tool(), officiality_cache_path=_OFFICIALITY_CACHE)
                 entity_pages = runner.run_entity_anchor(plan)
                 state["entity_pages"] = entity_pages
                 discovery = runner.run_competitor_discovery(plan)

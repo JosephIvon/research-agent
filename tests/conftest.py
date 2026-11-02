@@ -55,3 +55,20 @@ def admin_headers():
     用 test_tenant_isolation.py 里的 real_admin_headers。
     """
     return _headers("admin-user", role="admin")
+@pytest.fixture(autouse=True)
+def _officiality_hermetic(monkeypatch):
+    """测试内官方性检查不出网（第十八轮 ✗ 既有 runner 测试因默认开启而真打
+    iTunes，套件慢了 ~1 分钟）。把 iTunes 查询替换成秒失败 → 候选全部降级
+    unknown（与生产失败语义一致 ✓）；需要具体判定的用例自行传 fetch= 或
+    预播种 _SELLER_CACHE（见 test_officiality.py）✓。"""
+    from src.tools import officiality as _off
+
+    _off._SELLER_CACHE.clear()
+    _off._FETCH_FAILED.clear()
+    _off._REDIRECT_CACHE.clear()
+    _off.set_disk_cache(None)
+
+    def _no_network(brand, country="us"):
+        raise RuntimeError("tests: officiality must not hit the network")
+
+    monkeypatch.setattr(_off, "_itunes_search", _no_network)

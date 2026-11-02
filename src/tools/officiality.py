@@ -18,7 +18,10 @@ sellerUrl 权威证实），但候选池里排"talkie 官网"第一的是 talkie
 from __future__ import annotations
 
 import json
+import os
 import re
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 from urllib import request as urlrequest
 from urllib.parse import urlparse
@@ -28,9 +31,66 @@ from src.workflow.site_types import normalized_brand
 
 # 进程级缓存：brand → 同品牌 App 的开发者站主机列表（空列表 = 查过但没有 ✓）
 _SELLER_CACHE: Dict[str, List[str]] = {}
+# 本次进程里查询失败的品牌（失败结果**不落盘** ✓——间歇失败不能固化成 unknown）
+_FETCH_FAILED: set = set()
 
 _TIMEOUT = 10
 _LIMIT = 10
+
+# 落盘缓存（第十八轮，预注册 §15 ✓）：跨进程复用 + iTunes 间歇失败的兜底。
+# 路径放 golden 目录（与行核审计同源 ✓）；None = 不启用落盘（测试默认 ✓）。
+DEFAULT_CACHE_PATH = str(Path(__file__).resolve().parents[2]
+                        / "evals" / "discovery_golden" / "officiality_cache.json")
+_DISK_PATH: Optional[str] = None
+
+
+def set_disk_cache(path: Optional[str]) -> None:
+    """启用/关闭落盘缓存（None 关闭 ✓）。进程内先读盘（load），写穿（save ✓）。"""
+    global _DISK_PATH
+    _DISK_PATH = path
+    if path:
+        load_disk_cache(path)
+
+
+def load_disk_cache(path: str) -> None:
+    """把落盘缓存并入进程缓存（进程内已有/已失败的键不覆盖 ✓）。"""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 —— 没有缓存文件/损坏 = 冷启动 ✓
+        return
+    for brand, sellers in (data.get("brands") or {}).items():
+        if brand not in _SELLER_CACHE and brand not in _FETCH_FAILED:
+            _SELLER_CACHE[brand] = [str(h) for h in (sellers or [])]
+    for host, target in (data.get("redirects") or {}).items():
+        if host not in _REDIRECT_CACHE:
+            _REDIRECT_CACHE[host] = (str(target) if target else None)
+
+
+def save_disk_cache(path: Optional[str] = None) -> None:
+    """把进程缓存写盘（原子替换 ✓；**跳过失败品牌** ✓；失败静默——缓存坏了
+    不能拖垮测量 ✓）。"""
+    target = path or _DISK_PATH
+    if not target:
+        return
+    brands = {b: hosts for b, hosts in _SELLER_CACHE.items()
+              if b not in _FETCH_FAILED}
+    redirects = {h: t for h, t in _REDIRECT_CACHE.items() if t}
+    payload = {
+        "version": 1,
+        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "note": "officiality 判定缓存：brands=品牌→开发者站主机；redirects=域→重定向终点。"
+                "来源 App Store sellerUrl/developerUrl + HTTP 重定向跟随（§14/§15 ✓）。"
+                "脚本可重生成（删掉本文件即可）。",
+        "brands": brands,
+        "redirects": redirects,
+    }
+    try:
+        tmp = f"{target}.tmp"
+        Path(tmp).write_text(json.dumps(payload, ensure_ascii=False, indent=2),
+                             encoding="utf-8")
+        os.replace(tmp, target)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _itunes_search(brand: str, country: str = "us") -> List[Dict[str, Any]]:
@@ -96,6 +156,7 @@ def seller_hosts_for_brand(brand: str, fetch: Optional[Any] = None) -> List[str]
     if key in _SELLER_CACHE:
         return _SELLER_CACHE[key]
     sellers: List[str] = []
+    ok = True
     try:
         results = (fetch or _itunes_search)(key)
         for item in results or []:
@@ -114,7 +175,12 @@ def seller_hosts_for_brand(brand: str, fetch: Optional[Any] = None) -> List[str]
                         sellers.append(host)
     except Exception:  # noqa: BLE001 —— 查询失败按 unknown 处理，不拖垮链路 ✓
         sellers = []
+        ok = False
     _SELLER_CACHE[key] = sellers
+    if not ok:
+        # **失败不落盘**（第十七轮教训 #106 ✗）：查不到 ≠ 没有开发者站，
+        # 失败结果进盘会把"间歇失败"固化成"永久 unknown"✗。
+        _FETCH_FAILED.add(key)
     return sellers
 
 
@@ -147,12 +213,17 @@ def classify_officiality(candidate_host: str, brand: str,
 
 
 def annotate_officiality(items: Sequence[Any], max_lookups: int = 16,
-                         fetch: Optional[Any] = None) -> Dict[str, Any]:
+                         fetch: Optional[Any] = None,
+                         cache_path: Optional[str] = None) -> Dict[str, Any]:
     """给候选批量标注 officiality（verified/suspect/unknown），返回统计。
 
     items 是候选对象（有 .name/.url/.officiality）或等价 dict——用 setattr
     同时支持两者 ✓。有界：最多查 max_lookups 个**不同品牌**（缓存命中不算 ✓）。
+    cache_path 给出时：先读盘（跨进程复用 ✓），结束后写穿（下轮免查 ✓，
+    iTunes 间歇失败也有兜底 ✓——失败品牌不落盘 ✗ 见 seller_hosts_for_brand）。
     """
+    if cache_path:
+        set_disk_cache(cache_path)
     counts = {"verified": 0, "suspect": 0, "unknown": 0}
     looked_up = 0
     for item in items:
@@ -171,6 +242,8 @@ def annotate_officiality(items: Sequence[Any], max_lookups: int = 16,
         except Exception:  # noqa: BLE001 —— dict 候选走 setdefault
             if isinstance(item, dict):
                 item["officiality"] = verdict
+    if cache_path:
+        save_disk_cache(cache_path)
     return {"counts": counts, "lookups": looked_up,
             "suspects": [str(getattr(i, "name", None) or (i.get("name") if isinstance(i, dict) else ""))
                          for i in items

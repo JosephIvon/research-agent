@@ -91,7 +91,8 @@ async def run_once(llm: Any, search_tool: Any, subject: str, style: str,
         "queries": {stage: plan.queries_for(stage)
                     for stage in ("entity_anchor", "competitor_discovery")},
     }
-    runner = ss.SearchStageRunner(search_tool)
+    from src.tools.officiality import DEFAULT_CACHE_PATH
+    runner = ss.SearchStageRunner(search_tool, officiality_cache_path=DEFAULT_CACHE_PATH)
     anchor_pages = runner.run_entity_anchor(plan)
     discovery = runner.run_competitor_discovery(plan)
 

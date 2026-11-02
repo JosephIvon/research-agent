@@ -44,6 +44,17 @@ def _itunes_rows():
 @pytest.fixture(autouse=True)
 def _fresh_cache():
     off._SELLER_CACHE.clear()
+    off._FETCH_FAILED.clear()
+    off._REDIRECT_CACHE.clear()
+    off.set_disk_cache(None)
+
+
+def _boom(b):
+    raise RuntimeError("api down")
+
+
+def _disk_fallback_itunes_rows():
+    return _itunes_rows()
 
 
 def test_seller_hosts_only_same_brand_with_brand_domain():
@@ -58,8 +69,10 @@ def test_classify_verified_suspect_unknown():
     assert off.classify_officiality(
         "https://app.talkie-ai.com/login", "Talkie",
         fetch=lambda b: _itunes_rows()) == "verified"
+    off._REDIRECT_CACHE["talkieai.cc"] = None  # 短路 ✓
     assert off.classify_officiality(
-        "https://talkieai.cc/", "Talkie", fetch=lambda b: _itunes_rows()) == "suspect"
+        "https://talkieai.cc/", "Talkie", fetch=lambda b: _itunes_rows(),
+        redirect_lookup=lambda h: None) == "suspect"
     # 查不到同品牌 App → unknown（永不罚 ✓）
     assert off.classify_officiality(
         "https://whatever.example/", "毫无关系的品牌", fetch=lambda b: []) == "unknown"
@@ -78,9 +91,11 @@ def test_officiality_cache_prevents_refetch():
         calls.append(b)
         return _itunes_rows()
 
+    off._REDIRECT_CACHE["talkieai.cc"] = None  # 短路：不真探重定向 ✓
     off.seller_hosts_for_brand("Talkie", fetch=_counting)
     off.seller_hosts_for_brand("Talkie", fetch=_counting)
-    off.classify_officiality("https://talkieai.cc/", "Talkie", fetch=_counting)
+    off.classify_officiality("https://talkieai.cc/", "Talkie", fetch=_counting,
+                             redirect_lookup=lambda h: None)
     assert len(calls) == 1, "进程级缓存：同品牌只查一次 ✓"
 
 
@@ -195,6 +210,40 @@ def test_verification_skips_suspect_but_keeps_counter_evidence():
                                             "counter_evidence"}, "unknown 永不罚 ✓"
 
 
+def test_disk_cache_roundtrip_and_failure_exclusion(tmp_path):
+    """落盘缓存（§15）：① 成功判定写盘、跨"进程"（清空进程缓存）复用 ✓；
+    ② iTunes 失败的品牌**不落盘** ✗（间歇失败不能固化成 unknown ✓）；
+    ③ 失败时盘里有历史判定 → 兜底生效 ✓。"""
+    import json as _json
+
+    cache_file = tmp_path / "officiality_cache.json"
+
+    # 第一"进程"：talkie 查询成功，broken 查询失败
+    off._SELLER_CACHE.clear(); off._FETCH_FAILED.clear(); off._REDIRECT_CACHE.clear()
+    def _fetch(brand):
+        if brand == "broken":
+            raise RuntimeError("api down")
+        if brand == "talkie":
+            return [{"trackName": "Talkie Lab - AI Playground",
+                     "sellerUrl": "https://talkie-ai.com/"}]
+        return []
+    off._REDIRECT_CACHE["talkieai.cc"] = None  # 短路 ✓
+    off.annotate_officiality(
+        [{"name": "Talkie", "url": "https://talkieai.cc/", "officiality": ""},
+         {"name": "Broken", "url": "https://b.example/", "officiality": ""}],
+        fetch=_fetch, cache_path=str(cache_file))
+    disk = _json.loads(cache_file.read_text(encoding="utf-8"))
+    assert disk["brands"].get("talkie") == ["talkie-ai.com"], "成功判定落盘 ✓"
+    assert "broken" not in disk["brands"], "失败品牌不落盘 ✗ 不能固化成 unknown ✓"
+
+    # 第二"进程"：进程缓存清空、启动时载盘、iTunes 全挂 → talkie 从盘兜底 ✓
+    off._SELLER_CACHE.clear(); off._FETCH_FAILED.clear(); off._REDIRECT_CACHE.clear()
+    off.set_disk_cache(str(cache_file))
+    verdict = off.classify_officiality(
+        "https://talkieai.cc/", "Talkie", fetch=_boom, redirect_lookup=lambda h: None)
+    assert verdict == "suspect", "盘缓存兜底：iTunes 挂了也能判 suspect ✓"
+
+
 def test_matrix_row_warning_for_suspect_provenance():
     """矩阵 provenance（§14 产品侧）：suspect 行带 ⚠️ 官方性警示（数据来源可疑），
     verified/unknown 行不加注（不刷屏 ✓）；按主机对齐（抓取页与入选页不同路径 ✓）。"""
@@ -219,6 +268,10 @@ def test_matrix_row_warning_for_suspect_provenance():
 def test_search_stage_annotates_officiality(monkeypatch):
     off._SELLER_CACHE.clear()
     off._SELLER_CACHE["talkie"] = ["talkie-ai.com"]
+    # hermetic（第十八轮教训 ✗ 66s 真网络）：未播种品牌不再真打 iTunes，
+    # 重定向探测也用进程缓存短路 ✓
+    monkeypatch.setattr(off, "_itunes_search", lambda brand, country="us": [])
+    off._REDIRECT_CACHE["talkieai.cc"] = None
 
     class _Fake:
         def search(self, query, num_results=None):

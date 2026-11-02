@@ -307,7 +307,8 @@ class SearchStageRunner:
                  enable_deep_dive: bool = False,
                  max_deep_dives: int = 8,
                  enable_officiality: bool = True,
-                 max_officiality_lookups: int = 16):
+                 max_officiality_lookups: int = 16,
+                 officiality_cache_path: Optional[str] = None):
         self.search_tool = search_tool
         self.num_results = num_results
         # C3 目录页通道（默认开）：模型不知道、搜索也搜不到的长尾产品，
@@ -327,8 +328,11 @@ class SearchStageRunner:
         self.max_deep_dives = max_deep_dives
         # 官方性检查（默认开）：App Store sellerUrl 交叉验证，suspect 降权 ✗
         # （2026-11-02 行核：talkieai.cc 蹭名站污染池子与品牌口径 ✗）。
+        # 落盘缓存**默认关**（测试保持隔离 ✓），生产工具显式传
+        # officiality.DEFAULT_CACHE_PATH（跨进程复用 + 失败兜底 ✓）。
         self.enable_officiality = enable_officiality
         self.max_officiality_lookups = max_officiality_lookups
+        self.officiality_cache_path = officiality_cache_path
         # 主体锚定的结果缓存：竞品发现阶段要据此排除"主体自己的官方页"
         self._entity_pages: List[Dict[str, Any]] = []
         # 主体自己官网的域名：按"实体锚定阶段排名最高的官网"判定。
@@ -619,7 +623,8 @@ class SearchStageRunner:
                 from src.tools.officiality import annotate_officiality
 
                 summary = annotate_officiality(
-                    pool, max_lookups=self.max_officiality_lookups)
+                    pool, max_lookups=self.max_officiality_lookups,
+                    cache_path=self.officiality_cache_path)
                 counts = summary["counts"]
                 suspects = summary["suspects"]
                 result.notes.append(

@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "updated_at": "2026-11-02T10:31:32+00:00",
+  "note": "officiality 判定缓存：brands=品牌→开发者站主机；redirects=域→重定向终点。来源 App Store sellerUrl/developerUrl + HTTP 重定向跟随（§14/§15 ✓）。脚本可重生成（删掉本文件即可）。",
+  "brands": {
+    "rubii": [
+      "rubii.ai"
+    ],
+    "tavoai": [],
+    "saylo": [
+      "www.sayloai.com"
+    ],
+    "emochi": [],
+    "tofai": [],
+    "cakumi": [
+      "cakumi.cn"
+    ],
+    "soulai": [],
+    "operitai": [],
+    "echomeai": [],
+    "grokai": [],
+    "aiboyfriend": [],
+    "aicharacterchat": [],
+    "aidungeon": [
+      "aidungeon.com"
+    ],
+    "aifriend3dtalkingbuddy": [],
+    "aigamemasterdungeonrpg": [],
+    "aigirlfriendchatroleplay": [],
+    "aipeeps": [],
+    "aitales": [],
+    "aiallure": [
+      "aiallure.app"
+    ],
+    "aikoaigirlfriend3dgame": [],
+    "aipal": [],
+    "aigirlfriendsai": [],
+    "adventureaitextbasedrpg": [],
+    "afizzyaicharacterchat": [],
+    "agnai": [],
+    "aiboyfriendchat": [],
+    "aicassoaipersonas": [],
+    "aihimeaiwaifugirlfriend": [],
+    "aihimeanimewaifuchat": [],
+    "aimoraaigirlfriendsimulator": [],
+    "aisekai": [],
+    "aiyuchat": [],
+    "alienchat": [],
+    "ambyuni": [],
+    "amorlinkai": [],
+    "angelai": [],
+    "anuneko": [],
+    "anydoor": [],
+    "arcaneland": [],
+    "backstageaiboyfriendchat": [],
+    "beastaitextadventures": [],
+    "botifyai": [],
+    "bubioai": [],
+    "chai": [
+      "chaiox.com"
+    ],
+    "candyai": [],
+    "caveduck": [
+      "caveduck.io"
+    ],
+    "charactercafe": [],
+    "characterai": [],
+    "charisma": [
+      "www.charismamobile.com",
+      "charismalab.io"
+    ],
+    "chatfai": [],
+    "chatgai": [],
+    "chatmosphere": [],
+    "cherrypopai": [],
+    "chubai": [
+      "chubai.cl"
+    ],
+    "ciallo": [],
+    "crushchat": [],
+    "crushonai": [],
+    "crushr": [],
+    "darlinkai": [],
+    "feelinai": [],
+    "omate": [
+      "omate.net"
+    ],
+    "replika": [
+      "replika.com"
+    ],
+    "talkie": [
+      "talkie-ai.com"
+    ],
+    "deucesaicompanionchat": [],
+    "discordpal": [],
+    "dolores": [
+      "www.mariadolores.com.br"
+    ],
+    "doppleai": [],
+    "dreamcompanion": [],
+    "evaaisoulmate": [],
+    "niiniai": []
+  },
+  "redirects": {
+    "saylostudio.com": "saylostudio.com",
+    "replika.ai": "replika.com"
+  }
+}
