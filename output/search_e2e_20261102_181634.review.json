@@ -1,0 +1,1533 @@
+{
+  "_说明": "逐条判断：这个 URL 是不是该主体的真竞品官网（产品自己的站点）。把 verdict 改成 true / false，note 可写理由。填完运行：uv run python tool_e2e_search_real.py --judge-review <本文件路径>",
+  "verdicts": [
+    {
+      "subject": "猫箱",
+      "style": "task",
+      "name": "character.ai",
+      "url": "https://character.ai/",
+      "site_type": "product_site",
+      "site_type_label": "产品官网",
+      "score": 0.75,
+      "reasons": [
+        "像产品自己的官网",
+        "是模型提名的同赛道竞品"
+      ],
+      "verdict": null,
+      "note": ""
+    },
+    {
+      "subject": "猫箱",
+      "style": "task",
+      "name": "星野",
+      "url": "https://www.ai-xingye.cn/",
+      "site_type": "product_site",
+      "site_type_label": "产品官网",
+      "score": 0.75,
+      "reasons": [
+        "像产品自己的官网",
+        "是模型提名的同赛道竞品"
+      ],
+      "verdict": null,
+      "note": ""
+    },
+    {
+      "subject": "猫箱",
+      "style": "task",
+      "name": "筑梦岛",
+      "url": "https://www.zhumengdao.com/",
+      "site_type": "product_site",
+      "site_type_label": "产品官网",
+      "score": 0.75,
+      "reasons": [
+        "像产品自己的官网",
+        "是模型提名的同赛道竞品"
+      ],
+      "verdict": null,
+      "note": ""
+    },
+    {
+      "subject": "猫箱",
+      "style": "task",
+      "name": "蔚蓝陪伴",
+      "url": "https://www.momotalk.top/",
+      "site_type": "product_site",
+      "site_type_label": "产品官网",
+      "score": 0.75,
+      "reasons": [
+        "像产品自己的官网",
+        "是模型提名的同赛道竞品"
+      ],
+      "verdict": null,
+      "note": ""
+    },
+    {
+      "subject": "猫箱",
+      "style": "task",
+      "name": "PolyBuzz",
+      "url": "https://www.polybuzz.ai/",
+      "site_type": "product_site",
+      "site_type_label": "产品官网",
+      "score": 0.75,
+      "reasons": [
+        "像产品自己的官网",
+        "是模型提名的同赛道竞品"
+      ],
+      "verdict": null,
+      "note": ""
+    },
+    {
+      "subject": "猫箱",
+      "style": "task",
+      "name": "Talkie",
+      "url": "https://talkieai.cc/",
+      "site_type": "product_site",
+      "site_type_label": "产品官网",
+      "score": 0.75,
+      "reasons": [
+        "像产品自己的官网",
+        "是模型提名的同赛道竞品"
+      ],
+      "verdict": null,
+      "note": ""
+    },
+    {
+      "subject": "猫箱",
+      "style": "task",
+      "name": "Tofai",
+      "url": "https://tofai.top/",
+      "site_type": "product_site",
+      "site_type_label": "产品官网",
+      "score": 0.75,
+      "reasons": [
+        "像产品自己的官网",
+        "是模型提名的同赛道竞品"
+      ],
+      "verdict": null,
+      "note": ""
+    },
+    {
+      "subject": "猫箱",
+      "style": "task",
+      "name": "恋与深空",
+      "url": "http://lovedeepspace.com/",
+      "site_type": "product_site",
+      "site_type_label": "产品官网",
+      "score": 0.65,
+      "reasons": [
+        "像产品自己的官网",
+        "是模型提名的同赛道竞品"
+      ],
+      "verdict": null,
+      "note": ""
+    }
+  ],
+  "records": [
+    {
+      "subject": "猫箱",
+      "style": "task",
+      "query": "帮我看看猫箱这个产品的全部竞品信息",
+      "started_at": "2026-11-02 18:08:18",
+      "entity": {
+        "name": "猫箱",
+        "type": "app",
+        "what_it_is": "网易推出的AI角色扮演与情感陪伴应用，支持创建角色、剧情互动和持续对话。",
+        "confidence": 0.88,
+        "alternatives": [],
+        "source": "model",
+        "error": ""
+      },
+      "criteria": {
+        "layers": [
+          "direct",
+          "alternative",
+          "adjacent"
+        ],
+        "min_count": 4,
+        "max_count": 8,
+        "admission_rule": "按同客群×同场景×同交付形态纳入：面向大众的AI角色扮演或情感陪伴产品，以App或Web提供角色创建、持续对话、记忆等体验；通用AI助手和AI陪伴游戏分列替代、相邻层。"
+      },
+      "angles": [
+        {
+          "angle": "feature",
+          "label": "功能",
+          "priority": "secondary",
+          "weight": 0.35,
+          "hints": [
+            "功能",
+            "定价",
+            "会员",
+            "角色创建"
+          ]
+        },
+        {
+          "angle": "business",
+          "label": "业务价值",
+          "priority": "secondary",
+          "weight": 0.3,
+          "hints": [
+            "商业模式",
+            "用户规模",
+            "渠道合作",
+            "定价"
+          ]
+        },
+        {
+          "angle": "engineering",
+          "label": "研发与实现",
+          "priority": "secondary",
+          "weight": 0.2,
+          "hints": [
+            "模型说明",
+            "技术博客",
+            "隐私政策",
+            "安全机制"
+          ]
+        },
+        {
+          "angle": "product",
+          "label": "产品与体验",
+          "priority": "secondary",
+          "weight": 0.15,
+          "hints": [
+            "首次体验",
+            "角色广场",
+            "聊天流程",
+            "用户反馈"
+          ]
+        }
+      ],
+      "stages": [
+        {
+          "stage": "entity_anchor",
+          "queries": [
+            "猫箱 官网",
+            "猫箱 App 官网"
+          ],
+          "unique_urls": 5,
+          "kept": 5,
+          "titles": [
+            "猫箱官网 — 下载猫箱 App，和心动 AI 探索剧情宇宙",
+            "猫箱官网_猫箱电脑版官方下载_猫箱官方正版最新下载安装入口",
+            "猫箱官网 - 剧情宇宙入口 | 心动互动轨与沉浸对话舱通道入口",
+            "猫箱创作 - 创作 AI 角色以及 AI 故事，沉浸式聊天，情感陪伴",
+            "猫箱 - 小米应用商店"
+          ]
+        },
+        {
+          "stage": "competitor_discovery",
+          "queries": [
+            "猫箱 竞品",
+            "猫箱 类似应用",
+            "AI角色扮演 app 官网",
+            "AI角色扮演 官网",
+            "AI情感陪伴 app 官网",
+            "AI情感陪伴 官网",
+            "AI聊天应用 app 官网",
+            "AI聊天应用 官网"
+          ],
+          "candidates": 158,
+          "selected": 8
+        },
+        {
+          "stage": "per_competitor_verify",
+          "queries": [],
+          "results": 51
+        },
+        {
+          "stage": "counter_evidence",
+          "queries": [],
+          "results": 50,
+          "titles": [
+            "Character.AI深度测评：日均使用2小时的AI陪伴神器，凭什么让2000万人...",
+            "Character.AI 2026评测：功能、定价与深度分析 - AI 织梦博客",
+            "Character.AI 被用户骂“阉割”：AI 伴侣应用开始支付算力账单 - ic.wor...",
+            "一文详解Character AI：实用指南+ ChatGPT、Gemini对比分析",
+            "怎么评价《星野》这款Ai聊天App? - 知乎",
+            "怎么评价《星野》这款Ai聊天App? - 知乎",
+            "星野的最新评论和评分-应用宝官网",
+            "星野用户研究报告 | 情感陪伴AI产品分析"
+          ]
+        }
+      ],
+      "candidates": [
+        {
+          "name": "星野",
+          "url": "https://yangyanyan1.com/assets/files/%E7%AB%9E%E5%93%81%E5%88%86%E6%9E%90%E6%8A%A5%E5%91%8A.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "星野",
+          "url": "https://www.10100.com/article/107015914",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "比猫箱更自由的AI聊天软件有哪些？2026年5款主流平替推荐与对比",
+          "url": "https://wenku.baidu.com/view/739c3d5eebf9aef8941ea76e58fafab068dc4452.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "猫箱AI用腻了？2026实测5款替代品，从免费到高品质全面对比",
+          "url": "https://zhangchengxiang.com/blog/catbox-alternative-2026.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "字节最赚钱的AI，竟然不是豆包？",
+          "url": "https://www.huxiu.com/article/4899267.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "星野",
+          "url": "https://www.woshipm.com/ai/6160915.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "国内外虚拟 AI 聊天 APP 竞品分析",
+          "url": "https://www.woshipm.com/evaluating/6146340.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "猫箱替代app推荐：类似猫箱的AI角色扮演软件（2026）",
+          "url": "https://teasa.ai/zh-CN/guides/maoxiang-alternative",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "有什么类似猫箱app的软件？",
+          "url": "https://www.zhihu.com/question/12473998804",
+          "aggregator": true,
+          "site_type": "ugc_platform",
+          "in_track": true
+        },
+        {
+          "name": "比猫箱更开放的AI聊天软件有哪些？实测6款平替优缺点对比",
+          "url": "https://wenku.baidu.com/view/4587aecdd988d0d233d4b14e852458fb770b3897.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "跟猫箱一样但不用看广收费",
+          "url": "https://zhidao.baidu.com/question/1652851205909309900.html",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": false
+        },
+        {
+          "name": "求推荐类似猫箱的软件",
+          "url": "https://tieba.baidu.com/p/9202775905",
+          "aggregator": true,
+          "site_type": "ugc_platform",
+          "in_track": true
+        },
+        {
+          "name": "Rubii",
+          "url": "https://rubii.ai/zh-hant",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "春宵AI",
+          "url": "https://chunxiaoai.app/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Rubii",
+          "url": "https://www.rubiiapp.com.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "tavoai",
+          "url": "https://www.tavoai.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "PurrlyAI酒馆",
+          "url": "https://www.purrlyai.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Saylo 中文官网 · AI 角色扮演聊天 App",
+          "url": "https://saylo.site/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "AI角色扮演聊天",
+          "url": "https://nakamaai.app/zh/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "春水Live 官网入口",
+          "url": "https://chunshui.chat/",
+          "aggregator": true,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "AI 角色扮演",
+          "url": "https://www.airoleplay.ai/zh",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Emochi",
+          "url": "https://emochi.org/cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Tofai",
+          "url": "https://www.tofaipro.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Tofai",
+          "url": "https://tofai-app.net.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Tofai",
+          "url": "https://www.tofapp.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Tofai",
+          "url": "https://tofai.top/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "TheOne陪伴",
+          "url": "https://theone-ai.net.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Cakumi",
+          "url": "https://cakumi.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "SoulAI",
+          "url": "https://www.soulsai.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "幻语AI",
+          "url": "https://huanyu-ai.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "OperitAI",
+          "url": "https://operitai.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "蔚蓝陪伴",
+          "url": "https://www.weilanpeiban.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "echomeai",
+          "url": "https://www.echomeai.net/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "AI女友",
+          "url": "https://aigirl.org.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Grok AI",
+          "url": "https://www.grokaiapp.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "我在AI",
+          "url": "https://wz-ai.com.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Feelin AI",
+          "url": "https://www.feelingw.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "KirakiraAI聊天",
+          "url": "https://kirakiraai.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "ShineAI聊天软件",
+          "url": "https://www.shineiapp.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Feelin AI",
+          "url": "https://feelin.net.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Saylo",
+          "url": "https://saylostudio.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "幻梦AI",
+          "url": "https://www.hmengai.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "iFeel AI",
+          "url": "https://www.ifeelai.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Feelin AI",
+          "url": "https://www.feelinn.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "character.ai",
+          "url": "https://character.ai/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "character.ai",
+          "url": "https://beta.character.ai/login",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Character AI中文版",
+          "url": "https://www.characterapp.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Character.AI",
+          "url": "https://characterai.aiproducthub.cn/",
+          "aggregator": true,
+          "site_type": "directory",
+          "in_track": true
+        },
+        {
+          "name": "Character.AI",
+          "url": "https://aiproducthub.cn/zt/22981.html",
+          "aggregator": true,
+          "site_type": "directory",
+          "in_track": true
+        },
+        {
+          "name": "Create a Character",
+          "url": "https://character.ai/character/new",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "PolyBuzz",
+          "url": "https://www.polybuzz.ai/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "PolyBuzz",
+          "url": "https://www.polybuzz.ai/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Polybuzz",
+          "url": "https://polybuzz.org/cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Polybuzz",
+          "url": "https://polybuzz.org/hk/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "PolyBuzz",
+          "url": "https://www.polybuzz.ai/character/chat/polybuzz-8LWYC",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": true
+        },
+        {
+          "name": "PolyBuzz",
+          "url": "https://polybuzz-ai.io/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "PolyBuzz",
+          "url": "https://app.polybuzz.ai/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "PolyBuzz",
+          "url": "https://www.polybuzz.ai/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Talkie",
+          "url": "https://talkieai.cc/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Talkie",
+          "url": "https://app.talkie.pro/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "Talkie",
+          "url": "https://talkie-ai.appwiki.net/",
+          "aggregator": true,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "TofAi",
+          "url": "https://www.tofaiapp.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "tofai",
+          "url": "https://tofai.net.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Tofai",
+          "url": "https://www.tofaai.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Tofai",
+          "url": "https://www.tofaixz.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "tofai AI",
+          "url": "https://tofai-app.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "恋与深空",
+          "url": "https://deepspace.papegames.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "恋与深空",
+          "url": "http://lovedeepspace.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "恋与深空",
+          "url": "https://deepspace.papegames.com/news/10",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": false
+        },
+        {
+          "name": "恋与深空",
+          "url": "https://deepspace.papegames.com/home",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "星野",
+          "url": "https://hoshinoresorts.com/ch/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "星野",
+          "url": "https://hoshinoresorts.com/zh/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "星野",
+          "url": "https://www.ai-xingye.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "星野",
+          "url": "https://www.xingyeai.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "星野",
+          "url": "https://hoshinoresorts.com/zh_cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "筑梦岛",
+          "url": "https://m.zhumengdao.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "筑梦岛",
+          "url": "https://www.zhumengdao.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "筑梦岛",
+          "url": "https://zhumengdao.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "筑梦岛",
+          "url": "https://sj.qq.com/appdetail/com.yuewen.dreamer",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "筑梦岛",
+          "url": "https://m.ali213.net/news/gl2507/1681377.html",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": true
+        },
+        {
+          "name": "蔚蓝陪伴",
+          "url": "https://www.momotalk.top/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "蔚蓝陪伴",
+          "url": "https://platform.weilanpeiban.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "jimeng",
+          "url": "https://jimeng.jianying.com/ai-tool/home/",
+          "aggregator": true,
+          "site_type": "media",
+          "in_track": false
+        },
+        {
+          "name": "小冰岛",
+          "url": "https://island.xiaoice.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "WOW",
+          "url": "https://www.wow.fun/Home",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "万话",
+          "url": "https://wantalk.baidu.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "麦句",
+          "url": "https://m.deepturing.cn/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "独响",
+          "url": "https://www.duxiangai.com",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "捏Ta",
+          "url": "https://nieta.art/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "百川角色大模型",
+          "url": "https://npc.baichuan-ai.com",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "通义星尘",
+          "url": "https://tongyi.aliyun.com/xingchen/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Glow",
+          "url": "https://www.glowapp.tech/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Instance AI",
+          "url": "https://instanceai.pro/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "AnyDoor",
+          "url": "https://edit.anybagel.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Ohai",
+          "url": "https://beta.ohai.bot/discover",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "dreamjourneyai",
+          "url": "https://www.dreamjourneyai.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Visit Website",
+          "url": "https://dreamgen.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "Visit Website",
+          "url": "https://dreampal.ai/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "Visit Website",
+          "url": "https://www.jupi.chat/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "Visit Website",
+          "url": "https://app.sagarpg.io/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "Visit Website",
+          "url": "https://www.aigamemaster.app/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "Visit Website",
+          "url": "https://kajiwoto.ai/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "Visit Website",
+          "url": "https://tipsy.chat/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "Visit Website",
+          "url": "https://www.priveeai.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "rpggo",
+          "url": "https://www.rpggo.ai/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "Visit Website",
+          "url": "https://textadventure.v5games.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "Visit Website",
+          "url": "https://ai-adventure.steamship.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "Visit Website",
+          "url": "https://rpgaiselfie.com/",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "AI角色扮演",
+          "url": "http://cosplay.loadata.com",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "App Store 上的“情感伴侣”",
+          "url": "https://apps.apple.com/cn/app/%E6%83%85%E6%84%9F%E4%BC%B4%E4%BE%A3/id6745092398",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": true
+        },
+        {
+          "name": "‎Moor AI",
+          "url": "https://www.lighteryou.cn",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Glow",
+          "url": "https://kdocs.cn",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "戏格",
+          "url": "https://h5.zhumengdao.com",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Hobby",
+          "url": "https://oss-prod.hobby666.com",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "戏鲸",
+          "url": "https://m.app.mi.com/details?id=com.piaxiya.app",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": true
+        },
+        {
+          "name": "Moodly",
+          "url": "https://text.guaiguaijizhang.com",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "灵动次元",
+          "url": "https://www.lingdongciyuan.com",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Moo日记",
+          "url": "https://m.app.mi.com/details?id=com.sx.xiaoai",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": true
+        },
+        {
+          "name": "汉家江湖",
+          "url": "https://www.hanjiasongshu.com",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "剑侠世界3",
+          "url": "https://js3.xoyo.com",
+          "aggregator": false,
+          "site_type": "product_site",
+          "in_track": false
+        },
+        {
+          "name": "洛克王国：世界",
+          "url": "https://www.wandoujia.com/apps/8100514",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "天天三国",
+          "url": "https://www.wandoujia.com/apps/8186314",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "倩女幽魂",
+          "url": "https://www.wandoujia.com/apps/7043356",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "恋与深空",
+          "url": "https://www.wandoujia.com/",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "问道",
+          "url": "https://www.wandoujia.com/apps/6651806",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "暗黑破坏神：不朽",
+          "url": "https://www.wandoujia.com/apps/7891481",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "幻灵修仙传",
+          "url": "https://www.wandoujia.com/apps/8129026",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "龙之国物语",
+          "url": "https://www.wandoujia.com/apps/8129625",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "剑侠传奇",
+          "url": "https://www.wandoujia.com/apps/8129696",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "斗罗大陆：魂师对决",
+          "url": "https://www.wandoujia.com/apps/8130690",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "女神联盟2",
+          "url": "https://www.wandoujia.com/apps/7630412",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "御剑红尘",
+          "url": "https://www.wandoujia.com/apps/8063993",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "少年西游记",
+          "url": "https://www.wandoujia.com/apps/7045402",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "梦幻西游",
+          "url": "https://www.wandoujia.com/apps/6602792",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "魔力宝贝：旅人",
+          "url": "https://www.wandoujia.com/apps/8175902",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "云上城之歌",
+          "url": "https://www.wandoujia.com/apps/8059231",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "双生幻想",
+          "url": "https://www.wandoujia.com/apps/8174715",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "航海王",
+          "url": "https://www.wandoujia.com/apps/6587617",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "王者战魂",
+          "url": "https://www.wandoujia.com/apps/1671783",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "深空之眼",
+          "url": "https://www.wandoujia.com/apps/8333260",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "黑色沙漠",
+          "url": "https://www.wandoujia.com/apps/8333460",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "尘白禁区",
+          "url": "https://www.wandoujia.com/apps/8278057",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "QQ",
+          "url": "https://www.wandoujia.com/apps/566489",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "酷狗音乐",
+          "url": "https://www.wandoujia.com/apps/34221",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "优酷视频",
+          "url": "https://www.wandoujia.com/apps/2398055",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "腾讯视频",
+          "url": "https://www.wandoujia.com/apps/280237",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "QQ浏览器",
+          "url": "https://www.wandoujia.com/apps/44621",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "腾讯手机管家",
+          "url": "https://www.wandoujia.com/apps/690755",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "球球大作战",
+          "url": "https://www.wandoujia.com/apps/6618368",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "开心消消乐",
+          "url": "https://www.wandoujia.com/apps/5709673",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "欢乐斗地主",
+          "url": "https://www.wandoujia.com/apps/174761",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "地铁跑酷",
+          "url": "https://www.wandoujia.com/apps/172353",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "迷你世界",
+          "url": "https://www.wandoujia.com/apps/7596455",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "汤姆猫跑酷",
+          "url": "https://www.wandoujia.com/apps/7596659",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "疯狂动物园",
+          "url": "https://www.wandoujia.com/apps/7480339",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "JJ斗地主",
+          "url": "https://www.wandoujia.com/apps/279937",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "密室逃脱13秘密任务",
+          "url": "https://www.wandoujia.com/apps/7596402",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        },
+        {
+          "name": "王者荣耀",
+          "url": "https://www.wandoujia.com/apps/6648837",
+          "aggregator": true,
+          "site_type": "app_store",
+          "in_track": false
+        }
+      ],
+      "selected": [
+        {
+          "name": "character.ai",
+          "url": "https://character.ai/",
+          "score": 0.75,
+          "reasons": [
+            "像产品自己的官网",
+            "是模型提名的同赛道竞品"
+          ],
+          "officiality": "unknown",
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "星野",
+          "url": "https://www.ai-xingye.cn/",
+          "score": 0.75,
+          "reasons": [
+            "像产品自己的官网",
+            "是模型提名的同赛道竞品"
+          ],
+          "officiality": "unknown",
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "筑梦岛",
+          "url": "https://www.zhumengdao.com/",
+          "score": 0.75,
+          "reasons": [
+            "像产品自己的官网",
+            "是模型提名的同赛道竞品"
+          ],
+          "officiality": "unknown",
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "蔚蓝陪伴",
+          "url": "https://www.momotalk.top/",
+          "score": 0.75,
+          "reasons": [
+            "像产品自己的官网",
+            "是模型提名的同赛道竞品"
+          ],
+          "officiality": "unknown",
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "PolyBuzz",
+          "url": "https://www.polybuzz.ai/",
+          "score": 0.75,
+          "reasons": [
+            "像产品自己的官网",
+            "是模型提名的同赛道竞品"
+          ],
+          "officiality": "unknown",
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Talkie",
+          "url": "https://talkieai.cc/",
+          "score": 0.75,
+          "reasons": [
+            "像产品自己的官网",
+            "是模型提名的同赛道竞品"
+          ],
+          "officiality": "unknown",
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "Tofai",
+          "url": "https://tofai.top/",
+          "score": 0.75,
+          "reasons": [
+            "像产品自己的官网",
+            "是模型提名的同赛道竞品"
+          ],
+          "officiality": "unknown",
+          "site_type": "product_site",
+          "in_track": true
+        },
+        {
+          "name": "恋与深空",
+          "url": "http://lovedeepspace.com/",
+          "score": 0.65,
+          "reasons": [
+            "像产品自己的官网",
+            "是模型提名的同赛道竞品"
+          ],
+          "officiality": "unknown",
+          "site_type": "product_site",
+          "in_track": false
+        }
+      ],
+      "notes": [
+        "C3 通道：目录站候选 33 个",
+        "C3 通道：找到 4 个赛道分类页",
+        "C3 通道：https://www.aigc.cn/favorites/ai-role-play-chatbot → 14 条入池",
+        "C3 通道：https://www.aitoolnet.com/zh/dreamjourney → 6 条入池",
+        "C3 通道：https://www.aitoolnet.com/zh/jupi-ai → 6 条入池",
+        "C3 通道：https://www.aitoolnet.com/zh/rpggo-ai → 6 条入池",
+        "C4 通道：site:apps.apple.com AI角色扮演 详情页直取 1 条",
+        "C4 通道：site:apps.apple.com AI情感陪伴 详情页直取 3 条",
+        "C4 通道：site:app.mi.com AI角色扮演 详情页直取 3 条",
+        "C4 通道：site:app.mi.com AI情感陪伴 详情页直取 3 条",
+        "C4 通道：https://www.wandoujia.com/category/6006 → 40 条入池",
+        "C4 通道：9 条替换为开发者官网链接（详情页抓取 10 次）",
+        "候选池剔除 63 个非官网页（应用商店/下载站 43 个、产品收录/比价目录 2 个、媒体/内容站 16 个、开发者社区/UGC 博客 2 个）：星野(https://yangyanyan1.com/assets/files/%E7%AB%9E%E5%93%81%E5%88%86%E6%9E%90%E6%8A%A5%E5%91%8A.html)、星野(https://www.10100.com/article/107015914)、比猫箱更自由的AI聊天软件有哪些？2026年5款主流平替推荐与对比(https://wenku.baidu.com/view/739c3d5eebf9aef8941ea76e58fafab068dc4452.html)、猫箱AI用腻了？2026实测5款替代品，从免费到高品质全面对比(https://zhangchengxiang.com/blog/catbox-alternative-2026.html)、字节最赚钱的AI，竟然不是豆包？(https://www.huxiu.com/article/4899267.html)",
+        "官方性检查：verified 2、suspect 1（Saylo）、unknown 49"
+      ],
+      "counter_evidence": [
+        {
+          "title": "Character.AI深度测评：日均使用2小时的AI陪伴神器，凭什么让2000万人...",
+          "url": "https://www.woshipm.com/ai/6359383.html",
+          "competitor": "character.ai"
+        },
+        {
+          "title": "Character.AI 2026评测：功能、定价与深度分析 - AI 织梦博客",
+          "url": "https://weavai.app/blog/zh-cn/2026/04/15/character-ai-2026%E8%AF%84%E6%B5%8B%EF%BC%9A%E5%8A%9F%E8%83%BD%E3%80%81%E5%AE%9A%E4%BB%B7%E4%B8%8E%E6%B7%B1%E5%BA%A6%E5%88%86%E6%9E%90/",
+          "competitor": "character.ai"
+        },
+        {
+          "title": "Character.AI 被用户骂“阉割”：AI 伴侣应用开始支付算力账单 - ic.wor...",
+          "url": "https://www.ic.work/article/character-ai-user-backlash-pipsqueak-2-ai-companion-enshitti",
+          "competitor": "character.ai"
+        },
+        {
+          "title": "一文详解Character AI：实用指南+ ChatGPT、Gemini对比分析",
+          "url": "https://juejin.cn/post/7522478205145464847",
+          "competitor": "character.ai"
+        },
+        {
+          "title": "怎么评价《星野》这款Ai聊天App? - 知乎",
+          "url": "https://www.zhihu.com/question/631326349",
+          "competitor": "星野"
+        },
+        {
+          "title": "怎么评价《星野》这款Ai聊天App? - 知乎",
+          "url": "https://www.zhihu.com/question/631326349/answers/updated",
+          "competitor": "星野"
+        },
+        {
+          "title": "星野的最新评论和评分-应用宝官网",
+          "url": "https://sj.qq.com/appdetail/com.xingye.app/review",
+          "competitor": "星野"
+        },
+        {
+          "title": "星野用户研究报告 | 情感陪伴AI产品分析",
+          "url": "https://shanqian2026.github.io/User-Research-Report-Xingye-APP-/",
+          "competitor": "星野"
+        },
+        {
+          "title": "星野风评差原因：联动风波、逆天粉与神人剧情三重打击",
+          "url": "https://tieba.baidu.com/p/10074841539",
+          "competitor": "星野"
+        },
+        {
+          "title": "星野近期风波不断，玩家失望吐槽与深度分析",
+          "url": "https://tieba.baidu.com/p/10229072502",
+          "competitor": "星野"
+        }
+      ],
+      "search_failed": false,
+      "search_failures": [],
+      "elapsed_s": 496.6,
+      "attempts": 1
+    }
+  ]
+}

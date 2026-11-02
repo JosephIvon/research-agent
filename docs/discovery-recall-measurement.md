@@ -1208,6 +1208,31 @@ per_competitor_verify 站内查询**（给蹭名站找"定价/功能/方案"= �
   改进候选：iTunes 查询失败重试一次 / 加 cn 区回退 / **判定结果跨进程缓存**
   （落盘到 evals/discovery_golden/officiality_cache.json，行核审计同源 ✓）。
 
+### 8.23 第十八轮（2026-11-02）：官方性落盘缓存 + e2e 验收达成
+
+**落盘缓存**（§15 ✓）：`evals/discovery_golden/officiality_cache.json`（与行核审计
+同源 ✓）——brands（品牌→开发者站主机）+ redirects（域→重定向终点，豁免用）。
+进程启动载盘、写穿保存、**失败品牌不落盘** ✗（间歇失败不能固化成 unknown ✓）。
+seed 预计算：`evals/seed_officiality_cache.py`（判定口径品牌优先 + 间隔 1.5s +
+重试）→ **69 个品牌落盘**，`talkie=['talkie-ai.com']`、`replika=['replika.com']` ✓
+（5 个 CN 品牌美区查不到 → unknown 不罚 ✓ 无害）。教训 #107（批量限流：52 品牌
+只成功 1 个）+#108（seed 三坑：无参 save no-op / 排序截断判定条目 / None 双语义
+——回读断言当场抓住 ✓）。测试 hermetic 化：conftest 全局断网 iTunes（套件
+50s→1.3s ✓）。
+
+**e2e 验收（猫箱 × task，缓存就位后）达成 ✓**：
+
+| 读数（§14/§15） | 实测 |
+|---|---|
+| Talkie@talkieai.cc 判定 | **suspect** ✓（盘缓存兜底，iTunes 再抖不影响 ✓） |
+| Replika@replika.ai 判定 | **verified** ✓（重定向豁免：一跳 replika.com=sellerUrl ✓） |
+| suspect 入选后的验证跳过 | **触发 ✓**：Talkie 入选且 per_competitor_verify results=47（前两跑 51/65↓）、反证 42 照常 ✓ |
+| 官方性 notes | verified 2、suspect 1（Talkie）、unknown 42 ✓ |
+
+**判定轮趋势（n=2，只作记录不作结论 ✗）**：suspect 数/轮 3.6→2.0；品牌 R1
+（去虚）0.463→0.444；host R1 0.389→0.380（抖动带）。官方性机制两轮判定线
+均无回归 ✓（R3/S1 均 PASS）。
+
 
 
 
