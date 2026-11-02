@@ -1192,6 +1192,23 @@ per_competitor_verify 站内查询**（给蹭名站找"定价/功能/方案"= �
 判定轮）。修正第十五轮总结里的错误表述 ✗：验证阶段是站内搜索不是 LLM 真伪
 判断（lessons #105 ✓）。
 
+### 8.22 第十七轮（2026-11-02）：provenance 全链路 + e2e 验收
+
+**代码落位 ✓**：① officiality 按主机对齐注入抓取行（mvp_workflow）；
+② 矩阵 suspect 行带"官方性存疑"⚠️ 警示（verified/unknown 不加注 ✓）；
+③ e2e 搜索工装接通（selected 记录带 officiality、验证阶段接映射）。
+全量 1127 passed ✓，qcheck 0/0/0 ✓。
+
+**e2e 验收（猫箱 × task）读数：未达成 ✗ 如实记**：
+- 官方性检查跑了（notes：verified 1、suspect 2、unknown 29）✓，
+  但 **Talkie 标成 unknown**——iTunes 查询间歇失败（第十五轮同查询成功 ✓），
+  按**设计**降级 unknown 不罚 ✓；
+- 入选名单恰好没有 suspect → "跳过验证"没触发对象 ✗；
+- 教训（lessons #106）：依赖外查 API 的读数先自证可达再开跑；
+  改进候选：iTunes 查询失败重试一次 / 加 cn 区回退 / **判定结果跨进程缓存**
+  （落盘到 evals/discovery_golden/officiality_cache.json，行核审计同源 ✓）。
+
+
 
 
 
