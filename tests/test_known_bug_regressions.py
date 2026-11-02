@@ -129,3 +129,35 @@ def test_long_chinese_query_drops_unrelated_results(monkeypatch):
 
     query = "对比美菜与川为冻品的仓配模式与定价打法"
     assert tool.search(query, provider="bing") == []
+
+
+def test_login_returns_a_token_and_audits_the_real_user_id(monkeypatch):
+    """登录曾因审计行引用未定义的 user_id 直接 500——把登录挡在门外。
+
+    端点里 `principal["id"]` 才是登录人的 id；`user_id` 那个名字在这段作用域里
+    根本没有定义 → NameError → 500 → 前端拿不到 token，整个界面进不去。
+    """
+    from fastapi.testclient import TestClient
+
+    import server
+
+    class _StubDB:
+        def authenticate(self, username, password):
+            return {"id": "user-42", "role": "admin"}
+
+    audited = []
+
+    class _Audit:
+        def log(self, event, user_id, payload):
+            audited.append((event, user_id, payload))
+
+    monkeypatch.setattr(server, "get_user_db", lambda: _StubDB())
+    monkeypatch.setattr(server, "get_audit_logger", lambda: _Audit())
+
+    with TestClient(server.app) as client:
+        r = client.post("/auth/login", json={"username": "admin", "password": "pw"})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["access_token"], "登录必须拿到 token"
+    assert audited, "登录成功必须留审计记录"
+    assert audited[0][1] == "user-42", f"审计记的用户不对：{audited}"

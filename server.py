@@ -1714,7 +1714,7 @@ def login(req: UserLogin):
         "username": req.username,
         "role": principal.get("role", "user"),
     })
-    get_audit_logger().log(AuditEvent.USER_LOGIN, user_id, {"username": req.username})
+    get_audit_logger().log(AuditEvent.USER_LOGIN, principal["id"], {"username": req.username})
     return {"access_token": access_token, "token_type": "bearer"}
 
 
