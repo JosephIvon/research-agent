@@ -141,8 +141,13 @@ async def run_group(
         "selected": len(discovery.selected),
     })
 
+    # 官方性映射进验证阶段（§14 读数③ ✓）：suspect 竞品跳过逐家验证站内查询
     verification = runner.run_verification(
-        plan, [item.get("name") or "" for item in discovery.selected]
+        plan, [item.get("name") or "" for item in discovery.selected],
+        officiality_by_name={
+            str(item.get("name") or ""): str(item.get("officiality") or "")
+            for item in discovery.selected
+        },
     )
     counter = [v for v in verification if v.get("stage") == "counter_evidence"]
     stage_log.append({
@@ -174,6 +179,8 @@ async def run_group(
             "url": item["url"],
             "score": item["score"],
             "reasons": item["reasons"],
+            # 官方性 provenance（§14 ✓）：App Store sellerUrl 交叉验证的判定
+            "officiality": str(item.get("officiality") or ""),
             # 站点类型与赛道词是 Q4 代理判据的两层依据（产品官网 + 同赛道）
             "site_type": classify_site(item["url"], item["name"]),
             "in_track": _is_track(
