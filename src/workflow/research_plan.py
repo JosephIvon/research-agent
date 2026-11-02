@@ -131,6 +131,11 @@ MIN_ADMISSION_SCORE = 0.5
 # 分数扣这么多（提名加成是 0.25，这里扣 0.1 ⇒ 仍高于普通候选 0.5 ✓，
 # 只是不再稳坐前排 ✗）。**不挡人**——实测 92% 的真竞品名字里没有赛道词 ✗。
 NOMINATION_AUDIT_PENALTY = 0.1
+# 官方性罚分（2026-11-02 预注册）：候选域**不是**开发者站（App Store sellerUrl
+# 交叉验证，见 src/tools/officiality.py）→ 分数打折。0.05 使 0.5 分的 suspect
+# 跌破名额下限（0.5）⇒ suspect 不进名额——这是取向：证据不足以认定开发者站
+# 的产品，不占稀缺名额；L0/L1/L2 池不受影响（仍如实进池、如实记账 ✓）。
+OFFICIALITY_PENALTY = 0.05
 
 # **预注册（2026-11-01 第十轮拍板）**：名额分配启用 MMR 多样性，
 # λ=0.7 + 描述相似度（name+description 词元 Jaccard）。
@@ -1231,6 +1236,9 @@ def score_candidate(candidate: Dict[str, Any], plan: ResearchPlan) -> Dict[str, 
         # 描述留着：MMR 的相似度要用它（名字相似度实测是空操作 ⚠️），
         # 名额账也要能看出"这个产品是干什么的"
         "description": description,
+        # 官方性标注要**透传**（suspect 罚分在 admit 阶段读它 ✗ 丢了就白查了）；
+        # 没标注（聚合站/未检查）保持空串 = 不罚 ✓
+        "officiality": str(candidate.get("officiality") or ""),
     }
 
 
@@ -1480,6 +1488,12 @@ def admit_competitors(
         if item.get("audit_flag"):
             item["score"] = round(
                 max(0.0, float(item["score"]) - NOMINATION_AUDIT_PENALTY), 4)
+        # 官方性降权（2026-11-02 预注册）：suspect = 有开发者站但候选域不是它
+        # （App Store sellerUrl 交叉验证 ✓）——蹭名嫌疑不占稀缺名额 ✗；
+        # unknown（查不到参照）永不罚 ✓。
+        if item.get("officiality") == "suspect":
+            item["score"] = round(
+                max(0.0, float(item["score"]) - OFFICIALITY_PENALTY), 4)
     selected = select_competitors(
         scored,
         max_count=plan.max_count,
@@ -1550,6 +1564,7 @@ def build_slot_ledger(
             "reasons": list(item.get("reasons") or []),
             "source": source,
             "audit_flag": item.get("audit_flag"),
+            "officiality": item.get("officiality") or "",
         })
 
     displaced: List[Dict[str, Any]] = []

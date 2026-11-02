@@ -227,6 +227,10 @@ class Candidate:
     source_stage: str = ""
     is_aggregator: bool = False
     site_type: str = ""
+    # 官方性（App Store 元数据交叉验证 ✓）：
+    # verified=开发者自己的站 / suspect=有开发者站但不是这个域（蹭名嫌疑 ✗）/
+    # unknown=查不到参照（永不罚 ✓）。空串 = 没做过检查（聚合站不查）。
+    officiality: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -237,6 +241,7 @@ class Candidate:
             "source_stage": self.source_stage,
             "is_aggregator": self.is_aggregator,
             "site_type": self.site_type,
+            "officiality": self.officiality,
         }
 
 
@@ -297,7 +302,9 @@ class SearchStageRunner:
                  enable_directory_channel: bool = True,
                  enable_store_channel: bool = True,
                  enable_deep_dive: bool = False,
-                 max_deep_dives: int = 8):
+                 max_deep_dives: int = 8,
+                 enable_officiality: bool = True,
+                 max_officiality_lookups: int = 16):
         self.search_tool = search_tool
         self.num_results = num_results
         # C3 目录页通道（默认开）：模型不知道、搜索也搜不到的长尾产品，
@@ -315,6 +322,10 @@ class SearchStageRunner:
         # 边际价值 ≈ 0。代码留用：换搜索后端/引擎后可再开 ✓。
         self.enable_deep_dive = enable_deep_dive
         self.max_deep_dives = max_deep_dives
+        # 官方性检查（默认开）：App Store sellerUrl 交叉验证，suspect 降权 ✗
+        # （2026-11-02 行核：talkieai.cc 蹭名站污染池子与品牌口径 ✗）。
+        self.enable_officiality = enable_officiality
+        self.max_officiality_lookups = max_officiality_lookups
         # 主体锚定的结果缓存：竞品发现阶段要据此排除"主体自己的官方页"
         self._entity_pages: List[Dict[str, Any]] = []
         # 主体自己官网的域名：按"实体锚定阶段排名最高的官网"判定。
@@ -593,6 +604,28 @@ class SearchStageRunner:
                 result.notes.append(
                     f"实体下钻：{len(brands)} 个品牌补查官网，新增 {added} 个候选"
                     f"（{'、'.join(brands[:4])}…）")
+        # -- 官方性检查（App Store 元数据交叉验证，2026-11-02 预注册）------
+        # 行核发现（✗）：池里的 talkieai.cc 无开发者印记、有联盟导流——
+        # 蹭名站与真产品共用品牌词，品牌口径与名额都会被它污染。
+        # 判据（第十三轮已证实的权威源 ✓）：同品牌 App 的 sellerUrl 主机。
+        # suspect = 有开发者站但候选域不是它 → 名额降权（0.05，floor 会挡
+        # 0.5 分的 suspect ✗ 这是取向：证据不足不占名额）+ 品牌口径不给命中；
+        # unknown（查不到 App / sellerUrl 不含品牌词）永不罚 ✓。
+        if self.enable_officiality and pool:
+            try:
+                from src.tools.officiality import annotate_officiality
+
+                summary = annotate_officiality(
+                    pool, max_lookups=self.max_officiality_lookups)
+                counts = summary["counts"]
+                suspects = summary["suspects"]
+                result.notes.append(
+                    f"官方性检查：verified {counts.get('verified', 0)}、"
+                    f"suspect {counts.get('suspect', 0)}"
+                    f"（{'、'.join(suspects[:4])}{'…' if len(suspects) > 4 else ''}）、"
+                    f"unknown {counts.get('unknown', 0)}")
+            except Exception as exc:  # noqa: BLE001 —— 检查挂掉按 unknown 处理 ✓
+                result.notes.append(f"官方性检查异常（按 unknown 处理）：{type(exc).__name__}")
         admission = admit_competitors([c.to_dict() for c in pool], plan)
         result.selected = admission["selected"]
         result.scored = admission["scored"]

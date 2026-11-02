@@ -278,6 +278,12 @@ def funnel_metrics(run: Dict[str, Any], golden: GoldenSet) -> Dict[str, Any]:
     for level in LEVELS:
         found: Dict[str, Dict[str, Any]] = {}
         for item in levels[level]:
+            # 官方性卫兵（2026-11-02 行核 ✗）：suspect = 有开发者站但候选域
+            # 不是它（蹭名嫌疑，talkieai.cc 案例 ✓）——品牌口径**不给命中**，
+            # 否则量的是"发现了一个蹭名站" ⚠️。host 口径不受影响 ✓
+            # （金标准 host 是权威归属，suspect 与否都能匹配 ✓）。
+            if str(item.get("officiality") or "") == "suspect":
+                continue
             entry = golden.match_brand(str(item.get("name") or ""))
             if entry is None:
                 continue
