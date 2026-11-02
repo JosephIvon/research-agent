@@ -1071,6 +1071,23 @@ class MVPWorkflow:
             state["competitors"], state["evidence_orphans"] = self._merge_evidence_pages(
                 state["target_sites"], state["competitors"]
             )
+            # 官方性 provenance（2026-11-02 §14/§8.21 ✓）：把发现阶段的判定
+            # 按**主机**对齐到抓取行上（入选 URL 与实际抓的页可能不同路径），
+            # 矩阵行据此加 ⚠️（suspect=域非开发者站，数据来源可疑）。
+            try:
+                from src.tools.list_pages import host_of
+
+                off_by_host: Dict[str, str] = {}
+                for item in discovery.selected:
+                    host = host_of(str(item.get("url") or ""))
+                    if host and str(item.get("officiality") or ""):
+                        off_by_host[host] = str(item["officiality"])
+                for comp in state["competitors"]:
+                    if not comp.get("officiality"):
+                        comp["officiality"] = off_by_host.get(
+                            host_of(str(comp.get("url") or "")), "")
+            except Exception as exc:  # noqa: BLE001 —— 标注失败不影响主流程 ✓
+                logger.debug("officiality 注入跳过：%s", exc)
 
             # 抓后准入闸门：维度数不够的竞品不进矩阵（但进"未采信"清单），
             # 数量不够时从候选留池补位。放在这里（抓完、抽数据之前），

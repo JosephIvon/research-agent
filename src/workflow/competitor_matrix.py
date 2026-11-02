@@ -539,12 +539,29 @@ def build_matrix(
     competitors: Optional[Sequence[Dict[str, Any]]] = None,
     derived_by_platform: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     subject: Optional[Dict[str, Any]] = None,
+    officiality_by_host: Optional[Dict[str, str]] = None,
 ) -> CompetitorMatrix:
     """从抽取结果构造矩阵；competitors 保留“一家竞品一行”的边界。
 
     ``derived_by_platform`` 是**证据锚定**的借鉴点（模型推导 + 代码校验），
     键为竞品名；命中则优先于规则表兜底。
+    ``officiality_by_host``：域名 → 官方性判定（App Store sellerUrl 交叉验证 ✓）。
+    suspect（域非开发者站）行加 ⚠️ 警示——爬到的"定价/功能"可能是蹭名站的
+    数据 ✗，读表的人要知道这一行的数据来源可疑；verified/unknown 不加注
+    （不刷屏，信息在名额账/审计里有档 ✓）。
     """
+    officiality_by_host = officiality_by_host or {}
+    derived_map = derived_by_platform or {}
+
+    def _derived_for(comp: Dict[str, Any]) -> List[Dict[str, Any]]:
+        for key in (
+            str(comp.get("name") or "").strip(),
+            str(comp.get("url") or "").strip(),
+        ):
+            if key and derived_map.get(key):
+                return list(derived_map[key])
+        return []
+
     groups: List[Tuple[Dict[str, Any], List[Dict[str, Any]]]] = []
     if competitors:
         for comp in competitors:
@@ -559,24 +576,32 @@ def build_matrix(
         for url, items in by_url.items():
             groups.append(({"url": url}, items))
 
-    derived_map = derived_by_platform or {}
-
-    def _derived_for(comp: Dict[str, Any]) -> List[Dict[str, Any]]:
-        for key in (
-            str(comp.get("name") or "").strip(),
-            str(comp.get("url") or "").strip(),
-        ):
-            if key and derived_map.get(key):
-                return list(derived_map[key])
-        return []
-
+    rows = [_row_from(comp, items, _derived_for(comp)) for comp, items in groups]
+    for (comp, _items), row in zip(groups, rows):
+        # 行上直接带 officiality（mvp_workflow 注入 ✓）优先，映射兜底（测试/直调 ✓）
+        verdict = (str(comp.get("officiality") or "")
+                   or officiality_by_host.get(_host_key(str(comp.get("url") or ""))))
+        if verdict == "suspect":
+            row.warnings.append(
+                "官方性存疑：该域不是开发者站（App Store sellerUrl 不一致）——"
+                "本行数据可能来自蹭名站，采信前先核对域主 ⚠️")
     matrix = CompetitorMatrix(
         query=query,
-        rows=[_row_from(comp, items, _derived_for(comp)) for comp, items in groups],
+        rows=rows,
         subject=dict(subject or {}),
     )
     validate(matrix)
     return matrix
+
+
+def _host_key(url: str) -> str:
+    """取主机名（小写、去 www. 前缀），与发现阶段的 officiality 映射对齐 ✓。"""
+    try:
+        host = urlparse(url).hostname or ""
+    except ValueError:
+        return ""
+    host = host.lower()
+    return host[4:] if host.startswith("www.") else host
 
 
 def validate(matrix: CompetitorMatrix) -> None:

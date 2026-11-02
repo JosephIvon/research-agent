@@ -195,6 +195,27 @@ def test_verification_skips_suspect_but_keeps_counter_evidence():
                                             "counter_evidence"}, "unknown 永不罚 ✓"
 
 
+def test_matrix_row_warning_for_suspect_provenance():
+    """矩阵 provenance（§14 产品侧）：suspect 行带 ⚠️ 官方性警示（数据来源可疑），
+    verified/unknown 行不加注（不刷屏 ✓）；按主机对齐（抓取页与入选页不同路径 ✓）。"""
+    from src.workflow.competitor_matrix import build_matrix
+
+    comp = {"url": "https://talkieai.cc/pricing", "name": "Talkie",
+            "officiality": "suspect",
+            "extracted_data": [{"feature": "x", "source_url": "https://talkieai.cc/pricing"}]}
+    matrix = build_matrix("测试", competitors=[comp])
+    assert any("官方性存疑" in w for w in matrix.rows[0].warnings), "suspect 行带警示 ✓"
+    # verified 行不加注
+    comp2 = dict(comp, url="https://replika.com/", officiality="verified")
+    m2 = build_matrix("测试", competitors=[comp2])
+    assert not any("官方性存疑" in w for w in m2.rows[0].warnings)
+    # 参数映射兜底（行上没挂字段时按主机查 ✓）
+    comp3 = {"url": "https://talkieai.cc/", "name": "Talkie", "extracted_data": []}
+    m3 = build_matrix("测试", competitors=[comp3],
+                      officiality_by_host={"talkieai.cc": "suspect"})
+    assert any("官方性存疑" in w for w in m3.rows[0].warnings)
+
+
 def test_search_stage_annotates_officiality(monkeypatch):
     off._SELLER_CACHE.clear()
     off._SELLER_CACHE["talkie"] = ["talkie-ai.com"]
