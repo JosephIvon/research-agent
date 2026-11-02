@@ -77,6 +77,7 @@ from src.workflow.task_store import (
     _sanitize_payload,
 )
 from src.storage import get_report_db, REPORT_NOT_IN_DB
+from src.tools.comparison_tool import brand_display_name
 from src.logging import get_audit_logger, AuditEvent
 # 可观测层统一出口。未启用 Langfuse 时全部为 no-op，不产生网络调用与额外开销。
 from src.observability import clear_task_context, end_trace, set_task_context, start_trace, trace_url
@@ -550,10 +551,17 @@ def _db_report_fields(report_id: str) -> Dict[str, Any]:
     meta = _parse_report_metadata(row.get("metadata_json"))
     competitors = meta.get("competitors")
     if isinstance(competitors, list):
-        # 落库只保留 status == "success" 的竞品（mvp_workflow._persist_to_sqlite），
-        # 所以库里这几家都是成功抓到的。不补 status 的话前端默认显示「失败」——那是假的。
         competitors = [
-            dict(c, status=c.get("status") or "success") if isinstance(c, dict) else c
+            dict(
+                c,
+                # 旧报告的品牌名可能是模型吐出来的结构化对象（{'brand': ...}），
+                # 直接显示会把整个字面量当成品牌名。
+                name=brand_display_name(c.get("name")),
+                # 落库只保留 status == "success" 的竞品（mvp_workflow._persist_to_sqlite），
+                # 所以库里这几家都是成功抓到的。不补 status 的话前端默认显示「失败」——那是假的。
+                status=c.get("status") or "success",
+            )
+            if isinstance(c, dict) else c
             for c in competitors
         ]
     return {

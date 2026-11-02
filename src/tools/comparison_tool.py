@@ -249,6 +249,24 @@ def _brand_from_title(title: str) -> str:
     return head or cleaned
 
 
+def brand_display_name(value: Any, limit: int = 50) -> str:
+    """把抽取出的品牌名整理成一行字符串。
+
+    模型有时把品牌名返回成**结构化对象**（{'brand': '旺店通', 'company': ...}）。
+    直接 str() 会把整个 dict 字面量当成品牌名显示——实测报告正文与历史列表里
+    出现过整串 "{'brand': ...}"。这里取对象里最像品牌名的那个字段。
+    """
+    if isinstance(value, dict):
+        for key in ("brand", "name", "title", "site_name", "product_name"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()[:limit]
+        return ""
+    if isinstance(value, list):
+        return ""
+    return str(value or "").strip()[:limit]
+
+
 def infer_competitor_name(
     url: str,
     extracted_data: List[Dict] = None,
@@ -264,9 +282,9 @@ def infer_competitor_name(
         for item in extracted_data:
             key = str(item.get("key", "")).lower()
             if any(kw in key for kw in ["名称", "名字", "品牌", "产品名", "name"]):
-                name = str(item.get("value", "")).strip()
+                name = brand_display_name(item.get("value"))
                 if name:
-                    return name[:50]
+                    return name
 
     if page_title:
         brand = _brand_from_title(page_title)

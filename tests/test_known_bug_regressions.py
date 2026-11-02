@@ -196,7 +196,6 @@ def test_history_detail_restores_structured_fields_from_db(monkeypatch, tmp_path
                     "verification_score": 9.0,
                 }),
             }
-
     monkeypatch.setattr(server, "get_report_db", lambda: _StubDB())
 
     token = create_access_token({"sub": "admin-user", "username": "admin", "role": "admin"})
@@ -244,3 +243,86 @@ def test_history_detail_without_db_row_still_serves_markdown(monkeypatch, tmp_pa
     body = r.json()
     assert "正文内容" in body["markdown"]
     assert body["competitors"] is None, "没有库里数据时不得编造竞品"
+
+
+def test_persisted_report_metadata_keeps_per_competitor_detail(tmp_path, monkeypatch):
+    """逐家明细必须落库。
+
+    此前只存 name + url，于是从历史里重新打开报告，「来源状态」每行都显示
+    "0 条信息 / 0 个站内页"——读的时候根本没有任何明细可显示。
+    """
+    from src.storage import database as dbmod
+    from src.workflow.mvp_workflow import MVPWorkflow
+
+    monkeypatch.setattr(dbmod, "DATABASE_PATH", str(tmp_path / "reports.db"))
+    monkeypatch.setattr(dbmod, "_report_db", None)
+
+    report_id = "research_report_20260101_000002_abcdef12"
+    state = {
+        "report_id": report_id,
+        "task_id": "task-0001",
+        "user_query": "调研一下",
+        "user_id": "u1",
+        "status": "completed",
+        "report_final": "# 报告\n",
+        "quality_score": 8.0,
+        "quality_grade": "A",
+        "missing_dimensions": ["reviews"],
+        "verification_score": 9.0,
+        "competitors": [
+            {
+                "name": "甲公司",
+                "url": "https://a.test/",
+                "status": "success",
+                "extracted_data": [
+                    {
+                        "key": "pricing",
+                        "value": "99 元/月",
+                        "source_url": "https://a.test/pricing",
+                        "confidence": 0.9,
+                        "模型多吐的字段": "不该原样落库",
+                    },
+                ],
+                "raw_pages": [{"url": "https://a.test/", "content_length": 100}],
+                "discovered_urls": ["https://a.test/pricing"],
+                "failed_pages": [{"url": "https://a.test/x", "error": "TimeoutError", "elapsed_seconds": 1.5}],
+                "error_message": None,
+            },
+            {"name": "抓失败的", "url": "https://b.test/", "status": "failed"},
+        ],
+    }
+
+    # 落库这一步不碰模型，注入桩客户端即可，免得测试依赖真实 API key
+    MVPWorkflow(llm_client=object())._persist_to_sqlite(state)
+
+    row = dbmod.get_report_db().get_report(report_id)
+    assert row is not None, "报告没落库"
+    meta = json.loads(row["metadata_json"])
+    assert len(meta["competitors"]) == 1, "只落库抓成功的竞品"
+
+    rec = meta["competitors"][0]
+    assert rec["name"] == "甲公司"
+    assert rec["url"] == "https://a.test/"
+    assert rec["status"] == "success"
+    assert rec["raw_pages"] == [{"url": "https://a.test/", "content_length": 100}]
+    assert rec["discovered_urls"] == ["https://a.test/pricing"]
+    assert rec["failed_pages"][0]["error"] == "TimeoutError"
+    item = rec["extracted_data"][0]
+    assert item["key"] == "pricing" and item["value"] == "99 元/月"
+    assert item["source_url"] == "https://a.test/pricing"
+    assert "模型多吐的字段" not in item, "只留规范字段，别让模型多吐的字段撑大 metadata"
+
+
+def test_brand_display_name_reads_the_brand_out_of_a_structured_value():
+    """模型把品牌名吐成 dict 时，不能把整个字面量当品牌名显示。"""
+    from src.tools.comparison_tool import brand_display_name, infer_competitor_name
+
+    assert brand_display_name({"brand": "旺店通", "company": "北京掌上先机"}) == "旺店通"
+    assert brand_display_name({"site_name": "viso.ai", "brand": "Viso"}) == "Viso"
+    assert brand_display_name("Blue Yonder") == "Blue Yonder"
+    assert brand_display_name(None) == ""
+    assert brand_display_name({"unrelated": 1}) == ""
+
+    # 抽取出的 name 项是 dict 时，竞品名取其中的品牌名
+    extracted = [{"key": "name", "value": {"brand": "金蝶制造云", "solution": "云解决方案"}}]
+    assert infer_competitor_name("https://sjzerp.test/", extracted) == "金蝶制造云"

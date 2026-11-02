@@ -2712,6 +2712,47 @@ class MVPWorkflow:
 
         return filepath
 
+    @staticmethod
+    def _competitor_record(c: Dict[str, Any]) -> Dict[str, Any]:
+        """逐家明细：抽到的数据 + 读过的页面 + 发现/失败的 URL。
+
+        此前落库只存 name + url，于是从历史里重新打开报告，「来源状态」每行都显示
+        "0 条信息 / 0 个站内页"——**逐家明细从来没落库**。
+        抽取项只留规范字段（key/value/source_url/confidence）：模型可能多吐字段，
+        原样落库会让 metadata_json 随报告膨胀。
+        """
+        return {
+            "name": c.get("name"),
+            "url": c.get("url"),
+            "status": c.get("status"),
+            "extracted_data": [
+                {
+                    "key": item.get("key"),
+                    "value": item.get("value"),
+                    "source_url": item.get("source_url"),
+                    "confidence": item.get("confidence"),
+                }
+                for item in (c.get("extracted_data") or [])
+                if isinstance(item, dict)
+            ],
+            "raw_pages": c.get("raw_pages") or [],
+            "discovered_urls": c.get("discovered_urls") or [],
+            "failed_pages": c.get("failed_pages") or [],
+            "error_message": c.get("error_message"),
+        }
+
+    def _report_metadata(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """报告的结构化元数据：逐家明细 + 缺失维度 + 来源覆盖率。"""
+        return {
+            "competitors": [
+                self._competitor_record(c)
+                for c in state.get("competitors", [])
+                if c.get("status") == "success"
+            ],
+            "missing_dimensions": state.get("missing_dimensions", []),
+            "verification_score": state.get("verification_score"),
+        }
+
     def _persist_to_sqlite(self, state: Dict[str, Any]):
         """Persist report metadata to SQLite for indexing."""
         try:
@@ -2753,15 +2794,7 @@ class MVPWorkflow:
                     version_number=1,  # Will be auto-incremented by link_report_version
                     parent_version_id=parent_version_id,
                     user_id=user_id,
-                    metadata={
-                        "competitors": [
-                            {"name": c.get("name"), "url": c.get("url")}
-                            for c in state.get("competitors", [])
-                            if c.get("status") == "success"
-                        ],
-                        "missing_dimensions": state.get("missing_dimensions", []),
-                        "verification_score": state.get("verification_score"),
-                    },
+                    metadata=self._report_metadata(state),
                 )
                 db.link_report_version(query_hash, report_id, parent_version_id)
             else:
@@ -2774,15 +2807,7 @@ class MVPWorkflow:
                     quality_score=state.get("quality_score"),
                     quality_grade=state.get("quality_grade"),
                     user_id=user_id,
-                    metadata={
-                        "competitors": [
-                            {"name": c.get("name"), "url": c.get("url")}
-                            for c in state.get("competitors", [])
-                            if c.get("status") == "success"
-                        ],
-                        "missing_dimensions": state.get("missing_dimensions", []),
-                        "verification_score": state.get("verification_score"),
-                    },
+                    metadata=self._report_metadata(state),
                 )
                 if query_hash:
                     db.link_report_version(query_hash, report_id, None)
