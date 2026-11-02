@@ -6,11 +6,21 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { resolveApiBaseUrl } from '../src/api/baseUrl.js'
+import { resolveApiBaseUrl, resolveDevApiBaseUrl, DEV_DEFAULT_API_BASE_URL } from '../src/api/baseUrl.js'
 
 test('defaults to same-origin (empty base), not a hardcoded /api prefix', () => {
   assert.equal(resolveApiBaseUrl('', false), '')
   assert.equal(resolveApiBaseUrl(undefined, false), '')
+})
+
+test('dev without VITE_API_BASE_URL goes through the vite /api proxy', () => {
+  // 同源在 dev 下是错的：请求打到 vite 自己，被 SPA 回退成 index.html
+  // （实测 /research/history 返回 200 text/html，接口拿不到 JSON）
+  assert.equal(DEV_DEFAULT_API_BASE_URL, '/api')
+  assert.equal(resolveDevApiBaseUrl(''), '/api')
+  assert.equal(resolveDevApiBaseUrl(undefined), '/api')
+  // 显式配置的绝对 host 仍然优先（开发时可直连后端）
+  assert.equal(resolveDevApiBaseUrl('http://127.0.0.1:8080'), 'http://127.0.0.1:8080')
 })
 
 test('ignores absolute API hosts in production builds', () => {

@@ -1,10 +1,13 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
-import { resolveApiBaseUrl } from './baseUrl'
+import { resolveApiBaseUrl, resolveDevApiBaseUrl } from './baseUrl'
 import { createAuthorizedEventSource } from './sse'
 
-const DEV_API_BASE_URL = import.meta.env.DEV ? import.meta.env.VITE_API_BASE_URL : ''
-const API_BASE_URL = resolveApiBaseUrl(DEV_API_BASE_URL, import.meta.env.DEV)
+// 生产：同源（后端托管前端，外部 host 一律不接受）。
+// 开发：默认走 vite 代理的 /api 前缀，否则请求打到 vite 自己、被 SPA 回退成 HTML。
+const API_BASE_URL = import.meta.env.DEV
+  ? resolveDevApiBaseUrl(import.meta.env.VITE_API_BASE_URL)
+  : resolveApiBaseUrl('', false)
 
 const api = axios.create({
   baseURL: API_BASE_URL,
