@@ -117,7 +117,8 @@ async def run_once(llm: Any, search_tool: Any, subject: str, style: str,
         {"url": item.get("url", ""), "name": item.get("name", ""),
          "score": item.get("score"), "reasons": list(item.get("reasons") or []),
          "description": str(item.get("description") or ""),
-         "source": item.get("source")}
+         "source": item.get("source"),
+         "officiality": item.get("officiality") or ""}
         for item in discovery.selected
     ]
     record["notes"] = list(discovery.notes)
