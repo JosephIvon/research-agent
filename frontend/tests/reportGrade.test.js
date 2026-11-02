@@ -9,21 +9,26 @@ import {
 } from '../src/utils/reportGrade.js'
 
 test('gradeFromScore maps score bands to letters', () => {
+  // 边界必须逐个钉死：阈值就是后端 QualityScorer.SCORE_THRESHOLDS 的 8 / 6 / 4 / 2，
+  // 差 0.5 就会让同一份报告在库里和界面上显示成两个等级。
   assert.equal(gradeFromScore(9.5), 'A')
-  assert.equal(gradeFromScore(8.5), 'A')
-  assert.equal(gradeFromScore(8.4), 'B')
+  assert.equal(gradeFromScore(8), 'A')
+  assert.equal(gradeFromScore(7.9), 'B')
   assert.equal(gradeFromScore(7), 'B')
-  assert.equal(gradeFromScore(6.9), 'C')
+  assert.equal(gradeFromScore(6), 'B')
+  assert.equal(gradeFromScore(5.9), 'C')
   assert.equal(gradeFromScore(5.5), 'C')
-  assert.equal(gradeFromScore(4.9), 'D')
+  assert.equal(gradeFromScore(4), 'C')
+  assert.equal(gradeFromScore(3.9), 'D')
   assert.equal(gradeFromScore(3), 'D')
-  assert.equal(gradeFromScore(2.9), 'F')
+  assert.equal(gradeFromScore(2), 'D')
+  assert.equal(gradeFromScore(1.9), 'F')
   assert.equal(gradeFromScore(0), 'F')
 })
 
 test('a numeric score wins over a backend letter grade', () => {
   // 后端等级兜底已被移除，这里确认分数确实优先，避免 8.4 被一个陈旧的 B 掩盖
-  assert.equal(resolveGrade(8.4, 'C'), 'B')
+  assert.equal(resolveGrade(8.4, 'C'), 'A')
   assert.equal(resolveGrade(9.9, 'F'), 'A')
 })
 

@@ -10,12 +10,18 @@
 
 export const UNKNOWN_GRADE = '未知'
 
-/** 分数 → 等级。阈值与后端 QualityScorer 的分档保持一致。 */
+/**
+ * 分数 → 等级。
+ *
+ * 阈值必须与后端 `QualityScorer.SCORE_THRESHOLDS`（8 / 6 / 4 / 2）一字不差。
+ * 两边各写一套时，前端会用数值分重算并覆盖后端给的字母——分叉就显形了：
+ * 同一个 8.2 分，库里是 A、界面显示 B。
+ */
 export function gradeFromScore(score) {
-  if (score >= 8.5) return 'A'
-  if (score >= 7) return 'B'
-  if (score >= 5.5) return 'C'
-  if (score >= 3) return 'D'
+  if (score >= 8) return 'A'
+  if (score >= 6) return 'B'
+  if (score >= 4) return 'C'
+  if (score >= 2) return 'D'
   return 'F'
 }
 
