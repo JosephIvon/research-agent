@@ -275,14 +275,14 @@ class ReportDB:
             cursor = conn.cursor()
             if user_id is None:
                 cursor.execute("""
-                    SELECT id, task_id, user_query, quality_score, quality_grade, created_at
+                    SELECT id, task_id, user_query, quality_score, quality_grade, created_at, metadata_json
                     FROM reports
                     ORDER BY created_at DESC
                     LIMIT ?
                 """, (limit,))
             else:
                 cursor.execute("""
-                    SELECT id, task_id, user_query, quality_score, quality_grade, created_at
+                    SELECT id, task_id, user_query, quality_score, quality_grade, created_at, metadata_json
                     FROM reports
                     WHERE user_id = ?
                     ORDER BY created_at DESC

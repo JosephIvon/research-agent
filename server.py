@@ -518,11 +518,60 @@ def _report_payload(path: Path, include_markdown: bool = False) -> Dict[str, Any
     return payload
 
 
+def _parse_report_metadata(raw: Any) -> Dict[str, Any]:
+    """metadata_json 是文本列；解析失败当空——一次脏数据不该让整份报告读不出来。"""
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        logger.warning("报告 metadata_json 解析失败，按空元数据处理")
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _db_report_fields(report_id: str) -> Dict[str, Any]:
+    """从数据库取回报告的结构化字段（分数 / 等级 / 竞品 / 缺失维度）。
+
+    报告正文落在磁盘的 .md 里，**结构化结果只存在数据库**。冷加载此前只按
+    markdown 拼载荷，把 score / grade / competitors 一律写成 None —— 于是从
+    历史里重新打开一份库里明明是 A 级、6 家竞品的报告，界面显示的却是
+    "0 个竞品 / F 级 / 来源状态为空"。这里把它们取回来。
+    """
+    try:
+        row = get_report_db().get_report(report_id)
+    except Exception as exc:
+        logger.warning("读取报告结构化字段失败 %s: %s", report_id, exc)
+        return {}
+    if not row:
+        return {}
+    meta = _parse_report_metadata(row.get("metadata_json"))
+    competitors = meta.get("competitors")
+    if isinstance(competitors, list):
+        # 落库只保留 status == "success" 的竞品（mvp_workflow._persist_to_sqlite），
+        # 所以库里这几家都是成功抓到的。不补 status 的话前端默认显示「失败」——那是假的。
+        competitors = [
+            dict(c, status=c.get("status") or "success") if isinstance(c, dict) else c
+            for c in competitors
+        ]
+    return {
+        "score": row.get("quality_score"),
+        "grade": row.get("quality_grade"),
+        "competitors": competitors if isinstance(competitors, list) else None,
+        "missing_dimensions": meta.get("missing_dimensions") or [],
+        "verification_score": meta.get("verification_score"),
+    }
+
+
 def _load_report_payload(report_id: str) -> Dict[str, Any]:
     path = _report_path(report_id)
     if not path.exists():
         raise HTTPException(status_code=404, detail="报告不存在")
-    return _report_payload(path, include_markdown=True)
+    payload = _report_payload(path, include_markdown=True)
+    payload.update(_db_report_fields(report_id))
+    return payload
 
 
 def _latest_report_payload() -> Dict[str, Any]:
@@ -1250,6 +1299,8 @@ def list_history(request: Request):
         # 非 admin 只能看到自己的报告
         for r in db.list_reports(limit=100, user_id=None if is_admin else user_id):
             seen.add(r["id"])
+            meta = _parse_report_metadata(r.get("metadata_json"))
+            competitors = meta.get("competitors")
             items.append({
                 "id": r["id"],
                 "title": r["user_query"][:120] if r["user_query"] else r["id"],
@@ -1258,6 +1309,8 @@ def list_history(request: Request):
                 "grade": r["quality_grade"],
                 "score": r["quality_score"],
                 "task_id": r["task_id"],
+                # 卡片上的竞品家数只能从库里拿：文件兜底分支没有这个信息。
+                "competitors": len(competitors) if isinstance(competitors, list) else 0,
             })
     except Exception as exc:
         logger.warning("Failed to list reports from SQLite, falling back to files: %s", exc)

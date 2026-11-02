@@ -1,5 +1,6 @@
 """历史真实故障的回归测试：分解预算、未公开评分、搜索污染兜底。"""
 import asyncio
+import json
 
 from src.tools.quality_scorer import QualityScorer
 from src.workflow.mvp_workflow import CoordinatorAgent, DECOMPOSE_MAX_TOKENS
@@ -161,3 +162,85 @@ def test_login_returns_a_token_and_audits_the_real_user_id(monkeypatch):
     assert r.json()["access_token"], "登录必须拿到 token"
     assert audited, "登录成功必须留审计记录"
     assert audited[0][1] == "user-42", f"审计记的用户不对：{audited}"
+
+
+def test_history_detail_restores_structured_fields_from_db(monkeypatch, tmp_path):
+    """从历史里重新打开一份报告，界面曾显示"0 个竞品 / F 级 / 来源状态为空"。
+
+    报告正文落在磁盘的 .md 里，**结构化结果只存在数据库**。冷加载路径此前只按
+    markdown 拼载荷，把 score / grade / competitors 一律写成 None——库里明明是
+    A 级、2 家竞品，界面却说 0 个竞品、F 级。
+    """
+    from fastapi.testclient import TestClient
+
+    import server
+    from src.auth.jwt_auth import create_access_token
+
+    report_id = "research_report_20260101_000000_abcdef12"
+    (tmp_path / f"{report_id}.md").write_text("# 标题\n\n正文内容\n", encoding="utf-8")
+    monkeypatch.setattr(server, "OUTPUT_DIR", str(tmp_path))
+
+    class _StubDB:
+        def get_report(self, rid):
+            assert rid == report_id
+            return {
+                "id": rid,
+                "quality_score": 10.0,
+                "quality_grade": "A",
+                "metadata_json": json.dumps({
+                    "competitors": [
+                        {"name": "甲公司", "url": "https://a.test/"},
+                        {"name": "乙公司", "url": "https://b.test/"},
+                    ],
+                    "missing_dimensions": ["reviews"],
+                    "verification_score": 9.0,
+                }),
+            }
+
+    monkeypatch.setattr(server, "get_report_db", lambda: _StubDB())
+
+    token = create_access_token({"sub": "admin-user", "username": "admin", "role": "admin"})
+    with TestClient(server.app) as client:
+        r = client.get(
+            f"/research/history/{report_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["score"] == 10.0, "质量分必须从库里取回"
+    assert body["grade"] == "A", "等级必须从库里取回"
+    assert [c["name"] for c in body["competitors"]] == ["甲公司", "乙公司"], "竞品必须从库里取回"
+    assert body["missing_dimensions"] == ["reviews"]
+    # 库里只存成功抓到的竞品；不补 status 的话前端默认显示「失败」——那是假的。
+    assert [c["status"] for c in body["competitors"]] == ["success", "success"]
+
+
+def test_history_detail_without_db_row_still_serves_markdown(monkeypatch, tmp_path):
+    """库里没有这一行时（文件兜底报告），仍要能打开——只是结构化字段为空。"""
+    from fastapi.testclient import TestClient
+
+    import server
+    from src.auth.jwt_auth import create_access_token
+
+    report_id = "research_report_20260101_000001_abcdef12"
+    (tmp_path / f"{report_id}.md").write_text("# 标题\n\n正文内容\n", encoding="utf-8")
+    monkeypatch.setattr(server, "OUTPUT_DIR", str(tmp_path))
+
+    class _EmptyDB:
+        def get_report(self, rid):
+            return None
+
+    monkeypatch.setattr(server, "get_report_db", lambda: _EmptyDB())
+
+    token = create_access_token({"sub": "admin-user", "username": "admin", "role": "admin"})
+    with TestClient(server.app) as client:
+        r = client.get(
+            f"/research/history/{report_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "正文内容" in body["markdown"]
+    assert body["competitors"] is None, "没有库里数据时不得编造竞品"
