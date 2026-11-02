@@ -441,7 +441,35 @@ def analyze(runs: List[Dict[str, Any]], golden: rm.GoldenSet) -> Dict[str, Any]:
         "suspect_mean_per_run": (round(sum(suspect_counts) / len(suspect_counts), 1)
                                  if suspect_counts else None),
         "tie": tie_analysis(valid, measured),
+        # 官方性关（复算对照）：suspect→unknown 重算 tie 期望（第十五轮归因用 ✓）
+        "tie_officiality_off": tie_analysis(_neutralize_officiality(valid), measured),
     }
+
+
+def _neutralize_officiality(runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """官方性关（复算对照）：suspect 一律还原成 unknown——降权与卫兵都不生效 ✓。
+
+    坑（第十五轮实测 ✗）：run 记录里的 scored **分数已经是罚过的**（suspect
+    记 0.45）——只翻 officiality 标记不动分数，复算结果纹丝不动（Δ=0）✗。
+    所以要把 suspect 的分数**加回** OFFICIALITY_PENALTY（罚分的逆运算 ✓）。
+    只动 scored（tie 期望重选的输入 ✓），不动原记录（实测数不受影响 ✓）。
+    """
+    from src.workflow.research_plan import OFFICIALITY_PENALTY
+
+    out: List[Dict[str, Any]] = []
+    for rec in runs:
+        clone = dict(rec)
+        scored = []
+        for item in (rec.get("scored") or []):
+            item = dict(item)
+            if str(item.get("officiality") or "") == "suspect":
+                item["score"] = round(
+                    float(item.get("score") or 0.0) + OFFICIALITY_PENALTY, 4)
+                item["officiality"] = "unknown"
+            scored.append(item)
+        clone["scored"] = scored
+        out.append(clone)
+    return out
 
 
 def tie_analysis(valid: List[Dict[str, Any]], golden: rm.GoldenSet) -> Dict[str, Any]:
@@ -600,6 +628,17 @@ def render_markdown(analysis: Dict[str, Any], lines: Dict[str, Any],
             v = lines[code]["by_group"].get(g)
             row.append(str(v) if v is not None else "不判")
         out.append("| " + " | ".join(row) + " |")
+    out.append("")
+    # 官方性归因（复算对照，非实测 ✗）：把 suspect 一律还原成 unknown
+    # （降权不生效）重跑 tie 期望——与实测的差 = 官方性降权的名额代价。
+    # 用途（第十五轮预注册）：S1 若在此对照里显著回升 ⇒ 降幅主要是降权引起 ✓；
+    # 若不回升 ⇒ 主要是轮间抖动 ✗。
+    tie_off = analysis.get("tie_officiality_off") or {}
+    if tie_off.get("computable") and lines["S1"]["overall"] is not None:
+        out.append(f"- **官方性归因（复算对照，非实测 ✗）**：关掉降权重选 → "
+                   f"R3_tie={tie_off.get('keep_l3_mean')}、S1_tie={tie_off.get('stability_mean')}"
+                   f"（实测 R3={lines['R3']['overall']}、S1={lines['S1']['overall']}；"
+                   "差值 = suspect 降权的名额代价；S1 回升幅度大 ⇒ 降幅主要是降权引起 ✓）")
     out.append("")
     # ---- 实体（品牌）口径：产品被发现了、只是域名没对上（Talkie 案例 ✓）----
     # 非判定口径 ✗：判定线仍用 host 口径（预注册不变 ✓）。

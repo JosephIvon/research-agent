@@ -112,6 +112,25 @@ def test_suspect_loses_slot_to_verified_peer():
     assert scored_by_name["Talkie"]["gate_passed"] is True, "仍如实进池/过闸 ✓"
 
 
+def test_redirect_exemption_saves_old_official_domain():
+    """行核误伤案例回归 ✗：replika.ai（旧官方域）200 跳到 replika.com
+    （= sellerUrl）——重定向豁免要把它判成 verified ✓。"""
+    off._REDIRECT_CACHE.clear()
+    assert off.classify_officiality(
+        "https://replika.ai/", "Replika",
+        fetch=lambda b: [{"trackName": "Replika: My AI Friend",
+                          "sellerUrl": "https://replika.com/"}],
+        redirect_lookup=lambda h: "replika.com") == "verified"
+    # 不落开发者站的跳转 → 仍 suspect ✓
+    off._REDIRECT_CACHE.clear()
+    assert off.classify_officiality(
+        "https://talkieai.cc/", "Talkie",
+        fetch=lambda b: [{"trackName": "Talkie Lab - AI Playground",
+                          "sellerUrl": "https://talkie-ai.com/"}],
+        redirect_lookup=lambda h: "somewhere-else.example") == "suspect"
+    off._REDIRECT_CACHE.clear()
+
+
 def test_unknown_is_never_penalized():
     candidates = [
         {"name": "甲", "url": "https://a.example/", "site_type": "product_site",

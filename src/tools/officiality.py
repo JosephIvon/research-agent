@@ -21,6 +21,7 @@ import json
 import re
 from typing import Any, Dict, List, Optional, Sequence
 from urllib import request as urlrequest
+from urllib.parse import urlparse
 
 from src.tools.list_pages import host_of
 from src.workflow.site_types import normalized_brand
@@ -55,6 +56,31 @@ def _hosts_related(a: str, b: str) -> bool:
     if not a or not b:
         return False
     return a == b or a.endswith("." + b) or b.endswith("." + a)
+
+
+# 重定向终点缓存：host → 终点主机（None = 不可达/无重定向 ✓）
+_REDIRECT_CACHE: Dict[str, Optional[str]] = {}
+
+
+def redirect_target_host(host: str, timeout: int = 8) -> Optional[str]:
+    """这个域的重定向终点主机（一次 HTTP，进程缓存 ✓；失败 None = 无豁免 ✓）。"""
+    key = (host or "").lower()
+    if not key:
+        return None
+    if key in _REDIRECT_CACHE:
+        return _REDIRECT_CACHE[key]
+    target: Optional[str] = None
+    for scheme in ("https", "http"):
+        try:
+            opener = urlrequest.build_opener()  # 默认就跟随重定向 ✓
+            opener.addheaders = [("User-Agent", "Mozilla/5.0")]
+            with opener.open(f"{scheme}://{host}/", timeout=timeout) as resp:
+                target = (urlparse(resp.geturl()).hostname or "").lower()
+                break
+        except Exception:  # noqa: BLE001 —— 探不到就没有豁免，按 suspect 继续 ✓
+            continue
+    _REDIRECT_CACHE[key] = target
+    return target
 
 
 def seller_hosts_for_brand(brand: str, fetch: Optional[Any] = None) -> List[str]:
@@ -93,8 +119,15 @@ def seller_hosts_for_brand(brand: str, fetch: Optional[Any] = None) -> List[str]
 
 
 def classify_officiality(candidate_host: str, brand: str,
-                         fetch: Optional[Any] = None) -> str:
-    """verified / suspect / unknown（unknown 永不罚 ✓）。"""
+                         fetch: Optional[Any] = None,
+                         redirect_lookup: Optional[Any] = None) -> str:
+    """verified / suspect / unknown（unknown 永不罚 ✓）。
+
+    **重定向豁免**（2026-11-02 行核误伤案例 ✗）：旧官方域 replika.ai
+    200 重定向到新官方域 replika.com（= sellerUrl）——直接比对会把它
+    误标 suspect ✗。所以 direct 不中时，跟一次候选域的重定向终点
+    （进程缓存 ✓，fetch 注入测试 ✓），落在开发者站上即 verified ✓。
+    """
     key = normalized_brand(brand)
     if not key:
         return "unknown"
@@ -105,6 +138,10 @@ def classify_officiality(candidate_host: str, brand: str,
     if not sellers:
         return "unknown"
     if any(_hosts_related(host, s) for s in sellers):
+        return "verified"
+    lookup = redirect_lookup or redirect_target_host
+    target = lookup(host)
+    if target and any(_hosts_related(target, s) for s in sellers):
         return "verified"
     return "suspect"
 
