@@ -23,10 +23,13 @@
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
 
 from src.workflow.research_plan import ResearchPlan, admit_competitors
 from src.tools.search_tool import SearchBackendError
@@ -774,17 +777,33 @@ class SearchStageRunner:
             unique.append(query)
         return unique
 
-    def run_verification(self, plan: ResearchPlan, competitors: Sequence[str]) -> List[Dict[str, Any]]:
+    def run_verification(self, plan: ResearchPlan, competitors: Sequence[str],
+                         officiality_by_name: Optional[Dict[str, str]] = None
+                         ) -> List[Dict[str, Any]]:
         """对已入选竞品做站外补充检索（逐家验证 + 反证）。
 
         每家每阶段**只发有限几条查询**：竞品数 × 阶段 × 词数会放大成几十次
         搜索（5 家 × 2 阶段 × 4 词 = 40 次），延迟与配额都扛不住。
         先发最能定位的词，够用就停。
+
+        **suspect 跳过逐家验证**（2026-11-02 预注册 §14）：官方性判定为
+        suspect 的竞品（App Store 元数据证实域不是开发者站 ✗ 蹭名嫌疑），
+        它的 per_competitor_verify 站内查询是给**错的站**找"定价/功能/方案"
+        ——搜回来的会进对比矩阵冒充产品数据 ✗ 毒数据。跳过验证阶段，
+        **反证照常**（第三方评价与域主无关，本来就是站外视角 ✓）。
+        verified/unknown 照常跑（unknown 永不罚 ✓）。
         """
+        officiality_by_name = officiality_by_name or {}
         pages: List[Dict[str, Any]] = []
         seen = set()
+        skipped = 0
         for competitor in competitors:
-            for stage in ("per_competitor_verify", "counter_evidence"):
+            is_suspect = officiality_by_name.get(competitor) == "suspect"
+            stages = [s for s in ("per_competitor_verify", "counter_evidence")
+                      if not (is_suspect and s == "per_competitor_verify")]
+            if is_suspect:
+                skipped += 1
+            for stage in stages:
                 queries = self.site_scoped_queries(plan, competitor, stage)
                 for query in queries[:MAX_QUERIES_PER_STAGE]:
                     for item in self._search(query, stage):
@@ -794,4 +813,8 @@ class SearchStageRunner:
                         item["stage"] = stage
                         item["competitor"] = competitor
                         pages.append(item)
+        if skipped:
+            logger.info(
+                "逐家验证：%d 家 suspect 竞品跳过验证阶段（域非开发者站 ✗，反证照常 ✓）",
+                skipped)
         return pages

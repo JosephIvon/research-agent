@@ -163,6 +163,38 @@ def test_funnel_brand_caliber_skips_suspect_but_host_does_not():
     assert m["recall_brand"]["L0"] == 0.0, "suspect 不给品牌命中（假阳性剔除 ✓）"
 
 
+def test_verification_skips_suspect_but_keeps_counter_evidence():
+    """逐家验证：suspect 的站内验证查询跳过（给蹭名站找"定价/功能"是毒数据 ✗），
+    反证照常（第三方评价与域主无关 ✓）；unknown 永不跳过 ✓。"""
+    class _Recording:
+        def __init__(self):
+            self.queries = []
+        def search(self, query, num_results=None):
+            self.queries.append(query)
+            return [{"url": f"https://r{len(self.queries)}.test/",
+                     "title": "x", "content": "y"}]
+
+    stub = _Recording()
+    runner = ss.SearchStageRunner(stub)
+    pages = runner.run_verification(
+        _plan(), ["Talkie", "星野"],
+        officiality_by_name={"Talkie": "suspect", "星野": "verified"})
+    by = {}
+    for p in pages:
+        by.setdefault((p["competitor"], p["stage"]), 0)
+        by[(p["competitor"], p["stage"])] += 1
+    assert ("Talkie", "per_competitor_verify") not in by, "suspect 跳过逐家验证 ✓"
+    assert ("Talkie", "counter_evidence") in by, "suspect 反证照常 ✓"
+    assert ("星野", "per_competitor_verify") in by, "verified 照常 ✓"
+
+    stub2 = _Recording()
+    runner2 = ss.SearchStageRunner(stub2)
+    pages2 = runner2.run_verification(
+        _plan(), ["乙"], officiality_by_name={"乙": "unknown"})
+    assert {p["stage"] for p in pages2} == {"per_competitor_verify",
+                                            "counter_evidence"}, "unknown 永不罚 ✓"
+
+
 def test_search_stage_annotates_officiality(monkeypatch):
     off._SELLER_CACHE.clear()
     off._SELLER_CACHE["talkie"] = ["talkie-ai.com"]

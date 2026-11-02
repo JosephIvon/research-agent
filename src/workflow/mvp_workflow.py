@@ -1041,7 +1041,11 @@ class MVPWorkflow:
                 # 那家竞品行下（parent_platform），否则会自成一行，把
                 # "App Store 上的猫箱页面"变成一个叫"猫箱"的假竞品行。
                 verification_pages = runner.run_verification(
-                    plan, [item.get("name") or "" for item in discovery.selected]
+                    plan, [item.get("name") or "" for item in discovery.selected],
+                    officiality_by_name={
+                        str(item.get("name") or ""): str(item.get("officiality") or "")
+                        for item in discovery.selected
+                    },
                 )
                 state["verification"] = verification_pages
                 evidence_sites = self._counter_evidence_sites(
