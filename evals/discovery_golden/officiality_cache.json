@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-11-02T10:31:32+00:00",
+  "updated_at": "2026-11-02T15:37:16+00:00",
   "note": "officiality 判定缓存：brands=品牌→开发者站主机；redirects=域→重定向终点。来源 App Store sellerUrl/developerUrl + HTTP 重定向跟随（§14/§15 ✓）。脚本可重生成（删掉本文件即可）。",
   "brands": {
     "rubii": [
@@ -99,10 +99,84 @@
     "doppleai": [],
     "dreamcompanion": [],
     "evaaisoulmate": [],
-    "niiniai": []
+    "niiniai": [],
+    "c": [],
+    "snapfulfilcloudwms": [],
+    "boxwise": [],
+    "skubiq": [],
+    "vtradexwms": [],
+    "ai剧情": [],
+    "ai风月": [],
+    "shine探光": [],
+    "夜色ai": [],
+    "星野": [],
+    "独响": [
+      "www.duxiangai.com"
+    ],
+    "筑梦岛": [],
+    "蔚蓝陪伴": [],
+    "逗逗": [
+      "www.doudou.ai"
+    ],
+    "ai女友": [],
+    "ai情感陪伴": [],
+    "ai智能陪伴": [],
+    "ai极昼": [],
+    "ai聊天": [
+      "www.tangerinlabs.app"
+    ],
+    "ai虚拟伴侣": [
+      "www.17daban.cn"
+    ],
+    "ai侣全球首款3d实时互动人工智能虚拟伴侣女友恋人": [],
+    "ai妄想": [],
+    "ai角色扮演聊天": [],
+    "春宵ai": [],
+    "purrlyai酒馆": [],
+    "ai角色扮演": [
+      "cosplay.loadata.com"
+    ],
+    "幻语ai": [],
+    "超级玩伴": [],
+    "nomi": [
+      "nomi.ai",
+      "nomi.pet"
+    ],
+    "小冰岛": [],
+    "wow": [
+      "www.wowpresentsplus.com",
+      "wow.reachmobile.com",
+      "wow.com.ve"
+    ],
+    "万话": [],
+    "春潮ai": [],
+    "seele": [],
+    "燃渊": [],
+    "星朋友": [],
+    "emochiai": [],
+    "seraviax": [],
+    "meimoduai": [],
+    "鲸岛ai": [
+      "jd.weixingai.cn"
+    ],
+    "灵侍": [],
+    "怦怦ai": [],
+    "theone陪伴": [],
+    "ai风月网页版": [],
+    "幻梦ai": [],
+    "soul": [
+      "www.soulapp.cn",
+      "soulapp.me"
+    ],
+    "bubblyai": [],
+    "moltbook": []
   },
   "redirects": {
     "saylostudio.com": "saylostudio.com",
-    "replika.ai": "replika.com"
+    "replika.ai": "replika.com",
+    "www.airoleplay.ai": "www.airoleplay.ai",
+    "www.nomi.so": "www.nomi.so",
+    "talkieai.cc": "talkieai.cc",
+    "jdai.art": "jdai.art"
   }
 }

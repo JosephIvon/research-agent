@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 from urllib import request as urlrequest
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from src.tools.list_pages import host_of
 from src.workflow.site_types import normalized_brand
@@ -94,7 +94,10 @@ def save_disk_cache(path: Optional[str] = None) -> None:
 
 
 def _itunes_search(brand: str, country: str = "us") -> List[Dict[str, Any]]:
-    url = (f"https://itunes.apple.com/search?term={brand}"
+    # **CJK 必须 percent-encode**（第十九轮实测 ✗：星野/筑梦岛等两区"必挂"
+    # 不是限流——URL 里裸中文，服务端直接拒 ✗。ASCII 品牌恰好全好，
+    # 才会误判成"限流"）。quote 以 safe="" 编码整词 ✓。
+    url = (f"https://itunes.apple.com/search?term={quote(brand, safe='')}"
            f"&entity=software&limit={_LIMIT}&country={country}")
     req = urlrequest.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urlrequest.urlopen(req, timeout=_TIMEOUT) as resp:
@@ -102,10 +105,30 @@ def _itunes_search(brand: str, country: str = "us") -> List[Dict[str, Any]]:
     return list(data.get("results") or [])
 
 
+# 通用站黑名单：CJK 品牌没法做"域含品牌词"检查（域名是罗马字 ✗），
+# 用它替代——这些站不是开发者站（linktree/社交平台 ✗）
+_GENERIC_HOSTS = {
+    "linktr.ee", "wixsite.com", "weebly.com", "strikingly.com",
+    "youtube.com", "weibo.com", "x.com", "twitter.com", "instagram.com",
+    "tiktok.com", "douyin.com", "bilibili.com", "b23.tv", "xiaohongshu.com",
+}
+
+
+def _is_cjk(brand: str) -> bool:
+    return bool(re.search(r"[一-鿿]", brand or ""))
+
+
 def _host_has_brand(host: str, brand: str) -> bool:
-    """开发者站主机要**含品牌词**——linktree/落地页不算开发者站 ✗。"""
+    """开发者站主机判定。ASCII 品牌：主机要**含品牌词**（linktree/落地页
+    不算 ✗）。CJK 品牌：域名是罗马字，"含品牌词"永假 ✗——同品牌 App 本身
+    就是品牌证据（App Store 列表按品牌词匹配在先 ✓），主机过**通用站黑名单**
+    即认（linktree/社交平台不算开发者站 ✓）。"""
     bare = (host or "").lower()
     bare = bare[4:] if bare.startswith("www.") else bare
+    if not bare:
+        return False
+    if _is_cjk(brand):
+        return not any(bare == g or bare.endswith("." + g) for g in _GENERIC_HOSTS)
     return bool(brand) and bool(brand in bare)
 
 
@@ -156,29 +179,37 @@ def seller_hosts_for_brand(brand: str, fetch: Optional[Any] = None) -> List[str]
     if key in _SELLER_CACHE:
         return _SELLER_CACHE[key]
     sellers: List[str] = []
-    ok = True
-    try:
-        results = (fetch or _itunes_search)(key)
-        for item in results or []:
+    reliable = False
+    for country in ("us", "cn"):
+        # **cn 区回退**（第十九轮预注册 §16 ✓）：本赛道大量 CN 产品只上
+        # 国区 App Store（星野/筑梦岛/蔚蓝陪伴…美区查不到 ✗）。us 有开发者站
+        # 就不查 cn（有界 ✓）；**us 失败也要试 cn**——限流常是整层 API 抖动，
+        # 但 us 挂 ≠ cn 挂，放弃 cn 会把 CN 产品永远留在 unknown ✗（首跑
+        # seed 踩过：星野等 5 个品牌两轮都没进盘 ✗）。
+        if country == "cn" and sellers:
+            break
+        try:
+            results = (fetch or _itunes_search)(key, country) or []
+        except Exception:  # noqa: BLE001
+            continue  # 这一区失败：另一区还有机会 ✓；两区都失败 → 不可信 ✗
+        reliable = True  # 任一区**响应过**即可信 ✓（成功 0 条也是事实 ✓）
+        for item in results:
             name = normalized_brand(str((item or {}).get("trackName") or ""))
             # 同品牌 App：App Store 的标题常带后缀（真实案例 ✗：
             # "Talkie Lab - AI Playground" 的规范化是 talkielab ≠ talkie）——
-            # 精确等值会漏掉本尊 ✗；用**品牌词包含**（key ⊆ 名字，len≥3 防
-            # "AI" 这类通用词通配 ✗）。异品牌（TalkAI练口语/Character AI）不含
+            # 精确等值会漏掉本尊 ✗；用**品牌词包含**（key ⊆ 名字；CJK 专名
+            # 阈值 2（星野 ✓），ASCII ≥3 防 "AI" 通配 ✗）。异品牌不含
             # talkie ✓ 仍被过滤。
-            if len(key) < 3 or key not in name:
+            if len(key) < (2 if _is_cjk(key) else 3) or key not in name:
                 continue
             for field in ("sellerUrl", "developerUrl"):
                 host = host_of(str((item or {}).get(field) or ""))
                 if host and _host_has_brand(host, key):
                     if host not in sellers:
                         sellers.append(host)
-    except Exception:  # noqa: BLE001 —— 查询失败按 unknown 处理，不拖垮链路 ✓
-        sellers = []
-        ok = False
     _SELLER_CACHE[key] = sellers
-    if not ok:
-        # **失败不落盘**（第十七轮教训 #106 ✗）：查不到 ≠ 没有开发者站，
+    if not reliable:
+        # **失败不落盘**（第十七轮教训 #106 ✗）：两区都没响应 = 不可信，
         # 失败结果进盘会把"间歇失败"固化成"永久 unknown"✗。
         _FETCH_FAILED.add(key)
     return sellers

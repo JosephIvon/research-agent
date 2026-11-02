@@ -49,7 +49,7 @@ def _fresh_cache():
     off.set_disk_cache(None)
 
 
-def _boom(b):
+def _boom(b, c="us"):
     raise RuntimeError("api down")
 
 
@@ -58,26 +58,26 @@ def _disk_fallback_itunes_rows():
 
 
 def test_seller_hosts_only_same_brand_with_brand_domain():
-    sellers = off.seller_hosts_for_brand("Talkie", fetch=lambda b: _itunes_rows())
+    sellers = off.seller_hosts_for_brand("Talkie", fetch=lambda b, c="us": _itunes_rows())
     assert sellers == ["talkie-ai.com"]
 
 
 def test_classify_verified_suspect_unknown():
     assert off.classify_officiality(
-        "https://talkie-ai.com/", "Talkie", fetch=lambda b: _itunes_rows()) == "verified"
+        "https://talkie-ai.com/", "Talkie", fetch=lambda b, c="us": _itunes_rows()) == "verified"
     # 子域关系也算同站（studio.hangjam.ai ↔ hangjam.ai 的行核教训 ✓）
     assert off.classify_officiality(
         "https://app.talkie-ai.com/login", "Talkie",
-        fetch=lambda b: _itunes_rows()) == "verified"
+        fetch=lambda b, c="us": _itunes_rows()) == "verified"
     off._REDIRECT_CACHE["talkieai.cc"] = None  # 短路 ✓
     assert off.classify_officiality(
-        "https://talkieai.cc/", "Talkie", fetch=lambda b: _itunes_rows(),
+        "https://talkieai.cc/", "Talkie", fetch=lambda b, c="us": _itunes_rows(),
         redirect_lookup=lambda h: None) == "suspect"
     # 查不到同品牌 App → unknown（永不罚 ✓）
     assert off.classify_officiality(
-        "https://whatever.example/", "毫无关系的品牌", fetch=lambda b: []) == "unknown"
+        "https://whatever.example/", "毫无关系的品牌", fetch=lambda b, c="us": []) == "unknown"
     # 网络失败 → unknown ✓
-    def _boom(b):
+    def _boom(b, c="us"):
         raise RuntimeError("api down")
     off._SELLER_CACHE.clear()
     assert off.classify_officiality(
@@ -87,7 +87,7 @@ def test_classify_verified_suspect_unknown():
 def test_officiality_cache_prevents_refetch():
     calls = []
 
-    def _counting(b):
+    def _counting(b, c="us"):
         calls.append(b)
         return _itunes_rows()
 
@@ -133,14 +133,14 @@ def test_redirect_exemption_saves_old_official_domain():
     off._REDIRECT_CACHE.clear()
     assert off.classify_officiality(
         "https://replika.ai/", "Replika",
-        fetch=lambda b: [{"trackName": "Replika: My AI Friend",
+        fetch=lambda b, c="us": [{"trackName": "Replika: My AI Friend",
                           "sellerUrl": "https://replika.com/"}],
         redirect_lookup=lambda h: "replika.com") == "verified"
     # 不落开发者站的跳转 → 仍 suspect ✓
     off._REDIRECT_CACHE.clear()
     assert off.classify_officiality(
         "https://talkieai.cc/", "Talkie",
-        fetch=lambda b: [{"trackName": "Talkie Lab - AI Playground",
+        fetch=lambda b, c="us": [{"trackName": "Talkie Lab - AI Playground",
                           "sellerUrl": "https://talkie-ai.com/"}],
         redirect_lookup=lambda h: "somewhere-else.example") == "suspect"
     off._REDIRECT_CACHE.clear()
@@ -220,7 +220,7 @@ def test_disk_cache_roundtrip_and_failure_exclusion(tmp_path):
 
     # 第一"进程"：talkie 查询成功，broken 查询失败
     off._SELLER_CACHE.clear(); off._FETCH_FAILED.clear(); off._REDIRECT_CACHE.clear()
-    def _fetch(brand):
+    def _fetch(brand, country="us"):
         if brand == "broken":
             raise RuntimeError("api down")
         if brand == "talkie":
@@ -243,6 +243,55 @@ def test_disk_cache_roundtrip_and_failure_exclusion(tmp_path):
         "https://talkieai.cc/", "Talkie", fetch=_boom, redirect_lookup=lambda h: None)
     assert verdict == "suspect", "盘缓存兜底：iTunes 挂了也能判 suspect ✓"
 
+
+
+def test_cn_fallback_bounded_and_short_circuited():
+    """cn 区回退（§16）：us 查不到开发者站才查 cn（CN 产品补齐 ✓，最多 2 查 ✓）；
+    us 已有开发者站就不查 cn ✓；us 失败按失败处理（不落盘 ✓）。"""
+    calls = []
+
+    def _us_empty(brand, country="us"):
+        calls.append(country)
+        if country == "cn":
+            return [{"trackName": "星野", "sellerUrl": "https://xingyeai.com/"}]
+        return []
+
+    off._SELLER_CACHE.clear(); off._FETCH_FAILED.clear()
+    assert off.seller_hosts_for_brand("星野", fetch=_us_empty) == ["xingyeai.com"], "cn 回退补齐 ✓"
+    assert calls == ["us", "cn"], "us 空才查 cn（有界 ✓）"
+
+    # CJK 品牌的 linktree 要被黑名单挡住 ✗（域含品牌词检查对 CJK 永假）
+    calls.clear()
+    def _cn_linktree(brand, country="us"):
+        calls.append(country)
+        if country == "cn":
+            return [{"trackName": "星野", "sellerUrl": "https://linktr.ee/xingye"}]
+        return []
+
+    off._SELLER_CACHE.clear(); off._FETCH_FAILED.clear()
+    assert off.seller_hosts_for_brand("星野", fetch=_cn_linktree) == [], "CJK linktree 不算开发者站 ✓"
+    assert calls == ["us", "cn"], "黑名单拒收后 us 已查 cn 也已查 ✓"
+
+    calls.clear()
+    def _us_hit(brand, country="us"):
+        calls.append(country)
+        return [{"trackName": "Talkie Lab - AI Playground",
+                 "sellerUrl": "https://talkie-ai.com/"}]
+
+    off._SELLER_CACHE.clear(); off._FETCH_FAILED.clear()
+    assert off.seller_hosts_for_brand("Talkie", fetch=_us_hit) == ["talkie-ai.com"]
+    assert calls == ["us"], "us 有开发者站不查 cn ✓"
+
+    calls.clear()
+    off._SELLER_CACHE.clear(); off._FETCH_FAILED.clear()
+
+    def _boom_calling(brand, country="us"):
+        calls.append(country)
+        _boom(brand, country)
+
+    assert off.seller_hosts_for_brand("甲乙丙", fetch=_boom_calling) == []
+    assert off._FETCH_FAILED, "两区都失败按失败处理（不落盘 ✓）"
+    assert calls == ["us", "cn"], "us 失败也要试 cn（限流是整层抖动，us 挂 ≠ cn 挂 ✓）"
 
 def test_matrix_row_warning_for_suspect_provenance():
     """矩阵 provenance（§14 产品侧）：suspect 行带 ⚠️ 官方性警示（数据来源可疑），
