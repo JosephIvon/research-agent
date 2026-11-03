@@ -329,15 +329,19 @@ def test_brand_display_name_reads_the_brand_out_of_a_structured_value():
 
 
 def test_brand_display_name_also_untangles_a_stringified_dict():
-    """旧报告里存的是「对象被 str() 之后的字符串」，也得还原出品牌名。
+    """旧报告里存的是「对象被 str() 之后又截到 50 字的字符串」，也得还原出品牌名。
 
-    推断品牌名时做过一次 str()，于是落库的是 "{'brand': '旺店通', ...}" 这样的
-    字符串——不是 dict，光认 dict 修不了历史数据。
+    推断品牌名时做过一次 str() 再截断，于是落库的是
+    "{'brand': '旺店通', 'company': '北京掌上先机网络科技有限公司" 这样的残缺字面量——
+    连 literal_eval 都还原不了，只能按字段捞。
     """
     from src.tools.comparison_tool import brand_display_name
 
-    stored = "{'brand': '慧策旺店通（旺店通）', 'company': '北京掌上先机网络科技有限公司'}"
+    stored = "{'brand': '慧策旺店通（旺店通）', 'company': '北京掌上先机网络科技有限公司"
     assert brand_display_name(stored) == "慧策旺店通（旺店通）"
+
+    complete = "{'brand': '旺店通', 'company': '北京掌上先机网络科技有限公司'}"
+    assert brand_display_name(complete) == "旺店通"
 
     # 不是 dict 字面量的普通字符串原样返回，别硬还原
     assert brand_display_name("Blue Yonder") == "Blue Yonder"

@@ -250,6 +250,9 @@ def _brand_from_title(title: str) -> str:
     return head or cleaned
 
 
+_BRAND_KEYS = ("brand", "name", "title", "site_name", "product_name")
+
+
 def brand_display_name(value: Any, limit: int = 50) -> str:
     """把抽取出的品牌名整理成一行字符串。
 
@@ -257,21 +260,28 @@ def brand_display_name(value: Any, limit: int = 50) -> str:
     直接 str() 会把整个 dict 字面量当成品牌名显示——实测报告正文与历史列表里
     出现过整串 "{'brand': ...}"。这里取对象里最像品牌名的那个字段。
 
-    旧报告里存的还不是对象，而是**对象被 str() 之后的字符串**（推断品牌名时
-    做过一次 str()）——那种字符串也要还原，取出真正的品牌名。
+    旧报告里存的还不是对象，而是**对象被 str() 之后、又截到 50 字的字符串**，
+    连合法字面量都不算（literal_eval 还原不了）。这种要按字段正则捞品牌名。
     """
     if isinstance(value, str):
         text = value.strip()
-        if text.startswith("{") and text.endswith("}"):
+        if text.startswith("{"):
             try:
                 parsed = ast.literal_eval(text)
             except (ValueError, SyntaxError):
                 parsed = None
             if isinstance(parsed, dict):
                 return brand_display_name(parsed, limit)
+            # 截断过的字面量：按字段捞
+            for key in _BRAND_KEYS:
+                found = re.search(
+                    r"(?<![\w])['\"]?%s['\"]?\s*:\s*['\"]([^'\"]{1,120})['\"]" % key, text
+                )
+                if found:
+                    return found.group(1).strip()[:limit]
         return text[:limit]
     if isinstance(value, dict):
-        for key in ("brand", "name", "title", "site_name", "product_name"):
+        for key in _BRAND_KEYS:
             candidate = value.get(key)
             if isinstance(candidate, str) and candidate.strip():
                 return candidate.strip()[:limit]
