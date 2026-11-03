@@ -1,4 +1,5 @@
 """竞品对比分析工具"""
+import ast
 import re
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse
@@ -255,7 +256,20 @@ def brand_display_name(value: Any, limit: int = 50) -> str:
     模型有时把品牌名返回成**结构化对象**（{'brand': '旺店通', 'company': ...}）。
     直接 str() 会把整个 dict 字面量当成品牌名显示——实测报告正文与历史列表里
     出现过整串 "{'brand': ...}"。这里取对象里最像品牌名的那个字段。
+
+    旧报告里存的还不是对象，而是**对象被 str() 之后的字符串**（推断品牌名时
+    做过一次 str()）——那种字符串也要还原，取出真正的品牌名。
     """
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("{") and text.endswith("}"):
+            try:
+                parsed = ast.literal_eval(text)
+            except (ValueError, SyntaxError):
+                parsed = None
+            if isinstance(parsed, dict):
+                return brand_display_name(parsed, limit)
+        return text[:limit]
     if isinstance(value, dict):
         for key in ("brand", "name", "title", "site_name", "product_name"):
             candidate = value.get(key)

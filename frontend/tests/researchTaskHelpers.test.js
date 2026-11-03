@@ -257,6 +257,38 @@ test('source rows carry the pages that were not fetched', () => {
   assert.equal(rows[0].pageCount, 1, '失败页不计入已读取页数')
 })
 
+test('source rows count the per-competitor detail that was persisted', () => {
+  // 逐家明细落库之后，「来源状态」每行要显示真实条数。
+  // 这些字段此前从没落库，页面恒显示"0 条信息 / 0 个站内页"——
+  // 显示的是空，不是"这家没数据"。
+  const rows = buildSourceRows({
+    raw: {
+      competitors: [
+        {
+          name: '甲云仓配',
+          url: 'http://127.0.0.1:8899/jia/',
+          status: 'success',
+          extracted_data: [
+            { key: 'pricing', value: '2999', source_url: 'http://127.0.0.1:8899/jia/pricing', confidence: 0.99 },
+            { key: 'features', value: '库存预警', source_url: 'http://127.0.0.1:8899/jia/', confidence: 0.99 }
+          ],
+          raw_pages: [
+            { url: 'http://127.0.0.1:8899/jia/' },
+            { url: 'http://127.0.0.1:8899/jia/pricing' }
+          ],
+          discovered_urls: ['http://127.0.0.1:8899/jia/features']
+        }
+      ]
+    }
+  })
+
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].dataCount, 2, '抽取项数要显示真实条数，不是 0')
+  assert.equal(rows[0].pageCount, 2, '已读站内页数要显示真实条数，不是 0')
+  assert.deepEqual(rows[0].discoveredUrls, ['http://127.0.0.1:8899/jia/features'])
+  assert.equal(rows[0].status, 'success')
+})
+
 test('partial terminal event is reported as a delivered result, not an error', () => {
   assert.equal(getEventType('partial', 'partial'), 'success')
   assert.equal(getEventType('completed', 'completed'), 'success')

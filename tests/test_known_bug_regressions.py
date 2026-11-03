@@ -326,3 +326,19 @@ def test_brand_display_name_reads_the_brand_out_of_a_structured_value():
     # 抽取出的 name 项是 dict 时，竞品名取其中的品牌名
     extracted = [{"key": "name", "value": {"brand": "金蝶制造云", "solution": "云解决方案"}}]
     assert infer_competitor_name("https://sjzerp.test/", extracted) == "金蝶制造云"
+
+
+def test_brand_display_name_also_untangles_a_stringified_dict():
+    """旧报告里存的是「对象被 str() 之后的字符串」，也得还原出品牌名。
+
+    推断品牌名时做过一次 str()，于是落库的是 "{'brand': '旺店通', ...}" 这样的
+    字符串——不是 dict，光认 dict 修不了历史数据。
+    """
+    from src.tools.comparison_tool import brand_display_name
+
+    stored = "{'brand': '慧策旺店通（旺店通）', 'company': '北京掌上先机网络科技有限公司'}"
+    assert brand_display_name(stored) == "慧策旺店通（旺店通）"
+
+    # 不是 dict 字面量的普通字符串原样返回，别硬还原
+    assert brand_display_name("Blue Yonder") == "Blue Yonder"
+    assert brand_display_name("{不是字典}") == "{不是字典}"
