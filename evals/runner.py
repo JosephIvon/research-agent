@@ -21,7 +21,7 @@ CASES_DIR = EVALS_DIR / "cases"
 RESULTS_DIR = EVALS_DIR / "results"
 BASELINE_DIR = EVALS_DIR / "baselines"
 # 基线与 manifest 版本同步：新增用例必须升版本并重算（不滚动覆盖历史）
-BASELINE_VERSION = "v1.8"
+BASELINE_VERSION = "v1.9"
 DEFAULT_BASELINE = BASELINE_DIR / f"{BASELINE_VERSION}.json"
 
 from evals.fixture_source import load_manifest, update_fixture_digests  # noqa: E402
@@ -54,11 +54,15 @@ def _isolated_storage(tmp: Path):
     """报告与数据库隔离到临时目录，评测不污染真实数据。"""
     from src.config import settings as settings_mod
     from src.storage import database as db_mod
+    from src.tools import officiality
 
     with _patched_attrs([
         (settings_mod, "OUTPUT_DIR", str(tmp / "output")),
         (db_mod, "DATABASE_PATH", str(tmp / "reports.db")),
         (db_mod, "_report_db", None),
+        # officiality 落盘缓存也必须隔离：golden 目录里的
+        # officiality_cache.json 是他人改动，评测不得写它。
+        (officiality, "DEFAULT_CACHE_PATH", str(tmp / "officiality_cache.json")),
     ]):
         yield
 
@@ -467,13 +471,41 @@ def run_cases(manifest: Dict[str, Any], only: Optional[List[str]] = None) -> Lis
     for case in manifest["cases"]:
         if only and case["id"] not in only:
             continue
-        llm_spec = json.loads(
-            (CASES_DIR / case["id"] / "llm.json").read_text(encoding="utf-8")
-        )
+        mode = case.get("mode", "legacy")
+        # contract case 不依赖夹具（没有 llm.json/sites），直接跑确定性检查。
+        llm_spec: Dict[str, Any] = {}
+        if mode != "contract":
+            llm_spec = json.loads(
+                (CASES_DIR / case["id"] / "llm.json").read_text(encoding="utf-8")
+            )
         with tempfile.TemporaryDirectory(prefix=f"eval-{case['id']}-") as tmp:
             tmp_path = Path(tmp)
-            mode = case.get("mode", "legacy")
             try:
+                if mode == "contract":
+                    from evals.contracts import run_contract
+
+                    contract = run_contract(case)
+                    passed = bool(contract.pop("passed", False))
+                    results.append({
+                        "id": case["id"],
+                        "category": case["category"],
+                        "mode": mode,
+                        "status": "completed" if passed else "failed",
+                        "termination_reason": contract["detail"],
+                        "citation_debug": {},
+                        "derived_claims": [],
+                        "gap_refetch_result": None,
+                        "dimension_refetch_result": None,
+                        "delivery_readiness": None,
+                        "metrics": {
+                            "contract_pass": 1.0 if passed else 0.0,
+                            "contract_check": case.get("check"),
+                        },
+                    })
+                    print(f"[eval] {case['id']:<24} {results[-1]['status']:<10} "
+                          f"{contract['detail'][:160]}")
+                    continue
+
                 run_out: Dict[str, Any] = {}
                 react_out: Optional[Dict[str, Any]] = None
                 if mode in ("legacy", "compare"):

@@ -590,10 +590,19 @@ def test_stop_reasons_constant_stays_in_sync_with_the_runner():
     import inspect
     import re
 
+    from src.agent.error_codes import ReasonCode
     from src.agent.trace import STOP_REASONS
 
     runner_src = inspect.getsource(ReActRunner)
     produced = set(re.findall(r'stop_reason\s*(?::\s*|=\s*)"([a-z_]+)"', runner_src))
+    # 契约 v2：终止原因统一走 ReasonCode 枚举，源码里不再出现裸字符串。
+    # 这里把枚举赋值形式（ReasonCode.NAME.value）折算成它的字符串值继续核对。
+    produced |= {
+        code.value
+        for code in ReasonCode
+        if code.value != ReasonCode.CANCELLED.value
+        and f"ReasonCode.{code.name}.value" in runner_src
+    }
 
     assert produced, "没从 runner 源码里解析出任何 stop_reason 字面量，锚点失效"
     extra = set(STOP_REASONS) - produced

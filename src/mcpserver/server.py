@@ -74,14 +74,19 @@ def build_mcp_registry() -> ToolRegistry:
 
 
 def mcp_tool_definitions(registry: ToolRegistry) -> List["mcp_types.Tool"]:
-    """由注册表生成 MCP Tool 定义——schema 单一来源的直接体现。"""
+    """由注册表生成 MCP Tool 定义——schema 单一来源的直接体现。
+
+    input_schema 取 `to_schema()` 的注入版（分页工具自动带 offset/limit），
+    而非裸 `tool.parameters`：注册表的 execute 支持分页参数，schema 却
+    不声明的话，MCP 客户端永远不知道可以翻页——契约与行为脱节。
+    """
     if not _SDK_AVAILABLE:
         raise RuntimeError("mcp SDK 未安装：uv add 'mcp>=2.3'")
     return [
         mcp_types.Tool(
             name=tool.name,
             description=tool.description,
-            input_schema=tool.parameters,
+            input_schema=tool.to_schema()["function"]["parameters"],
         )
         for tool in (registry.get(name) for name in registry.names())
     ]

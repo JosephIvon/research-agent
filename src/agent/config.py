@@ -30,3 +30,15 @@ AGENT_BUDGET_CONVERGE_MAX_TOKENS = int(os.getenv("AGENT_BUDGET_CONVERGE_MAX_TOKE
 TOOL_DUPLICATE_LIMIT = int(os.getenv("AGENT_DUPLICATE_LIMIT", "3"))  # 同工具同参数
 EMPTY_OBSERVATION_LIMIT = int(os.getenv("AGENT_EMPTY_ROUNDS", "2"))  # 连续空结果轮数
 MODEL_EMPTY_RESPONSE_LIMIT = int(os.getenv("AGENT_EMPTY_MODEL_ROUNDS", "2"))
+
+# P3 上下文折叠：历史估算 token 超过阈值才折叠；最近 N 条消息不折。
+# 置 0 关闭折叠（恢复"全量历史"行为）。
+CONTEXT_FOLD_TOKENS = int(os.getenv("AGENT_CONTEXT_FOLD_TOKENS", "24000"))
+CONTEXT_FOLD_KEEP_RECENT = int(os.getenv("AGENT_CONTEXT_FOLD_KEEP_RECENT", "4"))
+CONTEXT_FOLD_MIN_CHARS = int(os.getenv("AGENT_CONTEXT_FOLD_MIN_CHARS", "200"))
+
+# 终态告警：折叠后从未被 read_evidence 回读、但终答引用了其来源 URL/key 的证据
+# 达到这个条数就记 warning（0 表示关闭，只保留计数不告警）。
+UNREAD_EVIDENCE_WARN_THRESHOLD = int(
+    os.getenv("AGENT_UNREAD_EVIDENCE_WARN_THRESHOLD", "1")
+)

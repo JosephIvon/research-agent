@@ -9,11 +9,18 @@
 import asyncio
 import json
 import logging
+import re
 import time
 from typing import Any, Callable, Dict, List, Optional
 
 from src.agent import config
-from src.agent.context import estimate_tokens, render_observation
+from src.agent.context import (
+    EvidenceIndex,
+    estimate_tokens,
+    fold_history,
+    render_observation,
+)
+from src.agent.error_codes import ReasonCode, RunOutcome
 from src.agent.tools import ToolRegistry, dedup_key, result_is_empty
 from src.agent.tool_specs import build_default_tools, system_prompt
 from src.agent.trace import AgentResult, AgentStep
@@ -43,6 +50,15 @@ class ReActRunner:
         # 必须早于 build_default_tools 赋值——工具闭包要拿它给 extract_facts 记账。
         self.budget = budget
         self.tools = tools or build_default_tools(llm_client, self.workspace, budget=budget)
+        # P3：折叠仓库与 read_evidence 共用 workspace 里的同一实例。
+        index = self.workspace.get("_evidence_index")
+        if not isinstance(index, EvidenceIndex):
+            index = EvidenceIndex()
+            self.workspace["_evidence_index"] = index
+        self.evidence_index = index
+        self.fold_tokens = int(config.CONTEXT_FOLD_TOKENS)
+        self.fold_keep_recent = int(config.CONTEXT_FOLD_KEEP_RECENT)
+        self.fold_min_chars = int(config.CONTEXT_FOLD_MIN_CHARS)
         self.max_steps = max_steps if max_steps is not None else config.AGENT_MAX_STEPS
         self.token_budget = token_budget if token_budget is not None else config.AGENT_TOKEN_BUDGET
         self.wall_clock_budget = (
@@ -75,20 +91,21 @@ class ReActRunner:
             # ---- 预算守卫（每轮开始先查，保证触发即停、理由明确）----
             elapsed = time.monotonic() - started
             if usage["prompt_tokens"] + usage["completion_tokens"] > self.token_budget:
-                stop_reason = "budget_exceeded"
+                stop_reason = ReasonCode.BUDGET_EXCEEDED.value
                 break
             if elapsed > self.wall_clock_budget:
-                stop_reason = "budget_exceeded"  # 墙钟与 token 同归"预算耗尽"，trace 里有耗时
+                stop_reason = ReasonCode.BUDGET_EXCEEDED.value  # 墙钟与 token 同归"预算耗尽"，trace 里有耗时
                 break
             if self.budget is not None:
                 budget_reason = self.budget.exceeded_reason()
                 if budget_reason is not None:
                     logger.info("[react] %s，收束为部分结果", budget_reason)
-                    stop_reason = "budget_exceeded"
+                    stop_reason = ReasonCode.BUDGET_EXCEEDED.value
                     break
 
             step = AgentStep(index=index)
             step_start = time.monotonic()
+            self._fold_if_needed(messages)
 
             try:
                 raw = await self.llm.achat_completion_raw(
@@ -98,7 +115,7 @@ class ReActRunner:
                 logger.warning("react runner LLM 调用失败: %s", exc)
                 step.thought = f"[LLM 调用失败] {type(exc).__name__}: {exc}"
                 step.elapsed = round(time.monotonic() - step_start, 4)
-                stop_reason = "error"
+                stop_reason = ReasonCode.ERROR.value
                 step.stop_reason_if_any = stop_reason
                 steps.append(step)
                 break
@@ -114,7 +131,7 @@ class ReActRunner:
             if not tool_calls and not (content or "").strip():
                 empty_model_rounds += 1
                 if empty_model_rounds >= config.MODEL_EMPTY_RESPONSE_LIMIT:
-                    stop_reason = "error"
+                    stop_reason = ReasonCode.ERROR.value
                     step.stop_reason_if_any = stop_reason
                     steps.append(step)
                     break
@@ -132,7 +149,7 @@ class ReActRunner:
             if not tool_calls:
                 answer = content
                 step.elapsed = round(time.monotonic() - step_start, 4)
-                stop_reason = "halt"
+                stop_reason = ReasonCode.HALT.value
                 step.stop_reason_if_any = stop_reason
                 steps.append(step)
                 break
@@ -200,10 +217,10 @@ class ReActRunner:
 
             step.elapsed = round(time.monotonic() - step_start, 4)
             if round_has_duplicate_overflow:
-                stop_reason = "duplicate_loop"
+                stop_reason = ReasonCode.DUPLICATE_LOOP.value
             empty_rounds = empty_rounds + 1 if round_all_empty else 0
             if stop_reason is None and empty_rounds >= config.EMPTY_OBSERVATION_LIMIT:
-                stop_reason = "empty_observations"
+                stop_reason = ReasonCode.EMPTY_OBSERVATIONS.value
 
             # 终止原因先落回本轮 step 再外发：on_step 回调（workflow 的 agent_step 事件）
             # 只有在这之前写入才能拿到真值，而不是恒为 None
@@ -214,10 +231,10 @@ class ReActRunner:
             if stop_reason is not None:
                 break
         else:
-            stop_reason = stop_reason or "max_steps"
+            stop_reason = stop_reason or ReasonCode.MAX_STEPS.value
 
         if stop_reason is None:
-            stop_reason = "max_steps"
+            stop_reason = ReasonCode.MAX_STEPS.value
 
         # ---- 预算收束：强制一次有上限的收敛调用 ----
         # 没有这一步，预算触发即 break，answer 恒为 None，workflow 整单判 failed，
@@ -230,6 +247,21 @@ class ReActRunner:
         if steps and steps[-1].stop_reason_if_any is None:
             steps[-1].stop_reason_if_any = stop_reason
 
+        reason_code = ReasonCode(stop_reason)
+        unread_keys = self.evidence_index.unread_keys()
+        answer_text = answer or ""
+        unread_cited = sum(
+            1 for key in unread_keys
+            if self._evidence_cited_in_answer(key, answer_text)
+        )
+        if (config.UNREAD_EVIDENCE_WARN_THRESHOLD > 0
+                and unread_cited >= config.UNREAD_EVIDENCE_WARN_THRESHOLD):
+            logger.warning(
+                "[react] %d 条已折叠证据被终答引用但从未 read_evidence 回读"
+                "（unread_folded=%d）",
+                unread_cited,
+                len(unread_keys),
+            )
         return AgentResult(
             answer=answer,
             stop_reason=stop_reason,
@@ -239,7 +271,66 @@ class ReActRunner:
             cost_report=self.budget.snapshot() if self.budget is not None else {},
             elapsed_s=round(time.monotonic() - started, 4),
             workspace=self.workspace,
+            reason_code=reason_code,
+            outcome=RunOutcome(
+                reason_code,
+                unread_folded_evidence=len(unread_keys),
+                unread_cited_evidence=unread_cited,
+            ),
+            unread_folded_evidence=len(unread_keys),
+            unread_cited_evidence=unread_cited,
         )
+
+    # 证据“被终答引用”的判定：key 原文出现，或其正文里的任一 URL 出现在终答。
+    # 这是可观测代理，不要求模型显式写出 evidence key。
+    _URL_RE = re.compile(r"https?://[^\s)\]}>\"']+")
+
+    def _evidence_cited_in_answer(self, key: str, answer: str) -> bool:
+        if not answer:
+            return False
+        if key in answer:
+            return True
+        content = self.evidence_index.get(key) or ""
+        for url in self._URL_RE.findall(content):
+            if url.rstrip(".,;:。，；：)") in answer:
+                return True
+        return False
+
+    @staticmethod
+    def _history_tokens(messages: List[Dict[str, Any]]) -> int:
+        total = 0
+        for message in messages:
+            content = message.get("content")
+            if isinstance(content, str):
+                total += estimate_tokens(content)
+            elif content is not None:
+                total += estimate_tokens(
+                    json.dumps(content, ensure_ascii=False, default=str)
+                )
+        return total
+
+    def _fold_if_needed(self, messages: List[Dict[str, Any]]) -> None:
+        """历史超过阈值时折叠较早的长观察；失败不拖垮主流程（退回全量历史）。"""
+        if self.fold_tokens <= 0:
+            return
+        if self._history_tokens(messages) <= self.fold_tokens:
+            return
+        try:
+            outcome = fold_history(
+                messages,
+                self.evidence_index,
+                keep_recent=self.fold_keep_recent,
+                min_chars=self.fold_min_chars,
+            )
+        except Exception as exc:  # 折叠是优化，不是正确性依赖
+            logger.warning("上下文折叠失败，保持全量历史: %s", exc)
+            return
+        if outcome.get("folded"):
+            logger.info(
+                "[react] 上下文折叠 %d 条观察（阈值 %d tokens）",
+                outcome["folded"],
+                self.fold_tokens,
+            )
 
     async def _converge_on_budget(
         self,
@@ -291,7 +382,7 @@ class ReActRunner:
             logger.warning("[react] 预算收敛调用失败，退回无终答语义: %s", exc)
             step.thought = f"[预算收敛失败] {type(exc).__name__}: {exc}"
             step.elapsed = round(time.monotonic() - step_start, 4)
-            step.stop_reason_if_any = "error"
+            step.stop_reason_if_any = ReasonCode.ERROR.value
             steps.append(step)
             _emit_step(self.on_step, step)
             return None
@@ -306,7 +397,7 @@ class ReActRunner:
         content = (raw.get("content") or "").strip()
         step.thought = content or "[预算收敛] 未产出正文"
         step.elapsed = round(time.monotonic() - step_start, 4)
-        step.stop_reason_if_any = "budget_exceeded"
+        step.stop_reason_if_any = ReasonCode.BUDGET_EXCEEDED.value
         steps.append(step)
         _emit_step(self.on_step, step)
 

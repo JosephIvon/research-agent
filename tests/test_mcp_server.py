@@ -76,8 +76,14 @@ def test_mcp_tool_definitions_match_registry_exactly():
     for definition in definitions:
         tool = registry.get(definition.name)
         assert definition.description == tool.description
-        assert definition.input_schema == tool.parameters, \
+        # 契约 v2：MCP 客户端看到的必须是注入分页参数后的 schema（与 execute 行为一致）
+        assert definition.input_schema == tool.to_schema()["function"]["parameters"], \
             f"{tool.name} 的 schema 在 MCP 层出现第二份且已漂移"
+        if tool.paginated:
+            props = definition.input_schema["properties"]
+            assert "offset" in props and "limit" in props, (
+                f"{tool.name} 支持分页但 MCP schema 未声明 offset/limit"
+            )
 
 
 def test_mcp_registry_contains_expected_services():
@@ -141,9 +147,11 @@ async def test_real_mcp_client_roundtrip():
                 names = {tool.name for tool in tools.tools}
                 assert names == {"echo", "unsafe_fetch"}
 
-                # 协议级 schema 一致：客户端看到的 = 注册表定义的
+                # 协议级 schema 一致：客户端看到的 = 注册表注入版定义（含分页参数）
                 echo_def = next(t for t in tools.tools if t.name == "echo")
-                assert echo_def.input_schema == registry.get("echo").parameters
+                assert echo_def.input_schema == (
+                    registry.get("echo").to_schema()["function"]["parameters"]
+                )
 
                 result = await session.call_tool("echo", {"text": "你好，MCP"})
                 payload = json.loads(result.content[0].text)

@@ -151,14 +151,14 @@ def test_budget_case_flip_proves_the_budget_is_what_terminates_it():
     """把预算放开，同一份夹具必须变成 completed——否则 partial 是假象。
 
     这是本组用例的关键：只断言"是 partial"不够，还要证明**是预算导致**的。
-    实测三个区间（同一夹具，只改 max_tokens）：
-        <= 819   -> failed    （开跑即超额，一轮都没跑，无从收敛）
-        820~2055 -> partial   （跑了几轮，收敛调用把已获得的证据收成报告）
-        >= 2056  -> completed （预算充足，正常跑完）
+    实测三个区间（同一夹具，只改 max_tokens；CJK 感知估算下重测）：
+        <= 1679  -> failed    （开跑即超额，一轮都没跑，无从收敛）
+        1680~3600 -> partial  （跑了几轮，收敛调用把已获得的证据收成报告）
+        >= 3601  -> completed （预算充足，正常跑完）
     """
     manifest = load_manifest(verify_digests=True)
 
-    partial = _run_budget_with(manifest, 1400)
+    partial = _run_budget_with(manifest, 2600)
     assert partial["status"] == "partial", "中段额度必须是 partial"
 
     generous = _run_budget_with(manifest, 10 ** 6)
@@ -178,17 +178,17 @@ def test_manifest_budget_sits_inside_the_partial_band():
 
     贴边的夹具会因 token 估算口径的小幅变动而翻到 failed/completed，
     基线随之漂移——那时红灯报的是"估算变了"，不是"截断逻辑坏了"。
-    实测 partial 区间为 [820, 2055]，这里要求离两侧边界都留出余量。
+    实测 partial 区间为 [1680, 3600]（CJK 感知估算下重测），这里要求离两侧边界都留出余量。
     """
     manifest = load_manifest(verify_digests=True)
     entry = next(c for c in manifest["cases"] if c["id"] == BUDGET_CASE_ID)
     chosen = int(entry["agent_budget"]["max_tokens"])
 
-    assert 820 <= chosen <= 2055, (
-        f"额度 {chosen} 已落在实测 partial 区间 [820, 2055] 之外"
+    assert 1680 <= chosen <= 3600, (
+        f"额度 {chosen} 已落在实测 partial 区间 [1680, 3600] 之外"
     )
-    assert chosen - 820 >= 200, f"额度 {chosen} 距下边界太近（剩 {chosen - 820}）"
-    assert 2055 - chosen >= 200, f"额度 {chosen} 距上边界太近（剩 {2055 - chosen}）"
+    assert chosen - 1680 >= 200, f"额度 {chosen} 距下边界太近（剩 {chosen - 1680}）"
+    assert 3600 - chosen >= 200, f"额度 {chosen} 距上边界太近（剩 {3600 - chosen}）"
 
 
 def test_truncation_rate_has_a_real_sample():
@@ -208,7 +208,7 @@ def test_every_manifest_case_uses_a_mode_the_runner_implements():
     拼错 mode 不会报错：`run_out` 保持 `{}`，metrics 全是 None，case 照样
     "跑完"。只有这条断言能让它变红。
     """
-    known = {"legacy", "compare", "budget"}
+    known = {"legacy", "compare", "budget", "contract"}
     manifest = load_manifest(verify_digests=True)
     for case in manifest["cases"]:
         mode = case.get("mode", "legacy")
@@ -303,12 +303,14 @@ def test_violation_accounting_is_present_on_every_case_and_not_vacuous():
 
     fields = ("attempts", "first_violation_count",
               "first_violation_types", "final_violation_count")
-    for row in results:
+    report_rows = [row for row in results if row.get("mode") != "contract"]
+    assert report_rows, "非 contract case 不应消失"
+    for row in report_rows:
         dbg = row["citation_debug"]
         missing = [f for f in fields if f not in dbg]
         assert not missing, f"case {row['id']} 的 citation_debug 缺字段: {missing}"
 
-    nonzero = [r["id"] for r in results
+    nonzero = [r["id"] for r in report_rows
                if (r["citation_debug"]["first_violation_count"] or 0) > 0]
     assert nonzero, (
         "全集中没有任何 case 触发过引用违规——'引用违规'这项指标已退回恒零，"
@@ -438,10 +440,10 @@ def test_budget_override_reaches_both_budget_guards(monkeypatch):
     """预算覆写必须同时到达 TaskBudget 与 ReActRunner 两道守卫。
 
     只 patch 一处时终态**仍是** partial，total/calls 与两处都改时逐项相同
-    （3504 / 4）——所以只看终态的测试根本抓不到少 patch 一处这件事。
+    ——所以只看终态的测试根本抓不到少 patch 一处这件事。
     真正会漂的是账本口径：只改 agent.config 那一处时，
     cost_report.limits.max_tokens 记下来的是 config 默认的 120000，
-    与 case 声明的 1400 对不上；反之 runner.token_budget 仍是 120000。
+    与 case 声明的 2600 对不上；反之 runner.token_budget 仍是 120000。
     这里把两个口径都盯住，少 patch 任何一处都会变红。
     """
     import tempfile
@@ -616,6 +618,8 @@ def test_每个case的抽取条目数等于非blocked站点数():
     """结构不变量：被整页丢弃的站点不占条目，多一条少一条都是错配的前兆。"""
     manifest = load_manifest(verify_digests=True)
     for case in manifest["cases"]:
+        if case.get("mode") == "contract":
+            continue  # 契约 case 无夹具、无站点声明
         llm_spec = json.loads(
             (eval_runner.CASES_DIR / case["id"] / "llm.json").read_text(encoding="utf-8")
         )

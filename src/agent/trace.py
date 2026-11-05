@@ -7,15 +7,11 @@ trace 是 M4 评测与前端"思考面板"的共用数据源：每一步记录�
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from src.agent.error_codes import ReasonCode, RunOutcome
+
 # 全部终止原因。前四个来自实施草案 M3 的契约，后两个是收束兜底的细分。
-STOP_REASONS = (
-    "halt",               # 模型给出最终答案，正常结束
-    "max_steps",          # 步数上界
-    "budget_exceeded",    # token 或墙钟预算耗尽
-    "error",              # LLM 连续空响应/不可恢复错误
-    "empty_observations",  # 连续 2 轮工具结果为空，继续空转无意义
-    "duplicate_loop",     # 同工具同参数重复 ≥3 次且提醒后仍重复
-)
+# 契约 v2 起以 ReasonCode 为唯一来源，本元组仅作为向后兼容的只读视图。
+STOP_REASONS = tuple(code.value for code in ReasonCode if code is not ReasonCode.CANCELLED)
 
 
 @dataclass
@@ -40,3 +36,9 @@ class AgentResult:
     cost_report: Dict[str, Any] = field(default_factory=dict)  # TaskBudget.snapshot() 口径
     elapsed_s: float = 0.0
     workspace: Dict[str, Any] = field(default_factory=dict)
+    # 契约 v2：终止契约的枚举形态。stop_reason 保留字符串以向后兼容。
+    reason_code: Optional[ReasonCode] = None
+    outcome: Optional[RunOutcome] = None
+    # 证据使用信号：被折叠但从未被 read_evidence 回读 / 其中被终答引用的条数。
+    unread_folded_evidence: int = 0
+    unread_cited_evidence: int = 0

@@ -27,7 +27,7 @@ MCP_EXPECTED_TOOLS = {"web_search", "fetch_site", "generate_research_report"}
 # 所以对 ReAct 有用、对 MCP 无用——显式登记，不静默溜过去。
 INTERNAL_ONLY_TOOLS = {
     "extract_facts", "compare_competitors",
-    "verify_entity", "discover_competitors",
+    "verify_entity", "discover_competitors", "read_evidence",
 }
 
 

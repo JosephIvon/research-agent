@@ -16,7 +16,9 @@ import json
 import logging
 from typing import Any, Dict, List
 
-from src.agent.context import estimate_tokens, map_reduce_extract
+from src.agent import config as agent_config
+from src.agent.context import EvidenceIndex, estimate_tokens, map_reduce_extract
+from src.agent.error_codes import ToolContractError, ToolErrorCode
 from src.agent.tools import Tool, ToolRegistry
 from src.crawler.web_crawler import WebCrawler
 from src.tools.comparison_tool import ComparisonAnalyzer, infer_competitor_name
@@ -59,6 +61,10 @@ def build_default_tools(llm_client, workspace: Dict[str, Any], budget: Any = Non
     if search_factory is None:
         search_factory = get_search_tool
     registry = ToolRegistry(url_validator=url_validator)
+    # P3：折叠仓库与 read_evidence 必须共用同一个实例，否则"摘要里的指针"
+    # 在回读时查不到原文。workspace 是两者的唯一连接点。
+    if "_evidence_index" not in workspace:
+        workspace["_evidence_index"] = EvidenceIndex()
 
     # ------------------------------------------------------------------
     # web_search
@@ -92,6 +98,10 @@ def build_default_tools(llm_client, workspace: Dict[str, Any], budget: Any = Non
         handler=_web_search,
         timeout=20.0,
         url_params=(),
+        side_effects="read",
+        idempotent=True,
+        error_codes=("invalid_arguments", "timeout", "execution_error"),
+        paginated=True,           # 搜索结果列表支持 offset/limit
     ))
 
     # ------------------------------------------------------------------
@@ -129,6 +139,9 @@ def build_default_tools(llm_client, workspace: Dict[str, Any], budget: Any = Non
         handler=_fetch_site,
         timeout=90.0,
         url_params=("url",),
+        side_effects="read",
+        idempotent=True,       # 只写 workspace 缓存，重复抓取无累积副作用
+        error_codes=("invalid_arguments", "unsafe_url", "timeout", "execution_error"),
     ))
 
     # ------------------------------------------------------------------
@@ -137,8 +150,12 @@ def build_default_tools(llm_client, workspace: Dict[str, Any], budget: Any = Non
     async def _extract_facts(url: str) -> Dict[str, Any]:
         profile = (workspace.get("sites") or {}).get(url)
         if not profile:
-            # 前置不满足属于调用方错误：抛出后由注册表归一为 ok=False 的观察结果
-            raise ValueError(f"该 URL 尚未抓取，请先调用 fetch_site(url={url!r})")
+            # 前置不满足属于调用方错误：重试同参数无意义，必须是非 retryable 的
+            # precondition_failed，而不是兜底的 execution_error
+            raise ToolContractError(
+                ToolErrorCode.PRECONDITION_FAILED,
+                f"该 URL 尚未抓取，请先调用 fetch_site(url={url!r})",
+            )
         pages = profile.get("pages", [])[:EXTRACT_MAX_PAGES]
 
         async def _extract_page(page_url: str, text: str):
@@ -214,6 +231,11 @@ def build_default_tools(llm_client, workspace: Dict[str, Any], budget: Any = Non
         handler=_extract_facts,
         timeout=120.0,
         url_params=(),  # 不触网，仅查 workspace；网络边界在 fetch_site 的 SSRF 校验
+        side_effects="read",
+        idempotent=True,
+        error_codes=("invalid_arguments", "precondition_failed", "timeout", "execution_error"),
+        paginated=True,
+        page_field="facts",       # 分页切片落在 facts 字段
     ))
 
     # ------------------------------------------------------------------
@@ -222,7 +244,10 @@ def build_default_tools(llm_client, workspace: Dict[str, Any], budget: Any = Non
     def _compare_competitors() -> Dict[str, Any]:
         facts_by_url = workspace.get("facts") or {}
         if len(facts_by_url) < 2:
-            raise ValueError("至少需要对 2 个站点执行过 extract_facts 才能对比")
+            raise ToolContractError(
+                ToolErrorCode.PRECONDITION_FAILED,
+                "至少需要对 2 个站点执行过 extract_facts 才能对比",
+            )
         competitors = []
         for url, facts in facts_by_url.items():
             competitors.append({
@@ -246,6 +271,9 @@ def build_default_tools(llm_client, workspace: Dict[str, Any], budget: Any = Non
         handler=_compare_competitors,
         timeout=15.0,
         url_params=(),
+        side_effects="read",
+        idempotent=True,
+        error_codes=("precondition_failed", "execution_error"),
     ))
 
     # ------------------------------------------------------------------
@@ -309,12 +337,18 @@ def build_default_tools(llm_client, workspace: Dict[str, Any], budget: Any = Non
         handler=_verify_entity,
         timeout=10.0,
         url_params=(),
+        side_effects="read",
+        idempotent=True,
+        error_codes=("execution_error",),   # 纯内存读 workspace，无网络/前置条件
     ))
 
     async def _discover_competitors() -> Dict[str, Any]:
         plan = _plan()
         if plan is None:
-            raise ValueError("本次运行没有研究计划，无法按口径发现竞品")
+            raise ToolContractError(
+                ToolErrorCode.PRECONDITION_FAILED,
+                "本次运行没有研究计划，无法按口径发现竞品",
+            )
         cached = workspace.get("discovered_competitors")
         if cached is not None:
             return cached
@@ -348,7 +382,57 @@ def build_default_tools(llm_client, workspace: Dict[str, Any], budget: Any = Non
         handler=_discover_competitors,
         timeout=60.0,
         url_params=(),
+        side_effects="read",
+        idempotent=True,
+        error_codes=("precondition_failed", "timeout", "execution_error"),
+        paginated=True,
+        page_field="competitors",
     ))
+
+    # 预算低于折叠阈值时，这轮根本走不到折叠（先被预算喊停），回读工具
+    # 只是白占 prompt。跳过它能避免极小预算的 case 被工具 schema 挤爆。
+    if budget is None or budget.max_tokens >= agent_config.CONTEXT_FOLD_TOKENS:
+        # ------------------------------------------------------------------
+        # read_evidence（P3：折叠后的原文分页回读）
+        # ------------------------------------------------------------------
+        async def _read_evidence(key: str) -> Dict[str, Any]:
+            index = workspace.get("_evidence_index")
+            if not isinstance(index, EvidenceIndex):
+                raise ToolContractError(
+                    ToolErrorCode.PRECONDITION_FAILED,
+                    "证据索引未初始化，本次运行没有可回读的折叠内容",
+                )
+            try:
+                return index.read_page(key)
+            except KeyError:
+                raise ToolContractError(
+                    ToolErrorCode.NOT_FOUND,
+                    f"未知证据 key: {key!r}（可能来自另一次运行的折叠摘要）",
+                ) from None
+
+        registry.add(Tool(
+            name="read_evidence",
+            description=(
+                "按证据 key 分页回读被上下文折叠的历史观察原文。"
+                "折叠摘要里会给出 key 与内容哈希；返回 chunks 列表，"
+                "用 offset/limit 翻页，nextOffset 为 null 表示已读完。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "折叠摘要里给出的 evidence key"},
+                },
+                "required": ["key"],
+            },
+            handler=_read_evidence,
+            timeout=10.0,
+            url_params=(),
+            side_effects="read",
+            idempotent=True,
+            error_codes=("invalid_arguments", "precondition_failed", "not_found"),
+            paginated=True,
+            page_field="chunks",
+        ))
 
     return registry
 
@@ -394,6 +478,12 @@ def generate_research_report_tool(handler: Any, timeout: float) -> Tool:
         handler=handler,
         timeout=timeout,
         url_params=(),
+        side_effects="read",
+        # idempotent=False 是给恢复决策的信号：无状态破坏，但每次调用都是
+        # 一整条付费流水线（LLM 非确定性 + 网络时变），超时后盲目原样重试
+        # 的代价远大于收益——调用方应换参数或换更小的工具。
+        idempotent=False,
+        error_codes=("invalid_arguments", "timeout", "execution_error"),
     )
 
 

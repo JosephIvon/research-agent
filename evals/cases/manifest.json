@@ -1,6 +1,6 @@
 {
-  "version": "v1.8",
-  "description": "M4 评测集 v1.8：v1.7 的 gap_both 之后加入 3 条 coverage 判别 case（cov_gap_undeclared / cov_gap_declared / cov_gap_partial_declared）——期望维度真缺失且未标注→1、缺口全标注→3、只标注一部分→1，为下游 judge 的 coverage 三分支提供非恒定样本（v1.7 集上三分支 0 命中）。共 23 条，样本仍不足 40。；新增 matrix_b2b：结构化竞品矩阵门禁 case（2 家竞品，有效完整度必须 100%，占位/缺证据/缺日期一律不计入）",
+  "version": "v1.9",
+  "description": "M4 评测集 v1.9：在 v1.8 的 25 条报告质量 case 之上新增 4 条契约/生命周期 contract case（断点续跑、取消无副作用、折叠证据分页回读、只读/写声明拦截），共 29 条；contract case 无夹具，直接驱动真实产品类做确定性判定。",
   "cases": [
     {
       "id": "reg_doccollab",
@@ -471,7 +471,7 @@
         ]
       },
       "agent_budget": {
-        "max_tokens": 1400
+        "max_tokens": 2600
       },
       "search_results": [
         {
@@ -785,6 +785,34 @@
           "require_entity_resolved": true
         }
       }
+    },
+    {
+      "id": "contract_resume",
+      "category": "contract",
+      "mode": "contract",
+      "check": "resume_across_crash",
+      "query": "断点续跑：verify 中段崩溃后重启恢复"
+    },
+    {
+      "id": "contract_cancel",
+      "category": "contract",
+      "mode": "contract",
+      "check": "cancel_no_side_effects",
+      "query": "取消后不得产生报告副作用"
+    },
+    {
+      "id": "contract_evidence_page",
+      "category": "contract",
+      "mode": "contract",
+      "check": "evidence_pagination_readback",
+      "query": "折叠证据分页回读哈希一致"
+    },
+    {
+      "id": "contract_tool_decl",
+      "category": "contract",
+      "mode": "contract",
+      "check": "read_write_declaration_blocked",
+      "query": "只读声明与写副作用冲突必须被拦截"
     }
   ],
   "fixture_digests": {
