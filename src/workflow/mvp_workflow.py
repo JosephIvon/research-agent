@@ -55,6 +55,8 @@ from src.workflow import matrix_admission
 from src.workflow import page_cache
 from src.workflow import planning
 from src.workflow import quality_refresh
+from src.workflow import react_delivery
+from src.workflow import react_runner
 from src.workflow import report_io
 from src.workflow import research_plan
 from src.workflow import search_stages
@@ -1783,7 +1785,7 @@ class MVPWorkflow:
         tools_builder = getattr(self, "_tools_builder", None) or build_default_tools
 
         try:
-            budget = TaskBudget(
+            budget = react_runner.build_budget(
                 state["task_id"],
                 max_tokens=self._token_budget if self._token_budget is not None else AGENT_TOKEN_BUDGET,
                 max_usd=self._usd_budget if self._usd_budget is not None else AGENT_USD_BUDGET,
@@ -1799,53 +1801,22 @@ class MVPWorkflow:
                 workspace["research_plan"] = plan.to_dict()
             react_query = self._plan_aware_query(user_query, plan)
 
-            def _on_step(step) -> None:
-                # 每轮工具调用实时外发进度，SSE 订阅者据此看到模型正在做什么
-                tool_names = "、".join(tc.get("name") or "?" for tc in step.tool_calls) or "（无工具调用）"
-                self._emit(
-                    "agent_step", "agent", "running",
-                    f"第 {step.index} 轮：{tool_names}",
-                    payload={
-                        "step": step.index,
-                        "thought": step.thought,
-                        "tool_calls": step.tool_calls,
-                        "stop_reason": getattr(step, "stop_reason_if_any", None),
-                    },
-                )
-
-            # 网络边界只在**显式注入**时才覆盖 react 工具链的默认（tool_specs
-            # 侧的 WebCrawler / get_search_tool / ToolRegistry 默认校验器）——
-            # 无条件传会把 workflow 级默认压过 tool_specs 侧的 monkeypatch，
-            # 两套替换点本就服务不同场景：legacy 管线看 workflow，react 看 tool_specs。
-            tool_kwargs: Dict[str, Any] = {}
-            injected_crawler = getattr(self, "_crawler_factory", None)
-            if injected_crawler is not None:
-                tool_kwargs["crawler_factory"] = injected_crawler
-            if self._search_factory is not None:
-                tool_kwargs["search_factory"] = self._search_factory
-            injected_validator = getattr(self, "_url_validator_injected", False)
-            if injected_validator:
-                tool_kwargs["url_validator"] = self._validate_url
-
-            runner = runner_cls(
-                self.llm_client,
-                # budget 要透给工具闭包：extract_facts 的逐页 LLM 调用是单任务
-                # 最大的 token 开销，不接进 TaskBudget 的话 token/USD 两道守卫
-                # 会按"只有 ReAct 轮"的账放行，系统性低估。
-                tools=tools_builder(
-                    self.llm_client, workspace, budget=budget, **tool_kwargs
-                ),
+            runner = react_runner.assemble_runner(
+                runner_factory=runner_cls,
+                tools_builder=tools_builder,
+                llm_client=self.llm_client,
                 workspace=workspace,
                 budget=budget,
-                # token_budget 与 TaskBudget 同源（M6 双口径），None 时 Runner
-                # 落 config 默认——生产二者本就同值。
-                # 步数与墙钟此前**永远取默认**：用户界面说「预算不够」，
-                # 而这两道闸门根本没有入口。三个一起注入，TaskBudget 与
-                # Runner 也就不再各读各的（同一 token 预算两个真值源）。
+                tool_kwargs=react_runner.build_tool_kwargs(
+                    crawler_factory=getattr(self, "_crawler_factory", None),
+                    search_factory=self._search_factory,
+                    url_validator=self._validate_url,
+                    url_validator_injected=getattr(self, "_url_validator_injected", False),
+                ),
                 token_budget=self._token_budget,
                 max_steps=self._max_steps,
                 wall_clock_budget=self._wall_clock_budget,
-                on_step=_on_step,
+                on_step=react_runner.make_step_reporter(self._emit),
             )
             result = await runner.run(react_query, target_urls=target_urls)
 
@@ -1866,109 +1837,35 @@ class MVPWorkflow:
             if answer:
                 state["report_final"] = answer
                 if facts:
-                    store = EvidenceStore.from_extracted_data(facts)
-                    # ReAct 也走同一条交付链：矩阵 + 锚定借鉴点 + 固定速览章节。
-                    # 此前 react 模式只交模型终答，竞品矩阵与可借鉴点这两项
-                    # 结构化能力在 react 下完全缺席——同一条产品能力两种模式
-                    # 两种结果，是最难解释的一种不一致。
-                    state["competitors"] = self._competitors_from_facts(facts)
-                    matrix_obj = await self._derive_and_build_matrix(state, user_query)
-                    if matrix_obj is not None and matrix_obj.rows:
-                        # 位置放"后"：ReAct 报告正文是模型终答，合同是报告以
-                        # 模型交付物开头（连低可信前缀都不能加在它前面）；
-                        # 机器生成的速览表跟在后面，与机器附录标记语义一致
-                        state["report_final"] = inject_section(
-                            state["report_final"], matrix_obj, position="end",
-                        )
-                    citation_result = await asyncio.to_thread(verify_report, state["report_final"], store)
-                    state["citation_report"] = {
-                        k: v for k, v in citation_result.items() if k != "violations"
-                    }
-                    state["citation_violations"] = citation_result["violations"]
-                    state["citation_trusted"] = citation_result["passed"]
-                    if not citation_result["passed"]:
-                        # 与 legacy 同一原则：未过校验的报告不静默交付，顶部挂低可信标记
-                        state["report_final"] = self._mark_low_trust(state["report_final"], citation_result)
-                    # 证据对照表进附录：legacy 在报告装配时拼，react 此前直接把终答
-                    # 交付——正文的 [e:标记] 在报告里无处反查，budget 耗尽的 partial
-                    # 报告尤其如此（judge 反查断链，citation 被结构性压档）。
-                    # 校验已做完才拼：本节是确定性代码产出，挂机器附录标记免重复计数。
-                    state["report_final"] += (
-                        "\n\n<!--machine-appendix-->\n"
-                        + store.appendix_table()
-                        + "\n<!--/machine-appendix-->"
+                    await react_delivery.attach_evidence_and_citation(
+                        state, facts, user_query,
+                        verify_report=verify_report,
+                        competitors_from_facts=self._competitors_from_facts,
+                        derive_matrix=self._derive_and_build_matrix,
+                        mark_low_trust=self._mark_low_trust,
                     )
 
-                self._enforce_report_output(state)
-                if not str(state.get("report_final") or "").strip():
-                    raise LLMError("ReAct 报告在出口清洗后为空，已中止交付")
-                state["sync_results"]["local_file"] = self._save_report(state["report_final"], state.get("task_id"))
-                state["report_id"] = Path(state["sync_results"]["local_file"]).stem
-                self._persist_to_sqlite(state)
-                state["termination_reason"] = f"react:{result.stop_reason}"
-                # M6：预算耗尽但终答已产出——结论照常交付，终态标 partial 而非 completed，
-                # 让前端/落库能区分"跑完"与"被预算截断"
-                if result.stop_reason == "budget_exceeded":
-                    state["status"] = "partial"
-                    self._emit(
-                        TaskEventType.PARTIAL.value, "completed", "partial",
-                        f"预算耗尽，按已获得的证据收敛交付（stop_reason={result.stop_reason}）",
-                        payload={
-                            "status": state["status"],
-                            "termination_reason": state["termination_reason"],
-                            "stop_reason": result.stop_reason,
-                            "cost_report": state["cost_report"],
-                            "unread_folded_evidence": state["unread_folded_evidence"],
-                            "unread_cited_evidence": state["unread_cited_evidence"],
-                        },
-                    )
-                else:
-                    state["status"] = "completed"
-                    self._emit(
-                        "completed", "completed", "completed", "全部完成",
-                        payload={
-                            "unread_folded_evidence": state["unread_folded_evidence"],
-                            "unread_cited_evidence": state["unread_cited_evidence"],
-                        },
-                    )
-                self._update_task_status_in_sqlite(state)
-            else:
-                state["status"] = "failed"
-                state["termination_reason"] = f"react:{result.stop_reason}"
-                self._update_task_status_in_sqlite(state)
-                state["report_final"] = (
-                    f"❌ ReAct 调研未产出终答（stop_reason={result.stop_reason}，"
-                    f"共执行 {len(result.steps)} 轮），可查看 agent_step 事件了解已完成的工具调用。"
+                react_delivery.finish_success(
+                    state, result,
+                    enforce_output=self._enforce_report_output,
+                    save_report=self._save_report,
+                    persist=self._persist_to_sqlite,
+                    update_status=self._update_task_status_in_sqlite,
+                    emit=self._emit,
                 )
-                self._emit(
-                    "error", "agent", "failed",
-                    f"ReAct 未产出终答：{result.stop_reason}",
-                    payload={
-                        "stop_reason": result.stop_reason,
-                        "steps": len(result.steps),
-                        "unread_folded_evidence": state.get("unread_folded_evidence", 0),
-                        "unread_cited_evidence": state.get("unread_cited_evidence", 0),
-                    },
+            else:
+                react_delivery.finish_failure(
+                    state, result,
+                    update_status=self._update_task_status_in_sqlite,
+                    emit=self._emit,
                 )
         except Exception as e:
             logger.error(f"ReAct 工作流执行失败: {e}", exc_info=True)
-            state["status"] = "failed"
-            state["termination_reason"] = f"执行失败: {str(e)}"
-            state["quality_score"] = None
-            state["quality_grade"] = None
-            state["errors"].append({
-                "timestamp": datetime.now(),
-                "stage": "workflow",
-                "error_type": type(e).__name__,
-                "message": str(e),
-                "retry_attempts": 0
-            })
-            self._emit(
-                "error", "workflow", "failed",
-                f"执行失败: {str(e)}",
-                payload={"stage": "workflow", "error_type": type(e).__name__}
+            react_delivery.handle_exception(
+                state, e,
+                emit=self._emit,
+                update_status=self._update_task_status_in_sqlite,
             )
-            self._update_task_status_in_sqlite(state)
 
         # react 路径不走入口抓取，injection_findings 天然为空；统一记录计数保持口径一致
         state["injection_findings_count"] = len(state.get("injection_findings") or [])
