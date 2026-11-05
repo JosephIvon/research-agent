@@ -195,6 +195,16 @@ def _site_title(pages) -> str:
     return ""
 
 
+def _default_verify_report(*args, **kwargs):
+    """运行时转发到模块属性 `verify_report`。
+
+    不能写成 `verify_report_fn=verify_report` 的 def 默认参数：那会在定义时固化
+    引用，`monkeypatch.setattr(mvp_workflow, "verify_report", ...)` 随即失效。
+    本函数每次调用才查模块属性，既不改默认行为，也保住尚未迁移的旧 patch。
+    """
+    return verify_report(*args, **kwargs)
+
+
 class CoordinatorAgent:
     """协调者Agent - 负责任务分解、工具调用、结果整合"""
 
@@ -723,7 +733,11 @@ class MVPWorkflow:
                  max_steps: Optional[int] = None,
                  wall_clock_budget: Optional[float] = None,
                  usd_budget: Optional[float] = None,
-                 agent_mode: Optional[str] = None):
+                 agent_mode: Optional[str] = None,
+                 verify_report_fn=None,
+                 react_runner_factory=None,
+                 tools_builder=None,
+                 request_interval: Optional[float] = None):
         """依赖注入口：全部可选，None 时走生产默认。
 
         默认值必须在**方法体内**运行时解析模块属性（`WebCrawler`、
@@ -751,6 +765,12 @@ class MVPWorkflow:
         self._wall_clock_budget = wall_clock_budget  # None → config.AGENT_WALL_CLOCK_BUDGET
         self._usd_budget = usd_budget          # None → AGENT_USD_BUDGET
         self._agent_mode = agent_mode      # None → 使用点运行时读 AGENT_MODE 环境变量
+        # 引用校验 / ReAct 装配 / 抓取节流同样走 None 哨兵：None 时在**使用点**
+        # 运行时解析模块属性，既保住默认行为，也保住尚未迁移的旧 patch。
+        self._verify_report_fn = verify_report_fn
+        self._react_runner_factory = react_runner_factory
+        self._tools_builder = tools_builder
+        self._request_interval = request_interval
         self._validate_url = url_validator if url_validator is not None else validate_fetch_url
         self._url_validator_injected = url_validator is not None
         if url_validator is None:
@@ -1094,6 +1114,10 @@ class MVPWorkflow:
         cancel_event: Optional[asyncio.Event] = None,
     ) -> Dict[str, Any]:
         deliverables = deliverables or {"report": True, "prd": False}
+        # 同名局部变量：注入优先，否则运行时转发到模块属性——调用点文本保持
+        # `verify_report, state["report_final"], evidence_store` 不变（接线断言锁的
+        # 是调用顺序契约，不是某个绑定名）。
+        verify_report = getattr(self, "_verify_report_fn", None) or _default_verify_report
         self._stage_attempts = {}
         if cancel_event is not None:
             self.set_cancel_event(cancel_event)
@@ -1754,6 +1778,9 @@ class MVPWorkflow:
         """
         state["status"] = "reacting"
         self._emit("agent_step", "agent", "running", "ReAct 模式启动，模型自主规划工具调用")
+        verify_report = getattr(self, "_verify_report_fn", None) or _default_verify_report
+        runner_cls = getattr(self, "_react_runner_factory", None) or ReActRunner
+        tools_builder = getattr(self, "_tools_builder", None) or build_default_tools
 
         try:
             budget = TaskBudget(
@@ -1800,12 +1827,12 @@ class MVPWorkflow:
             if injected_validator:
                 tool_kwargs["url_validator"] = self._validate_url
 
-            runner = ReActRunner(
+            runner = runner_cls(
                 self.llm_client,
                 # budget 要透给工具闭包：extract_facts 的逐页 LLM 调用是单任务
                 # 最大的 token 开销，不接进 TaskBudget 的话 token/USD 两道守卫
                 # 会按"只有 ReAct 轮"的账放行，系统性低估。
-                tools=build_default_tools(
+                tools=tools_builder(
                     self.llm_client, workspace, budget=budget, **tool_kwargs
                 ),
                 workspace=workspace,
@@ -2064,6 +2091,11 @@ class MVPWorkflow:
             return []
 
         controller = get_concurrency_controller()
+        # None 时运行时读模块属性：既有 `monkeypatch.setattr(mvp_workflow,
+        # "CRAWL_REQUEST_INTERVAL", 0)` 仍然生效（默认行为不变）。
+        interval = getattr(self, "_request_interval", None)
+        if interval is None:
+            interval = CRAWL_REQUEST_INTERVAL
 
         async def _adjustment_loop():
             """后台定期调整并发数"""
@@ -2087,7 +2119,7 @@ class MVPWorkflow:
                 semaphore = controller.get_semaphore()
                 async with semaphore:
                     # Rate limiting per site
-                    await asyncio.sleep(CRAWL_REQUEST_INTERVAL)
+                    await asyncio.sleep(interval)
                     # page_tiers 只在真有时才传：保持既有调用形状不变
                     # （不少测试用替身替掉 _fetch_single_competitor）
                     extra: Dict[str, Any] = {}
