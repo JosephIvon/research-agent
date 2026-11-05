@@ -50,6 +50,8 @@ from src.workflow.competitor_matrix import (
     inject_section,
 )
 from src.workflow import borrowable_derivation
+from src.workflow import evidence_merge
+from src.workflow import report_io
 from src.workflow import research_plan
 from src.workflow import search_stages
 from src.workflow.admission_rules import (
@@ -71,12 +73,6 @@ from src.crawler.page_dates import extract_page_dates
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# 反证页（缺点/评价）抓取封顶：每家最多几页、整批最多几页。
-# 反证页是**外站**，抓一个页就是爬一个站；不封顶的话一次调研能变成
-# 几十个站点的爬取，预算与墙钟都扛不住。
-MAX_COUNTER_EVIDENCE_PER_COMPETITOR = 2
-MAX_COUNTER_EVIDENCE_TOTAL = 5
 
 # 准入闸门后的补位上限：数据不足的竞品被淘汰后，最多再抓几家顶上。
 # 补位是**真花钱**（每家一次整站爬），所以有上限；补完仍不够就如实标
@@ -2324,25 +2320,9 @@ class MVPWorkflow:
     def _merge_refetched_into_competitors(
         self, state: Dict[str, Any], competitor_url: str, items: List[Dict[str, Any]]
     ) -> None:
-        """把补抓到的数据回填到对应竞品。
-
-        补抓的产出只进了 state["extracted_data"]（报告正文读它），没进
-        state["competitors"][i]["extracted_data"]（评分器按竞品统计维度读它）——
-        两边不一致，附录自评表就会说「定价缺失」而正文里正写着定价。
-
-        归属按**站点**（site_of，小写 netloc）判定：competitor_url 是站点标识，
-        竞品条目里存的是整 URL，拿整串比永远比不上。
-        """
-        if not items:
-            return
-        from src.agent.gap_refetch import site_of
-        target = site_of(str(competitor_url or ""))
-        if not target:
-            return
-        for comp in state.get("competitors", []):
-            if site_of(str(comp.get("url") or "")) == target:
-                comp.setdefault("extracted_data", []).extend(items)
-                return
+        evidence_merge.merge_refetched_into_competitors(
+            state.get("competitors", []), competitor_url, items
+        )
 
     def _plan_aware_query(self, user_query: str, plan: Optional[Any]) -> str:
         """把研究计划写进任务描述：模型看得见"研究对象与重点角度"。
@@ -2411,81 +2391,14 @@ class MVPWorkflow:
         verification_pages: List[Dict[str, Any]],
         existing_urls: List[str],
     ) -> List[Dict[str, Any]]:
-        """从反证结果里挑出要抓的证据页（每家封顶、总数封顶）。
-
-        封顶的原因：反证页是**外站**，抓一次就是抓一个站。放开会让
-        一次调研变成几十个站点的爬取，预算与时间都扛不住。
-        """
-        seen = set(existing_urls or [])
-        per_competitor: Dict[str, int] = {}
-        sites: List[Dict[str, Any]] = []
-        for page in verification_pages or []:
-            if page.get("stage") != "counter_evidence":
-                continue
-            name = str(page.get("competitor") or "").strip()
-            url = str(page.get("url") or "").strip()
-            if not name or not url or url in seen:
-                continue
-            if per_competitor.get(name, 0) >= MAX_COUNTER_EVIDENCE_PER_COMPETITOR:
-                continue
-            if len(sites) >= MAX_COUNTER_EVIDENCE_TOTAL:
-                break
-            per_competitor[name] = per_competitor.get(name, 0) + 1
-            seen.add(url)
-            sites.append({
-                "url": url,
-                "auth_credentials": None,
-                "login_url": None,
-                "parent_platform": name,
-                # 只取这一页：反证页是证据来源，不是要建站的竞品
-                "max_pages": 1,
-            })
-        return sites
+        return evidence_merge.counter_evidence_sites(verification_pages, existing_urls)
 
     @staticmethod
     def _merge_evidence_pages(
         sites: List[Dict[str, Any]],
         competitors: List[Dict[str, Any]],
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """把反证/验证页归并进它所属的竞品条目。
-
-        不归并的话，这些外站页面会各自成为矩阵里的一行——一行叫
-        "快驴进货 App"、一行叫"知乎"，它们根本不是竞品。
-        返回 (归并后的竞品条目, 无主证据页)。无主证据页**不进竞品列表**
-        （它们不是竞品），单独留档备查。
-        """
-        if not sites or len(sites) != len(competitors):
-            return competitors, []
-        parents = {
-            str(comp.get("name") or "").strip(): comp
-            for comp, site in zip(competitors, sites)
-            if not site.get("parent_platform")
-        }
-        merged: List[Dict[str, Any]] = []
-        orphans: List[Dict[str, Any]] = []
-        for site, comp in zip(sites, competitors):
-            parent = str(site.get("parent_platform") or "").strip()
-            if not parent:
-                merged.append(comp)
-                continue
-            target = parents.get(parent)
-            if target is None:
-                # 父竞品没抓到（抓取失败）：证据页不是竞品，不能自成一行
-                orphans.append({
-                    "url": site.get("url"),
-                    "evidence_page_for": parent,
-                    "extracted_data": comp.get("extracted_data") or [],
-                    "error_message": comp.get("error_message"),
-                })
-                continue
-            target.setdefault("extracted_data", []).extend(comp.get("extracted_data") or [])
-            if comp.get("raw_search_results"):
-                target.setdefault("raw_search_results", []).extend(comp["raw_search_results"])
-            target.setdefault("evidence_pages", []).append({
-                "url": site.get("url"),
-                "stage": "counter_evidence",
-            })
-        return merged, orphans
+        return evidence_merge.merge_evidence_pages(sites, competitors)
 
     async def _derive_and_build_matrix(
         self,
@@ -2981,88 +2894,26 @@ class MVPWorkflow:
         return decision
 
     def _report_filename_for_task(self, task_id: str) -> str:
-        """同一任务固定文件名：崩溃在“文件已写、状态未落库”窗口后续跑只覆盖不新增。
-
-        文件名映射先于正文落盘写库，因此进程被杀后仍能复用同一个名字。
-        库不可用时退回按任务后缀的秒级名（仍然同秒不同任务不撞车）。
-        """
-        import hashlib
-
-        try:
-            from src.storage import get_report_db
-
-            existing = get_report_db().get_task_draft(task_id, "report_filename")
-            if existing:
-                return existing
-        except Exception as exc:  # 缓存失败不得阻断报告落盘
-            logger.warning("读取报告文件名映射失败: %s", exc)
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        suffix = hashlib.sha256(task_id.encode()).hexdigest()[:8]
-        filename = f"research_report_{timestamp}_{suffix}.md"
-        try:
-            from src.storage import get_report_db
-
-            get_report_db().save_task_draft(task_id, "report_filename", filename)
-        except Exception as exc:
-            logger.warning("保存报告文件名映射失败: %s", exc)
-        return filename
+        return report_io.report_filename_for_task(task_id)
 
     def _save_report(self, content: str, task_id: Optional[str] = None) -> str:
-        """保存报告到本地文件。
-
-        默认按 task 固定文件名 + 临时文件原子替换：续跑重写同一路径，
-        不会出现“崩溃前一份、续跑后两份”的重复报告。
-        `LIFECYCLE_ATOMIC_REPORT=0` 回到旧的“时间戳命名 + 直接写”。
-        """
-        from src.config.settings import OUTPUT_DIR
-        import os
-
-        if not task_id or not getattr(self, "_atomic_report_enabled", True):
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            suffix = f"_{task_id[:8]}" if task_id else ""
-            filename = f"research_report_{timestamp}{suffix}.md"
-            filepath = os.path.join(OUTPUT_DIR, filename)
-            os.makedirs(OUTPUT_DIR, exist_ok=True)
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(content)
-            return filepath
-
-        filename = self._report_filename_for_task(task_id)
-        filepath = os.path.join(OUTPUT_DIR, filename)
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        tmp_path = filepath + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            f.write(content)
-        os.replace(tmp_path, filepath)
-        return filepath
+        return report_io.save_report(
+            content, task_id, atomic=getattr(self, "_atomic_report_enabled", True)
+        )
 
     # ------------------------------------------------------------------
     # 断点：报告草稿与页缓存（按 task 键，进程被杀后仍可复用）
     # ------------------------------------------------------------------
 
     def _load_report_draft(self, state: Dict[str, Any]) -> Optional[str]:
-        task_id = state.get("task_id")
-        if not task_id or not getattr(self, "_report_draft_enabled", True):
-            return None
-        try:
-            from src.storage import get_report_db
-
-            return get_report_db().get_task_draft(task_id, "report")
-        except Exception as exc:
-            logger.warning("读取报告草稿失败: %s", exc)
-            return None
+        return report_io.load_report_draft(
+            state.get("task_id"), enabled=getattr(self, "_report_draft_enabled", True)
+        )
 
     def _save_report_draft(self, state: Dict[str, Any], content: str) -> None:
-        task_id = state.get("task_id")
-        if not task_id or not content or not getattr(self, "_report_draft_enabled", True):
-            return
-        try:
-            from src.storage import get_report_db
-
-            get_report_db().save_task_draft(task_id, "report", content)
-        except Exception as exc:
-            logger.warning("保存报告草稿失败: %s", exc)
+        report_io.save_report_draft(
+            state.get("task_id"), content, enabled=getattr(self, "_report_draft_enabled", True)
+        )
 
     @staticmethod
     def _page_cache_key(url: str, max_pages: Optional[int], page_tiers: Optional[tuple]) -> str:
