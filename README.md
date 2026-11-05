@@ -1,6 +1,10 @@
 # Research Agent
 
-智能竞品调研助手 / AI competitive research assistant.
+零密钥、零外部服务，一条命令生成第一份报告（首次安装依赖与浏览器需联网）：
+
+```bash
+uv sync && uv run playwright install chromium && uv run python tool_e2e_local.py
+```
 
 ---
 
@@ -91,6 +95,17 @@ evals/（离线评测 + CI 门禁）── 29 case 驱动真实工作流全链�
 系统展示的是可审计的工作阶段和来源状态，不展示模型私密思考链。
 
 ### 快速开始
+
+#### 离线演示（零密钥，先跑这个）
+
+```bash
+uv sync && uv run playwright install chromium
+uv run python tool_e2e_local.py
+```
+
+它在本地起一个静态竞品站点，用 `LLM_PROVIDER=fake` 回放脚本跑完整流水线（抓取 → 清洗 → 抽取 → 矩阵 → 报告 → 引用校验），**不需要 `.env`、不需要外部服务、不产生模型费用**。成功时输出 `状态: completed` 和 `💾 报告已保存: output/research_report_*.md`。
+
+首次需下载 Chromium（约 100MB）；依赖与浏览器装好后，单次实测约 **11 秒**。
 
 #### Docker 启动
 

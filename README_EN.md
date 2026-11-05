@@ -1,5 +1,11 @@
 # Research Agent
 
+One command, no API keys, no external services, first report in seconds (first-time dependency/browser install needs network):
+
+```bash
+uv sync && uv run playwright install chromium && uv run python tool_e2e_local.py
+```
+
 AI-powered competitive research tool. Input natural language queries, automatically complete search, crawl, analysis, and reporting.
 
 ## One-liner
@@ -87,6 +93,15 @@ All numbers are reproducible (commands below); sources: `evals/baselines/v1.9.js
 The UI shows auditable workflow stages and source status, not private model reasoning.
 
 ## Quick Start
+
+### Option 0: Offline demo (no keys)
+
+```bash
+uv sync && uv run playwright install chromium
+uv run python tool_e2e_local.py
+```
+
+Starts a local static competitor site and replays the full pipeline (crawl → sanitize → extract → matrix → report → citation checks) with `LLM_PROVIDER=fake`; no `.env`, no external services, no model cost. On success it prints `状态: completed` and `💾 报告已保存: output/research_report_*.md`. First run downloads Chromium (~100MB); afterwards it takes about **11 seconds**.
 
 ### Option 1: Docker (Recommended)
 
