@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-11-02T15:37:16+00:00",
+  "updated_at": "2026-11-05T23:15:53+00:00",
   "note": "officiality 判定缓存：brands=品牌→开发者站主机；redirects=域→重定向终点。来源 App Store sellerUrl/developerUrl + HTTP 重定向跟随（§14/§15 ✓）。脚本可重生成（删掉本文件即可）。",
   "brands": {
     "rubii": [
