@@ -82,9 +82,6 @@ class ConfigManager:
         self._config["APP_HOST"] = os.getenv("APP_HOST", "127.0.0.1")
         self._config["APP_PORT"] = int(os.getenv("APP_PORT", "8080"))
 
-        # Feature flags
-        self._config["CONFIG_HOT_RELOAD_ENABLED"] = True
-
     def get(self, key: str, default: Any = None) -> Any:
         with self._lock:
             return self._config.get(key, default)

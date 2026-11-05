@@ -246,14 +246,11 @@ LLM_CIRCUIT_BREAKER_THRESHOLD = _get_int("LLM_CIRCUIT_BREAKER_THRESHOLD", 5)  # 
 LLM_CIRCUIT_BREAKER_TIMEOUT = _get_int("LLM_CIRCUIT_BREAKER_TIMEOUT", 60)  # 熔断恢复超时（秒）
 LLM_FALLBACK_PROVIDER = os.getenv("LLM_FALLBACK_PROVIDER", "")  # 备用 LLM 提供商
 
-LLM_RETRY_DELAY = _get_float("LLM_RETRY_DELAY", 1.0)  # 重试初始延迟（秒）
-LLM_RETRY_BACKOFF_FACTOR = _get_int("LLM_RETRY_BACKOFF_FACTOR", 2)  # 重试退避因子
 LLM_MAX_CONTENT_CHARS = _get_int("LLM_MAX_CONTENT_CHARS", 8000)  # LLM 输入内容截断字符数
 
 CRAWL_MAX_CONCURRENCY = _get_int("CRAWL_MAX_CONCURRENCY", 5)  # 最大并发
 CRAWL_MIN_CONCURRENCY = _get_int("CRAWL_MIN_CONCURRENCY", 1)  # 最小并发
 CRAWL_REQUEST_INTERVAL = _get_float("CRAWL_REQUEST_INTERVAL", 1.0)  # 请求间隔（秒）
-CRAWL_TIMEOUT_PER_PAGE = _get_int("CRAWL_TIMEOUT_PER_PAGE", 30)  # 每页超时
 
 MIN_COMPETITORS_FOR_COMPARISON = _get_int("MIN_COMPETITORS_FOR_COMPARISON", 2)  # 横向对比最少竞品数
 
@@ -277,7 +274,6 @@ GAP_REFETCH_MAX_PAGES = _get_int("GAP_REFETCH_MAX_PAGES", 3)
 
 # 服务配置
 APP_ENV = os.getenv("APP_ENV", "development").lower()
-AUDIT_LOG_ENABLED = _get_bool("AUDIT_LOG_ENABLED", True)
 APP_HOST = os.getenv("APP_HOST", "127.0.0.1")
 APP_PORT = _get_int("APP_PORT", 8080)
 API_MAX_BODY_BYTES = _get_int("API_MAX_BODY_BYTES", 1_048_576)
@@ -345,9 +341,6 @@ OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 # 初始管理员账号（容器首次启动时自动创建）
 INITIAL_ADMIN_USERNAME = os.getenv("INITIAL_ADMIN_USERNAME", "admin")
 INITIAL_ADMIN_PASSWORD = os.getenv("INITIAL_ADMIN_PASSWORD", "")
-
-# Config center
-CONFIG_HOT_RELOAD_ENABLED = _get_bool("CONFIG_HOT_RELOAD_ENABLED", True)
 
 # Redis 配置
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
