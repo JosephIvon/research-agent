@@ -165,3 +165,31 @@ def test_retryable_error_still_retries():
         asyncio.sleep = real_sleep
 
     assert attempts["n"] == 3, f"应重试满 3 次，实际 {attempts['n']} 次"
+
+
+# --------------------------------------------------------------------------
+# 内容等待：合并成一次，不按选择器个数累加超时
+# --------------------------------------------------------------------------
+
+def test_wait_for_content_waits_once_not_per_selector():
+    """只有 `body` 的页面上，逐个选择器各等 5s 会白等 45s。
+
+    这里钉住"一次合并等待 + 不把 body 放进等待集合"——否则缺语义容器的
+    页面每页都会多耗 len(selectors) × timeout。
+    """
+    calls = []
+
+    class _Page:
+        async def wait_for_selector(self, selector, timeout=None):
+            calls.append((selector, timeout))
+
+    c = WebCrawler.__new__(WebCrawler)
+    c.content_selectors = ["article", "main", ".content", "body"]
+    asyncio.run(c._wait_for_content(_Page()))
+
+    assert len(calls) == 1, f"应按一次合并等待，实际 {len(calls)} 次：{calls}"
+    waited_selectors = [s.strip() for s in calls[0][0].split(",")]
+    assert "body" not in waited_selectors, (
+        f"body 永远存在，放进合并选择器会让等待立即返回：{calls[0][0]}"
+    )
+    assert calls[0][1] == 5000

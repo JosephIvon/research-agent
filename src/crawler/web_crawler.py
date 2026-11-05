@@ -231,13 +231,18 @@ class WebCrawler:
         return None
 
     async def _wait_for_content(self, page, timeout: int = 5000) -> None:
-        """等待页面内容加载完成（SPA支持）"""
-        for selector in self.content_selectors:
-            try:
-                await page.wait_for_selector(selector, timeout=timeout)
-                return
-            except Exception:
-                continue
+        """等待页面内容加载完成（SPA支持）。
+
+        合并成一次等待：逐个选择器各等 timeout，会在只有 `body`、没有语义
+        容器的页面上白等 len(selectors) × timeout（实测 9 × 5s ≈ 45s/页）。
+        任一语义容器出现即返回；都没有就最多等一个 timeout，然后按已取到
+        的正文继续（SPA 的主要等待已由前面的 networkidle 承担）。
+        """
+        selectors = [s for s in self.content_selectors if s != "body"]
+        try:
+            await page.wait_for_selector(", ".join(selectors), timeout=timeout)
+        except Exception:
+            pass
 
     async def fetch_page(
         self,
