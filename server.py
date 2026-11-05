@@ -59,6 +59,7 @@ from src.agent.config import (
     AGENT_USD_BUDGET,
     AGENT_WALL_CLOCK_BUDGET,
 )
+from src.config.startup_checks import StartupConfigError, validate_startup_config
 from src.auth.jwt_auth import create_access_token, decode_access_token
 from src.auth.user_db import get_user_db
 from src.security.url_validation import validate_fetch_url, validate_fetch_urls
@@ -72,7 +73,9 @@ from src.workflow.task_store import (
     TaskEvent,
     TaskArtifact,
     TaskEventType,
+    LifecycleReasonCode,
     TaskStatus,
+    is_terminal,
     EventEmitter,
     _sanitize_payload,
 )
@@ -1005,8 +1008,24 @@ _TASK_STATUS_BY_EVENT_STATUS = {
     "partial": TaskStatus.PARTIAL,
 }
 
+# 只有这些**任务级终态事件**才能改写任务状态。阶段级事件（stage_end /
+# artifact_ready / crawl_complete）的 status 也是 "completed"，但语义是
+# “该阶段完成”；按 status 一刀切会把任务在 decompose 后就误标成终态。
+_TASK_TERMINAL_EVENTS = {
+    TaskEventType.COMPLETED.value: TaskStatus.COMPLETED,
+    TaskEventType.PARTIAL.value: TaskStatus.PARTIAL,
+    TaskEventType.TASK_CANCELLED.value: TaskStatus.CANCELLED,
+    TaskEventType.ERROR.value: TaskStatus.FAILED,
+}
 
-async def _run_research_task(task_id: str, req: TaskRequest, user_id: Optional[str] = None):
+
+# 生命周期（D7/M3–M4）：进程内任务句柄。跨进程恢复的唯一凭据是 SQLite 检查点，
+# 这两张表只是让取消/回收不必重新扫描全部任务。
+_running_tasks: Dict[str, "asyncio.Task"] = {}
+_cancel_events: Dict[str, asyncio.Event] = {}
+
+
+async def _run_research_task(task_id: str, req: TaskRequest, user_id: Optional[str] = None, *, resume: bool = False):
     """Background task that runs the research workflow and emits events."""
     from src.workflow.mvp_workflow import MVPWorkflow
 
@@ -1023,18 +1042,40 @@ async def _run_research_task(task_id: str, req: TaskRequest, user_id: Optional[s
     async def on_event(event: TaskEvent):
         nonlocal event_counter
         event_counter += 1
-        event.id = event_counter
+        # 跨进程事件日志：内存事件流只服务实时订阅，进程一死就没了；
+        # SQLite 的 task_events 才是崩溃审计与续跑核对的凭据。
+        #
+        # 事件 id 取 SQLite 的全局 seq（AUTOINCREMENT），不用进程内计数器：
+        # SSE 的 Last-Event-ID 游标必须**跨进程可比**。原先用进程内计数，
+        # 任务在运行中重启后计数从 1 重新开始，而前端带着旧 id 重连，
+        # 新事件 id 反而更小 → 前端 `id > replay_from` 把续传全丢掉，
+        # 于是「重启后重新打开进度页」永远等不到后续进度。
+        seq = None
+        try:
+            seq = get_report_db().append_task_event(task_id, event.to_dict())
+        except Exception as exc:  # 审计写失败不得反过来中断任务
+            logger.debug("写入任务事件日志失败: %s", exc)
+        event.id = seq if seq is not None else event_counter
         await store.add_event(task_id, event)
         if event.status == "running":
             await store.update(task_id, current_stage=event.stage, current_message=event.message, status=TaskStatus.RUNNING)
-        elif event.status in ("completed", "failed", "partial"):
-            # partial = 预算超额收束：报告已产出但内容不完整。它既不是成功也不是失败，
-            # 单列一个终态才能让前端如实提示"这是被截断的结果"，而不是谎称完成。
+        elif event.event in _TASK_TERMINAL_EVENTS:
+            # 只有任务级终态事件才能改写任务状态。stage_end / artifact_ready /
+            # crawl_complete 的 status 是 "completed"，但它描述的是**该阶段成功**，
+            # 不是整个任务成功——曾因此把刚拆完需求的任务误判为 completed，
+            # 后续 running 事件被终态单调保护拒绝，任务再也回不到 running。
             await store.update(
                 task_id,
                 current_stage=event.stage,
                 current_message=event.message,
-                status=_TASK_STATUS_BY_EVENT_STATUS[event.status],
+                status=_TASK_TERMINAL_EVENTS[event.event],
+            )
+        else:
+            # 阶段级进度（含阶段成功）：只更新展示字段，不碰任务状态。
+            await store.update(
+                task_id,
+                current_stage=event.stage,
+                current_message=event.message,
             )
 
     emitter._on_event = on_event
@@ -1046,6 +1087,8 @@ async def _run_research_task(task_id: str, req: TaskRequest, user_id: Optional[s
         wall_clock_budget=req.wall_clock_budget,
         usd_budget=req.usd_budget,
     )
+    cancel_event = _cancel_events.setdefault(task_id, asyncio.Event())
+    workflow.set_cancel_event(cancel_event)
 
     target_sites_dict = _target_sites(req)
     auth_creds = _auth_dict(req.auth_credentials)
@@ -1062,7 +1105,21 @@ async def _run_research_task(task_id: str, req: TaskRequest, user_id: Optional[s
         task_id=task_id,
         user_id=user_id,
         self_context=req.self_context,
+        resume=resume,
+        cancel_event=cancel_event,
     )
+
+    # 取消是终态：不落报告/PRD 产物，只保留已产生的审计信息。
+    if result.get("status") == "cancelled":
+        await store.update(task_id, status=TaskStatus.CANCELLED, current_message="任务已取消")
+        # SQLite 行同步终态：启动恢复只认 running 行，若这里不落盘，
+        # 下一次重启会把已取消任务当成"崩溃残留"再跑一遍。
+        get_report_db().update_task_status(task_id, "cancelled")
+        _cancel_events.pop(task_id, None)
+        _running_tasks.pop(task_id, None)
+        end_trace({"status": "cancelled"})
+        clear_task_context()
+        return
 
     research_metadata = {
         "crawl_results": {"competitors": result.get("competitors", [])},
@@ -1111,6 +1168,9 @@ async def _run_research_task(task_id: str, req: TaskRequest, user_id: Optional[s
             report_id=result.get("report_id"),
             **research_metadata,
         )
+    # SQLite 终态同步：启动恢复靠 running 行识别未完成任务，任务一旦终态必须
+    # 落盘，否则进程再次重启会对已完成任务重复续跑（把一次成功变成无限重放）。
+    get_report_db().update_task_status(task_id, result["status"])
 
     # Always set report artifact if present (even partial/warning results)
     if result.get("report_final"):
@@ -1146,6 +1206,8 @@ async def _run_research_task(task_id: str, req: TaskRequest, user_id: Optional[s
     })
     # 清掉 contextvars，避免 trace/task 关联残留到复用同一上下文的后续动作。
     clear_task_context()
+    _cancel_events.pop(task_id, None)
+    _running_tasks.pop(task_id, None)
 
 
 @limiter.limit(RATE_LIMIT_PER_TOKEN)
@@ -1177,7 +1239,19 @@ async def create_task(request: Request, req: TaskRequest):
         "target_sites_count": len(req.target_sites),
     })
 
+    # 先落 SQLite 未终态行：进程被 kill -9 后，启动恢复靠这一行找到任务；
+    # 内存 store 在重启后是空的，不能作为恢复依据。
+    get_report_db().save_task(
+        task_id=task_id,
+        user_query=req.query,
+        status="running",
+        deliverables=req.deliverables,
+        user_id=user_id,
+    )
+
+    _cancel_events[task_id] = asyncio.Event()
     background = asyncio.create_task(_run_research_task(task_id, req, user_id))
+    _running_tasks[task_id] = background
     # 兜底收尾：工作流抛异常时 _run_research_task 的函数体会被跳过，
     # end_trace / clear_task_context 都执行不到，trace 会一直挂着不关。
     # 这里用 done callback 补上，并把异常显式取走记日志——否则 asyncio 会一直
@@ -1191,6 +1265,8 @@ async def create_task(request: Request, req: TaskRequest):
                     end_trace({"status": "error", "error": str(exc)})
         finally:
             clear_task_context()
+            _running_tasks.pop(task_id, None)
+            _cancel_events.pop(task_id, None)
 
     background.add_done_callback(_finalize_trace)
 
@@ -1199,6 +1275,62 @@ async def create_task(request: Request, req: TaskRequest):
         "status": "pending",
         "created_at": task_state.created_at,
     }
+
+
+def _task_state_from_sqlite(row: Dict[str, Any], report: Optional[Dict[str, Any]] = None) -> TaskState:
+    """用 SQLite 的 tasks/reports 行重建只读任务视图。
+
+    内存 TaskStore 是进程内的；重启后历史任务只剩 SQLite。这里只填终态与摘要，
+    不伪造事件/产物——前端要明细走 `/event-log`。
+    """
+    status = row.get("status") or "failed"
+    try:
+        state = TaskStatus(status)
+    except ValueError:
+        state = TaskStatus.FAILED
+    deliverables = {"report": True, "prd": False}
+    try:
+        raw = json.loads(row.get("deliverables_json") or "{}")
+        if isinstance(raw, dict):
+            deliverables.update({k: bool(v) for k, v in raw.items()})
+    except (TypeError, ValueError):
+        pass
+    terminal = is_terminal(state)
+    return TaskState(
+        task_id=row["task_id"],
+        status=state,
+        created_at=row.get("created_at") or "",
+        updated_at=row.get("updated_at") or "",
+        user_query=row.get("user_query") or "",
+        current_stage="completed" if terminal else "lifecycle",
+        current_message={
+            TaskStatus.COMPLETED: "任务已完成（历史记录）",
+            TaskStatus.PARTIAL: "任务部分完成（历史记录）",
+            TaskStatus.CANCELLED: "任务已取消（历史记录）",
+            TaskStatus.FAILED: "任务失败（历史记录）",
+        }.get(state, "历史任务"),
+        report_id=row.get("report_id"),
+        deliverables=deliverables,
+        quality_score=report.get("quality_score") if report else None,
+        quality_grade=report.get("quality_grade") if report else None,
+        user_id=row.get("user_id"),
+    )
+
+
+async def _load_task_for_read(task_id: str):
+    """读取任务：内存中有就用内存（实时状态优先），否则从 SQLite 回填。
+
+    返回 (task, from_sqlite)。内存命中时绝不合并 SQLite，避免同一 id 出现两份视图。
+    """
+    store = get_task_store()
+    task = await store.get(task_id)
+    if task is not None:
+        return task, False
+    row = get_report_db().get_task(task_id)
+    if not row:
+        return None, False
+    report = get_report_db().get_report(row["report_id"]) if row.get("report_id") else None
+    return _task_state_from_sqlite(row, report), True
 
 
 def _require_task_access(task, request: Request) -> None:
@@ -1214,9 +1346,12 @@ def _require_task_access(task, request: Request) -> None:
 
 @app.get("/research/tasks/{task_id}", response_model=Dict[str, Any])
 async def get_task(task_id: str, request: Request):
-    """获取任务状态和历史事件"""
-    store = get_task_store()
-    task = await store.get(task_id)
+    """获取任务状态和历史事件。
+
+    重启后内存 store 为空：从 SQLite 回填只读视图（终态 + 报告摘要），
+    内存命中时仍以实时状态为准，不合并两份来源。
+    """
+    task, _from_sqlite = await _load_task_for_read(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     _require_task_access(task, request)
@@ -1229,11 +1364,391 @@ async def get_task(task_id: str, request: Request):
     return payload
 
 
+@app.post("/research/tasks/{task_id}/cancel", response_model=Dict[str, Any])
+async def cancel_task(task_id: str, request: Request):
+    """取消任务：置取消信号 → 取消 asyncio 任务 → 落 CANCELLED 终态。
+
+    终态单调：已完成/已失败/已取消的任务重复取消返回当前状态，不报错也不改写。
+
+    重启后内存里没有这个任务（只剩 SQLite 行）：没有可取消的 asyncio 任务，
+    但**必须**把 SQLite 的行落成 cancelled —— 否则启动恢复会把它当崩溃残留
+    再跑一遍，用户点的"取消"等于没点。
+    """
+    store = get_task_store()
+    task, from_sqlite = await _load_task_for_read(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    _require_task_access(task, request)
+    if is_terminal(task.status):
+        return {"task_id": task_id, "status": task.status.value, "cancelled": False}
+
+    cancelled_event = TaskEvent(
+        id=0,
+        event=TaskEventType.TASK_CANCELLED.value,
+        task_id=task_id,
+        stage="lifecycle",
+        status="cancelled",
+        message="任务已取消",
+        payload={"reason_code": LifecycleReasonCode.CANCELLED.value, "attempt": 1},
+    )
+
+    if from_sqlite:
+        db = get_report_db()
+        db.update_task_status(task_id, "cancelled")
+        db.append_task_event(task_id, cancelled_event.to_dict())
+        return {"task_id": task_id, "status": TaskStatus.CANCELLED.value, "cancelled": True}
+
+    _cancel_events.setdefault(task_id, asyncio.Event()).set()
+    running = _running_tasks.get(task_id)
+    if running is not None and not running.done():
+        running.cancel()
+    await store.update(
+        task_id,
+        status=TaskStatus.CANCELLED,
+        current_stage="lifecycle",
+        current_message="任务已取消",
+    )
+    # 与工作流事件走同一条 SQLite 审计流水：取消端点是进程外触发的，
+    # 只写内存事件的话 /event-log 会漏掉"谁在什么时候取消的"。
+    # 先把 SQLite seq 回填到内存事件 id：SSE 的 Last-Event-ID 游标以这个 id 为准，
+    # 否则内存事件 id 恒为 0，重连时会反复回放同一条取消事件。
+    seq = get_report_db().append_task_event(task_id, cancelled_event.to_dict())
+    cancelled_event.id = seq if seq is not None else 0
+    await store.add_event(task_id, cancelled_event)
+    return {"task_id": task_id, "status": TaskStatus.CANCELLED.value, "cancelled": True}
+
+
+def _task_request_from_checkpoint(
+    task_id: str, row: Dict[str, Any], checkpoint: Dict[str, Any]
+) -> Optional[TaskRequest]:
+    """从 SQLite 行 + 检查点重建请求。凭据从不落盘，恢复后的鉴权站点会失败——
+    这是既有的安全边界，不做绕过。"""
+    payload = checkpoint.get("payload") or {}
+    query = payload.get("user_query") or row.get("user_query")
+    if not query:
+        return None
+    deliverables = payload.get("deliverables")
+    if not deliverables and row.get("deliverables_json"):
+        try:
+            deliverables = json.loads(row["deliverables_json"])
+        except (TypeError, ValueError):
+            deliverables = None
+    budget = payload.get("budget") or {}
+    return TaskRequest(
+        query=query,
+        urls=[u for u in (payload.get("target_urls") or []) if u][:MAX_FETCH_URLS],
+        enable_search=True,
+        self_context=payload.get("self_context") or "",
+        max_steps=budget.get("max_steps"),
+        token_budget=budget.get("token_budget"),
+        wall_clock_budget=budget.get("wall_clock_budget"),
+        usd_budget=budget.get("usd_budget"),
+        custom_selectors=payload.get("custom_selectors"),
+        deliverables=deliverables or {"report": True, "prd": False},
+    )
+
+
+# 启动恢复并发上限：一次重启若把几十个 running 任务同时全速拉起，会同时打满
+# LLM 与目标站点的抓取配额——轻则触发限流、重则把刚恢复的任务又打失败。
+# 默认 2 路；`LIFECYCLE_RECOVER_CONCURRENCY` 可调大（上限不设，由运维判断）。
+_RECOVER_DEFAULT_CONCURRENCY = 2
+_recover_semaphore: Optional[asyncio.Semaphore] = None
+_active_recoveries = 0
+
+
+def _recover_concurrency() -> int:
+    raw = os.getenv("LIFECYCLE_RECOVER_CONCURRENCY", str(_RECOVER_DEFAULT_CONCURRENCY))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logger.warning("LIFECYCLE_RECOVER_CONCURRENCY=%r 非法，回退到 %d", raw, _RECOVER_DEFAULT_CONCURRENCY)
+        value = _RECOVER_DEFAULT_CONCURRENCY
+    return max(1, value)
+
+
+def _get_recover_semaphore() -> asyncio.Semaphore:
+    """惰性创建：模块导入时没有事件循环，Semaphore 必须在循环内绑定。"""
+    global _recover_semaphore
+    if _recover_semaphore is None:
+        _recover_semaphore = asyncio.Semaphore(_recover_concurrency())
+    return _recover_semaphore
+
+
+def _record_recovery_failure(task_id: str, reason_code: LifecycleReasonCode, message: str) -> None:
+    """恢复失败留两处证据：日志（带 task_id）+ SQLite task_events（带 reason_code）。"""
+    logger.error("任务 %s 恢复失败 [%s]: %s", task_id, reason_code.value, message)
+    try:
+        db = get_report_db()
+        db.update_task_status(task_id, "failed")
+        db.append_task_event(task_id, {
+            "event": TaskEventType.ERROR.value,
+            "stage": "lifecycle",
+            "status": "failed",
+            "message": message,
+            "payload": {"reason_code": reason_code.value, "attempt": 1, "automatic": True},
+        })
+    except Exception as exc:  # 审计写失败不能再把失败处理本身炸掉
+        logger.error("记录任务 %s 恢复失败事件失败: %s", task_id, exc)
+
+
+def _finalize_resume(task_id: str, fut: "asyncio.Task") -> None:
+    """恢复任务的兜底收尾：异常必须落终态 + 事件，否则任务会永久停在 running，
+    下次重启又被当成崩溃残留重新拉起（失败无限重放）。"""
+    try:
+        if fut.cancelled():
+            return
+        exc = fut.exception()
+        if exc is not None:
+            _record_recovery_failure(
+                task_id,
+                LifecycleReasonCode.EXECUTION_FAILED,
+                f"恢复后续跑失败: {type(exc).__name__}: {exc}",
+            )
+    finally:
+        clear_task_context()
+        _running_tasks.pop(task_id, None)
+        _cancel_events.pop(task_id, None)
+
+
+def _schedule_resume(
+    task_id: str, req: TaskRequest, user_id: Optional[str], *, automatic: bool = False
+) -> Optional["asyncio.Task"]:
+    """调度一次续跑。幂等：同一 task_id 已有存活后台任务时不再创建第二个。
+
+    自动恢复额外受 `_get_recover_semaphore()` 限制并发；手动 `/resume` 不受限
+    （运维显式触发，期望立刻执行）。
+    """
+    existing = _running_tasks.get(task_id)
+    if existing is not None and not existing.done():
+        logger.warning("任务 %s 已有存活后台任务，跳过重复调度", task_id)
+        return None
+    _cancel_events[task_id] = asyncio.Event()
+
+    async def _runner() -> None:
+        if automatic:
+            global _active_recoveries
+            async with _get_recover_semaphore():
+                _active_recoveries += 1
+                logger.info(
+                    "启动恢复并发槽获取 task_id=%s active=%d limit=%d",
+                    task_id, _active_recoveries, _recover_concurrency(),
+                )
+                try:
+                    await _run_research_task(task_id, req, user_id, resume=True)
+                finally:
+                    _active_recoveries -= 1
+        else:
+            await _run_research_task(task_id, req, user_id, resume=True)
+
+    background = asyncio.create_task(_runner())
+    _running_tasks[task_id] = background
+    background.add_done_callback(lambda fut: _finalize_resume(task_id, fut))
+    return background
+
+
+@app.post("/research/tasks/{task_id}/resume", response_model=Dict[str, Any])
+async def resume_task(task_id: str, request: Request):
+    """从最近一个阶段检查点续跑。只接受非终态任务，避免“复活”已取消/已失败。
+
+    重启后内存里没有这个任务（只剩 SQLite 行）：检查点本来就在 SQLite，
+    所以续跑能力不受影响，但要先在内存 store 里把任务**建回来**——
+    否则 store.update / store.add_event 全部静默 no-op，
+    续跑中的实时状态与事件在内存侧一条都留不下。
+    """
+    store = get_task_store()
+    task, from_sqlite = await _load_task_for_read(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    _require_task_access(task, request)
+    if is_terminal(task.status):
+        raise HTTPException(status_code=409, detail="终态任务不可续跑")
+    running = _running_tasks.get(task_id)
+    if running is not None and not running.done():
+        raise HTTPException(status_code=409, detail="任务正在运行")
+
+    db = get_report_db()
+    checkpoint = db.load_latest_checkpoint(task_id)
+    if not checkpoint:
+        raise HTTPException(status_code=409, detail="没有可用的阶段检查点")
+    row = db.get_task(task_id) or {}
+    req = _task_request_from_checkpoint(task_id, row, checkpoint)
+    if req is None:
+        raise HTTPException(status_code=409, detail="检查点缺少重建请求所需字段")
+
+    if from_sqlite:
+        await store.create(
+            task_id, req.query, req.deliverables, user_id=task.user_id
+        )
+    await store.update(
+        task_id,
+        status=TaskStatus.RUNNING,
+        current_stage="lifecycle",
+        current_message=f"从 {checkpoint.get('stage')} 检查点续跑",
+        resume_count=(task.resume_count or 0) + 1,
+    )
+    resumed_event = TaskEvent(
+        id=0,
+        event=TaskEventType.TASK_RESUMED.value,
+        task_id=task_id,
+        stage=checkpoint.get("stage") or "lifecycle",
+        status="running",
+        message=f"从 {checkpoint.get('stage')} 检查点续跑",
+        payload={
+            "checkpoint_seq": checkpoint.get("seq"),
+            "attempt": checkpoint.get("attempt") or 1,
+            "automatic": False,
+        },
+    )
+    # 手动续跑也进 SQLite 审计流水，否则 /event-log 只看到工作流那条，
+    # 无法区分"谁触发的这次续跑"。seq 同样回填到内存事件 id，供 SSE 游标使用。
+    seq = db.append_task_event(task_id, resumed_event.to_dict())
+    resumed_event.id = seq if seq is not None else 0
+    await store.add_event(task_id, resumed_event)
+    _schedule_resume(task_id, req, task.user_id)
+    return {
+        "task_id": task_id,
+        "status": TaskStatus.RUNNING.value,
+        "resumed": True,
+        "checkpoint_stage": checkpoint.get("stage"),
+        "checkpoint_seq": checkpoint.get("seq"),
+    }
+
+
+@app.get("/research/tasks/{task_id}/event-log", response_model=Dict[str, Any])
+async def task_event_log(task_id: str, request: Request, after_seq: int = 0, limit: int = 200):
+    """SQLite 生命周期事件（跨进程单调 seq），用于崩溃审计与续跑核对。
+
+    与 `get_task` 同样回填：重启后内存无任务时用 SQLite 的 tasks 行做鉴权，
+    事件本身始终按 `seq` 从 SQLite 连续分页（内存从不参与，避免重复返回）。
+    """
+    task, _from_sqlite = await _load_task_for_read(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    _require_task_access(task, request)
+    events = get_report_db().list_task_events(task_id, after_seq=after_seq, limit=min(limit, 500))
+    return {"task_id": task_id, "after_seq": after_seq, "events": events}
+
+
+@app.on_event("startup")
+async def _recover_running_tasks():
+    """启动恢复：只处理显式开启（LIFECYCLE_RECOVER_ON_STARTUP=1）。
+
+    默认关闭是为了避免开发/测试环境的 TestClient 启动时无条件触发真实网络抓取；
+    崩溃恢复的验收脚本会显式打开它。
+
+    四个保证（均可由实测脚本复核）：
+    1. 每个任务只调度一次——本轮用 seen 去重，`_schedule_resume` 自身再挡一次；
+    2. 并发受 `LIFECYCLE_RECOVER_CONCURRENCY` 限制（默认 2），避免重启风暴；
+    3. 只认 SQLite 里仍为 running/pending 的行，已完成任务不重跑、不重写产物；
+    4. 单个任务在重建/调度阶段失败只标记该任务，其余任务照常恢复。
+    """
+    # 矛盾配置必须在任何副作用之前拒绝启动：只写在文档里没人看，
+    # 配错后表现为“自动恢复变自动判死”或启动时批量删缓存。
+    try:
+        for warning in validate_startup_config():
+            logger.warning("%s", warning)
+    except StartupConfigError as exc:
+        logger.error("%s", exc)
+        raise
+    # 缓存清理与恢复互不加锁：缓存只删终态任务的 page_cache/task_drafts，
+    # 恢复只读 task_checkpoints/task_events，互不遮蔽。
+    if os.getenv("CACHE_PRUNE_ENABLED", "1") == "1" and \
+            os.getenv("CACHE_PRUNE_ON_STARTUP", "0") == "1":
+        try:
+            from src.storage.prune import prune_from_env
+
+            summary = prune_from_env(dry_run=False)
+            logger.info("启动缓存清理: %s", summary.get("deleted"))
+        except Exception as exc:  # 清理失败不得阻断启动恢复
+            logger.warning("启动缓存清理失败: %s", exc)
+
+    if os.getenv("LIFECYCLE_RECOVER_ON_STARTUP", "0") != "1":
+        return
+    db = get_report_db()
+    store = get_task_store()
+    seen: set[str] = set()
+    recovered = failed = skipped = 0
+    for row in db.list_running_tasks():
+        task_id = row.get("task_id")
+        if not task_id or task_id in seen:
+            continue
+        seen.add(task_id)
+        if _running_tasks.get(task_id) is not None:
+            skipped += 1
+            continue
+        # list 与调度之间任务可能已终态（别的实例/手动 resume 刚跑完）：重读一次。
+        fresh = db.get_task(task_id) or row
+        if fresh.get("status") not in ("running", "pending"):
+            skipped += 1
+            continue
+        try:
+            checkpoint = db.load_latest_checkpoint(task_id)
+            if not checkpoint:
+                # 没有任何检查点 = 还没开始跑，没有可恢复的证据；如实标失败。
+                _record_recovery_failure(
+                    task_id, LifecycleReasonCode.NO_CHECKPOINT,
+                    "启动恢复失败：SQLite 无可用检查点",
+                )
+                failed += 1
+                continue
+            req = _task_request_from_checkpoint(task_id, fresh, checkpoint)
+            if req is None:
+                _record_recovery_failure(
+                    task_id, LifecycleReasonCode.REQUEST_REBUILD_FAILED,
+                    "启动恢复失败：检查点缺少重建请求所需字段",
+                )
+                failed += 1
+                continue
+            if await store.get(task_id) is None:
+                await store.create(
+                    task_id, req.query, req.deliverables, user_id=fresh.get("user_id")
+                )
+            await store.update(
+                task_id,
+                status=TaskStatus.RUNNING,
+                current_stage="lifecycle",
+                current_message=f"启动恢复：从 {checkpoint.get('stage')} 检查点续跑",
+            )
+            resumed_event = TaskEvent(
+                id=0,
+                event=TaskEventType.TASK_RESUMED.value,
+                task_id=task_id,
+                stage=checkpoint.get("stage") or "lifecycle",
+                status="running",
+                message="进程重启后自动恢复",
+                payload={
+                    "checkpoint_seq": checkpoint.get("seq"),
+                    "attempt": checkpoint.get("attempt") or 1,
+                    "automatic": True,
+                },
+            )
+            await store.add_event(task_id, resumed_event)
+            # 自动恢复事件必须进 SQLite：它是"这个任务被恢复过几次"的唯一凭据，
+            # 只写内存的话 /event-log 与重启后的审计都看不到 automatic=true。
+            db.append_task_event(task_id, resumed_event.to_dict())
+            _schedule_resume(task_id, req, fresh.get("user_id"), automatic=True)
+            recovered += 1
+        except Exception as exc:  # 单任务失败隔离：不让一个坏任务中断整轮恢复
+            logger.error("任务 %s 启动恢复异常", task_id, exc_info=exc)
+            _record_recovery_failure(
+                task_id, LifecycleReasonCode.SCHEDULE_FAILED,
+                f"启动恢复失败: {type(exc).__name__}: {exc}",
+            )
+            failed += 1
+    if seen:
+        logger.info(
+            "启动恢复完成：候选 %d，已调度 %d，失败 %d，跳过 %d，并发上限 %d",
+            len(seen), recovered, failed, skipped, _recover_concurrency(),
+        )
+
+
 @app.get("/research/tasks/{task_id}/events")
 async def stream_task_events(task_id: str, request: Request):
     """SSE流，支持重连"""
     store = get_task_store()
-    task = await store.get(task_id)
+    # 重启后内存 store 为空：历史任务从 SQLite 回填，事件也从 SQLite 分页回放。
+    # 只查 store.get 会让所有历史任务的 SSE 直接 404。
+    task, from_sqlite = await _load_task_for_read(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
 
@@ -1250,6 +1765,44 @@ async def stream_task_events(task_id: str, request: Request):
             last_event_id = int(request.headers["Last-Event-ID"])
         except ValueError:
             pass
+
+    # 历史任务（内存无 TaskState）：没有进程内订阅者，直接按 seq 分页回放 SQLite
+    # 事件后结束流。任务的实时状态只有在被本进程 /resume 重建进 store 后才会走
+    # 下面的内存队列分支。
+    if from_sqlite:
+        async def replay_stream():
+            replay_from = last_event_id
+            db = get_report_db()
+            while True:
+                rows = db.list_task_events(task_id, after_seq=replay_from, limit=500)
+                if not rows:
+                    break
+                for row in rows:
+                    seq = row["seq"]
+                    replay_from = seq
+                    data = {
+                        "id": seq,
+                        "event": row.get("event"),
+                        "task_id": task_id,
+                        "stage": row.get("stage"),
+                        "status": row.get("status"),
+                        "message": row.get("message"),
+                        "payload": row.get("payload") or {},
+                        "created_at": row.get("created_at"),
+                    }
+                    yield f"id: {seq}\nevent: {row.get('event')}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+                if len(rows) < 500:
+                    break
+
+        return StreamingResponse(
+            replay_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     # 先订阅、进流后再取快照：快照只覆盖订阅前已持久化的事件，订阅后的事件走
     # 队列。若先取快照后订阅，快照与订阅之间的窗口里发出的事件既不在快照里、

@@ -108,9 +108,64 @@ def init_db():
             )
         """)
 
+        # 生命周期事件（D7/M4）：跨进程单调 seq 由 SQLite AUTOINCREMENT 保证。
+        # 这是断点续跑与崩溃审计的唯一可信来源；内存事件流只负责实时推送。
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS task_events (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                event TEXT NOT NULL,
+                stage TEXT,
+                status TEXT,
+                message TEXT,
+                payload_json TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+
+        # 阶段检查点：每次 stage_end 落一行，恢复时取该任务 seq 最大的一行。
+        # 刻意 append-only：覆盖写会丢掉“崩溃前最后一次成功阶段”的证据。
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS task_checkpoints (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                attempt INTEGER NOT NULL DEFAULT 1,
+                payload_json TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_reports_created ON reports(created_at)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_report_feedback_report ON report_feedback(report_id)")
+        # 报告草稿与幂等文件名：崩溃在“产物已生成/已写盘、状态未落库”窗口时，
+        # 续跑复用同一任务键，避免重复 LLM 调用与重复文件。
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS task_drafts (
+                task_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                content TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (task_id, kind)
+            )
+        """)
+
+        # 抓取页缓存：键=任务+URL，content_hash 覆盖该站点全部页内容，读时校验。
+        # 只缓存无凭据站点；鉴权页面不落盘（既有安全边界）。
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS page_cache (
+                task_id TEXT NOT NULL,
+                url TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (task_id, url)
+            )
+        """)
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id, seq)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_checkpoints_task ON task_checkpoints(task_id, seq)")
 
         conn.commit()
     finally:
@@ -440,6 +495,312 @@ class ReportDB:
             import logging
             logging.getLogger(__name__).warning(f"Failed to update task status: {e}")
             return False
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
+    # 生命周期：事件日志与阶段检查点（D7/M4）
+    # ------------------------------------------------------------------
+
+    def append_task_event(self, task_id: str, event: Dict[str, Any]) -> Optional[int]:
+        """追加一条生命周期事件，返回跨进程单调 seq；失败返回 None。"""
+        conn = self._conn()
+        try:
+            cursor = conn.cursor()
+            now = datetime.now().isoformat(timespec="seconds")
+            cursor.execute("""
+                INSERT INTO task_events (task_id, event, stage, status, message, payload_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                task_id,
+                str(event.get("event") or ""),
+                event.get("stage"),
+                event.get("status"),
+                event.get("message"),
+                json.dumps(event.get("payload") or {}, ensure_ascii=False),
+                event.get("created_at") or now,
+            ))
+            conn.commit()
+            return int(cursor.lastrowid)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to append task event: {e}")
+            return None
+        finally:
+            conn.close()
+
+    def list_task_events(self, task_id: str, after_seq: int = 0, limit: int = 500) -> List[Dict[str, Any]]:
+        conn = self._conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT seq, event, stage, status, message, payload_json, created_at
+                FROM task_events
+                WHERE task_id = ? AND seq > ?
+                ORDER BY seq ASC
+                LIMIT ?
+            """, (task_id, after_seq, limit))
+            rows = []
+            for row in cursor.fetchall():
+                item = dict(row)
+                try:
+                    item["payload"] = json.loads(item.pop("payload_json") or "{}")
+                except (TypeError, ValueError):
+                    item["payload"] = {}
+                rows.append(item)
+            return rows
+        finally:
+            conn.close()
+
+    def save_checkpoint(
+        self,
+        task_id: str,
+        stage: str,
+        payload: Optional[Dict[str, Any]] = None,
+        attempt: int = 1,
+    ) -> Optional[int]:
+        """落一个阶段检查点（append-only），返回 seq。"""
+        conn = self._conn()
+        try:
+            cursor = conn.cursor()
+            now = datetime.now().isoformat(timespec="seconds")
+            cursor.execute("""
+                INSERT INTO task_checkpoints (task_id, stage, attempt, payload_json, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (task_id, stage, int(attempt), json.dumps(payload or {}, ensure_ascii=False), now))
+            conn.commit()
+            return int(cursor.lastrowid)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to save checkpoint: {e}")
+            return None
+        finally:
+            conn.close()
+
+    def load_latest_checkpoint(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """取该任务 seq 最大的检查点；没有返回 None。"""
+        conn = self._conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT seq, task_id, stage, attempt, payload_json, created_at
+                FROM task_checkpoints
+                WHERE task_id = ?
+                ORDER BY seq DESC
+                LIMIT 1
+            """, (task_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            item = dict(row)
+            try:
+                item["payload"] = json.loads(item.pop("payload_json") or "{}")
+            except (TypeError, ValueError):
+                item["payload"] = {}
+            return item
+        finally:
+            conn.close()
+
+    def save_task_draft(self, task_id: str, kind: str, content: str) -> bool:
+        """按 (task_id, kind) 覆盖式保存草稿（报告正文、固定文件名等）。"""
+        conn = self._conn()
+        try:
+            now = datetime.now().isoformat(timespec="seconds")
+            conn.execute("""
+                INSERT INTO task_drafts (task_id, kind, content, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(task_id, kind) DO UPDATE SET
+                    content = excluded.content,
+                    updated_at = excluded.updated_at
+            """, (task_id, kind, content, now))
+            conn.commit()
+            return True
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to save task draft: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def get_task_draft(self, task_id: str, kind: str) -> Optional[str]:
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT content FROM task_drafts WHERE task_id = ? AND kind = ?",
+                (task_id, kind),
+            ).fetchone()
+            return row["content"] if row else None
+        finally:
+            conn.close()
+
+    def save_page_cache(
+        self, task_id: str, url: str, content_hash: str, payload: Dict[str, Any],
+    ) -> bool:
+        """保存单站页快照。url 已包含抓取作用域（页数/优先级），hash 覆盖其全部页面。"""
+        conn = self._conn()
+        try:
+            now = datetime.now().isoformat(timespec="seconds")
+            conn.execute("""
+                INSERT INTO page_cache (task_id, url, content_hash, payload_json, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(task_id, url) DO UPDATE SET
+                    content_hash = excluded.content_hash,
+                    payload_json = excluded.payload_json,
+                    created_at = excluded.created_at
+            """, (task_id, url, content_hash,
+                  json.dumps(payload, ensure_ascii=False, default=str), now))
+            conn.commit()
+            return True
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to save page cache: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def get_page_cache(self, task_id: str, url: str) -> Optional[Dict[str, Any]]:
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT content_hash, payload_json FROM page_cache WHERE task_id = ? AND url = ?",
+                (task_id, url),
+            ).fetchone()
+            if not row:
+                return None
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except (TypeError, ValueError):
+                return None
+            return {"content_hash": row["content_hash"], "payload": payload}
+        finally:
+            conn.close()
+
+    def prune_caches(
+        self,
+        *,
+        dry_run: bool = True,
+        completed_keep_days: int = 7,
+        failed_keep_days: int = 30,
+        max_rows: int = 300_000,
+        max_bytes: int = 2 * 1024 ** 3,
+        now: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """清理 page_cache / task_drafts：终态任务按年龄，超全局双限时最旧优先淘汰。
+
+        安全边界（不可配置）：
+          - 只有 `tasks` 表里明确终态的任务可删；running/pending 与无任务行的缓存永不删除。
+          - 只删缓存表，不动 `task_events` / `task_checkpoints`，续跑证据完整保留。
+        字节按数据列 BLOB 长度计，不含 SQLite 页开销（实际磁盘约为其 1.2–2 倍）。
+        """
+        from datetime import timedelta
+
+        now_dt = now or datetime.now()
+        short_cutoff = (now_dt - timedelta(days=completed_keep_days)).isoformat(timespec="seconds")
+        long_cutoff = (now_dt - timedelta(days=failed_keep_days)).isoformat(timespec="seconds")
+
+        conn = self._conn()
+        try:
+            tasks = {
+                row["task_id"]: row
+                for row in conn.execute(
+                    "SELECT task_id, status, updated_at FROM tasks"
+                ).fetchall()
+            }
+
+            candidates: List[Dict[str, Any]] = []
+            for table, size_expr in (
+                ("page_cache", "length(CAST(payload_json AS BLOB))"),
+                ("task_drafts", "length(CAST(content AS BLOB))"),
+            ):
+                for row in conn.execute(
+                    f"SELECT rowid AS rid, task_id, {size_expr} AS nbytes FROM {table}"
+                ).fetchall():
+                    task = tasks.get(row["task_id"])
+                    # running/pending 与无任务行：永不清（没有“终态”证据就不动）
+                    if not task or task["status"] in ("running", "pending"):
+                        continue
+                    cutoff = long_cutoff if task["status"] == "failed" else short_cutoff
+                    candidates.append({
+                        "table": table,
+                        "rid": row["rid"],
+                        "bytes": row["nbytes"] or 0,
+                        "updated_at": task["updated_at"] or "",
+                        "expired": (task["updated_at"] or "") < cutoff,
+                    })
+
+            totals = conn.execute("""
+                SELECT
+                    (SELECT COUNT(*) FROM page_cache) + (SELECT COUNT(*) FROM task_drafts),
+                    (SELECT COALESCE(SUM(length(CAST(payload_json AS BLOB))), 0) FROM page_cache)
+                    + (SELECT COALESCE(SUM(length(CAST(content AS BLOB))), 0) FROM task_drafts)
+            """).fetchone()
+            total_rows, total_bytes = totals[0], totals[1]
+
+            to_delete = [c for c in candidates if c["expired"]]
+            remaining_rows = total_rows - len(to_delete)
+            remaining_bytes = total_bytes - sum(c["bytes"] for c in to_delete)
+
+            # 容量淘汰：仅终态任务，最旧优先；running 行始终留在“剩余”里，可能造成超限。
+            for c in sorted(
+                (c for c in candidates if not c["expired"]),
+                key=lambda c: (c["updated_at"], c["rid"]),
+            ):
+                if remaining_rows <= max_rows and remaining_bytes <= max_bytes:
+                    break
+                to_delete.append(c)
+                remaining_rows -= 1
+                remaining_bytes -= c["bytes"]
+
+            deleted = {
+                "page_cache": {"rows": 0, "bytes": 0},
+                "task_drafts": {"rows": 0, "bytes": 0},
+            }
+            for c in to_delete:
+                deleted[c["table"]]["rows"] += 1
+                deleted[c["table"]]["bytes"] += c["bytes"]
+
+            if not dry_run and to_delete:
+                for table in ("page_cache", "task_drafts"):
+                    rids = [c["rid"] for c in to_delete if c["table"] == table]
+                    if rids:
+                        conn.executemany(
+                            f"DELETE FROM {table} WHERE rowid = ?", [(rid,) for rid in rids]
+                        )
+                conn.commit()
+
+            return {
+                "dry_run": dry_run,
+                "deleted": {
+                    "page_cache": deleted["page_cache"],
+                    "task_drafts": deleted["task_drafts"],
+                    "total": {
+                        "rows": deleted["page_cache"]["rows"] + deleted["task_drafts"]["rows"],
+                        "bytes": deleted["page_cache"]["bytes"] + deleted["task_drafts"]["bytes"],
+                    },
+                },
+                "remaining": {"rows": remaining_rows, "bytes": remaining_bytes},
+                "caps": {"rows": max_rows, "bytes": max_bytes, "exceeded_after": (
+                    remaining_rows > max_rows or remaining_bytes > max_bytes
+                )},
+                "retention": {
+                    "completed_keep_days": completed_keep_days,
+                    "failed_keep_days": failed_keep_days,
+                },
+            }
+        finally:
+            conn.close()
+
+    def list_running_tasks(self) -> List[Dict[str, Any]]:
+        """启动恢复用：列出未进入终态的任务行。"""
+        conn = self._conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM tasks
+                WHERE status IN ('pending', 'running')
+                ORDER BY created_at ASC
+            """)
+            return [dict(row) for row in cursor.fetchall()]
         finally:
             conn.close()
 

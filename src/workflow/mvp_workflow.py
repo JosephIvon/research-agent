@@ -43,7 +43,7 @@ from src.security.injection import (
     should_drop_page,
     wrap_untrusted,
 )
-from src.workflow.task_store import _sanitize_payload, TaskEventType
+from src.workflow.task_store import _sanitize_payload, TaskEventType, LifecycleReasonCode
 from src.workflow.competitor_matrix import (
     CompetitorMatrix,
     build_matrix,
@@ -63,6 +63,7 @@ import contextlib
 import json
 import os
 import re
+import time
 import logging
 
 from src.crawler.concurrency import get_concurrency_controller
@@ -757,6 +758,162 @@ class MVPWorkflow:
         else:
             # 注入单值校验器时批量退化为逐个过闸；生产路径仍走原生批量实现
             self._validate_urls = lambda urls: [url_validator(u) for u in (urls or [])]
+        # 生命周期开关（D7/M2–M4）：每一项都能用环境变量单独关掉，便于回滚。
+        self._stage_events_enabled = os.getenv("LIFECYCLE_STAGE_EVENTS", "1") != "0"
+        self._checkpoints_enabled = os.getenv("LIFECYCLE_CHECKPOINTS", "1") != "0"
+        self._cancel_enabled = os.getenv("LIFECYCLE_CANCEL", "1") != "0"
+        # 三处断点的独立开关：任一项关掉即回到改造前行为，便于逐项回滚。
+        self._atomic_report_enabled = os.getenv("LIFECYCLE_ATOMIC_REPORT", "1") != "0"
+        self._report_draft_enabled = os.getenv("LIFECYCLE_REPORT_DRAFT", "1") != "0"
+        self._page_cache_enabled = os.getenv("LIFECYCLE_PAGE_CACHE", "1") != "0"
+        self._stage_attempts: Dict[str, int] = {}
+        self._current_stage: Optional[str] = None
+        self._current_stage_started: Optional[float] = None
+        self._cancel_event: Optional[asyncio.Event] = None
+
+    # ------------------------------------------------------------------
+    # 生命周期：阶段包装 / 检查点 / 取消（D7/M2–M4）
+    # ------------------------------------------------------------------
+    _STAGE_ORDER = ("decompose", "crawl", "extract", "verify", "report", "citation")
+
+    def set_cancel_event(self, event: Optional[asyncio.Event]) -> None:
+        """注入取消信号：workflow 在副作用写入前检查它。"""
+        self._cancel_event = event
+
+    def _raise_if_cancelled(self) -> None:
+        if not self._cancel_enabled:
+            return
+        event = getattr(self, "_cancel_event", None)
+        if event is not None and event.is_set():
+            raise asyncio.CancelledError("task cancelled")
+
+    def _begin_stage(self, state: Dict[str, Any], stage: str, message: str) -> None:
+        if not self._stage_events_enabled:
+            return
+        attempt = self._stage_attempts.get(stage, 0) + 1
+        self._stage_attempts[stage] = attempt
+        self._current_stage = stage
+        self._current_stage_started = time.monotonic()
+        self._emit(
+            TaskEventType.STAGE_START.value, stage, "running", message,
+            payload={"attempt": attempt},
+        )
+
+    def _end_stage(
+        self,
+        state: Dict[str, Any],
+        stage: str,
+        status: str = "completed",
+        message: str = "",
+        error_code: Optional[str] = None,
+    ) -> None:
+        if not self._stage_events_enabled:
+            return
+        elapsed = (
+            round(time.monotonic() - self._current_stage_started, 3)
+            if self._current_stage_started is not None else 0.0
+        )
+        payload: Dict[str, Any] = {
+            "attempt": self._stage_attempts.get(stage, 1),
+            "elapsed_s": elapsed,
+        }
+        if error_code:
+            payload["error_code"] = error_code
+        self._emit(
+            TaskEventType.STAGE_END.value, stage, status,
+            message or f"{stage} 阶段结束", payload=payload,
+        )
+        if status == "completed" and self._checkpoints_enabled:
+            self._save_checkpoint(state, stage)
+        self._current_stage = None
+
+    def _checkpoint_payload(self, state: Dict[str, Any], stage: str) -> Dict[str, Any]:
+        """只存可 JSON 化、能在恢复时直接回灌 state 的字段。
+
+        刻意不含 auth_credentials / login_url：凭据不落盘是既有安全边界。
+        """
+        keys = (
+            "user_query", "target_urls", "target_sites", "custom_selectors",
+            "deliverables", "self_context", "subtasks", "research_plan",
+            "page_tiers", "entity_pages", "discovery", "verification",
+            "competitors", "extracted_data", "raw_search_results",
+            "verification_score", "verification_passed", "verification_warnings",
+            "source_coverage", "evidence_count", "numeric_evidence_count",
+            "quality_score", "quality_grade", "missing_dimensions",
+            "competitor_matrix", "report_final", "citation_attempts",
+            "citation_report", "citation_violations", "citation_trusted",
+            "rejected_competitors", "admission_gate", "sync_results",
+        )
+        payload = {key: state.get(key) for key in keys if key in state}
+        payload["stage"] = stage
+        payload["user_id"] = state.get("user_id")
+        # 预算覆盖也随检查点走：续跑不应悄悄把用户调高的预算退回默认值。
+        payload["budget"] = {
+            "max_steps": self._max_steps,
+            "token_budget": self._token_budget,
+            "wall_clock_budget": self._wall_clock_budget,
+            "usd_budget": self._usd_budget,
+        }
+        # datetime 等不可 JSON 化的值统一降级为字符串；恢复时只读结构不读类型
+        return json.loads(json.dumps(payload, ensure_ascii=False, default=str))
+
+    def _save_checkpoint(self, state: Dict[str, Any], stage: str) -> None:
+        try:
+            from src.storage import get_report_db
+
+            db = get_report_db()
+            task_id = state.get("task_id")
+            if not task_id:
+                return
+            attempt = self._stage_attempts.get(stage, 1)
+            db.save_checkpoint(task_id, stage, self._checkpoint_payload(state, stage), attempt)
+            # 恢复入口依赖 tasks 表的未终态行；首次检查点顺手建行。
+            # 只建不改：终态由 _persist_to_sqlite / update_task_status 负责，
+            # 检查点若覆盖状态就会把 completed 又写回 running。
+            if not db.get_task(task_id):
+                db.save_task(
+                    task_id=task_id,
+                    user_query=state.get("user_query"),
+                    status="running",
+                    deliverables=state.get("deliverables"),
+                    user_id=state.get("user_id"),
+                )
+        except Exception as exc:  # 检查点失败不得反过来让任务失败
+            logger.warning("保存检查点失败（%s）: %s", stage, exc)
+
+    def load_checkpoint(self, task_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            from src.storage import get_report_db
+
+            return get_report_db().load_latest_checkpoint(task_id)
+        except Exception as exc:
+            logger.warning("读取检查点失败: %s", exc)
+            return None
+
+    def _apply_resume(self, state: Dict[str, Any], checkpoint: Dict[str, Any]) -> None:
+        """把检查点回灌 state，并设置阶段跳过标志。"""
+        payload = checkpoint.get("payload") or {}
+        for key, value in payload.items():
+            if key in ("stage", "user_id"):
+                continue
+            if value is not None:
+                state[key] = value
+        stage = payload.get("stage") or checkpoint.get("stage") or "decompose"
+        index = self._STAGE_ORDER.index(stage) if stage in self._STAGE_ORDER else -1
+        state["_resume_stage"] = stage
+        # 检查点只在阶段**成功后**落盘：同名阶段也已完成，不应重跑。
+        # 因此 resume 从 stage 的下一段继续；citation 之后只剩交付收尾。
+        for i, name in enumerate(self._STAGE_ORDER):
+            state[f"_resume_past_{name}"] = index >= i
+        self._emit(
+            TaskEventType.TASK_RESUMED.value, stage, "running",
+            f"从检查点恢复：已完成到 {stage} 阶段",
+            payload={
+                "stage": stage,
+                "checkpoint_seq": checkpoint.get("seq"),
+                "attempt": checkpoint.get("attempt") or 1,
+            },
+        )
 
     @property
     def crawler_factory(self):
@@ -933,8 +1090,13 @@ class MVPWorkflow:
         task_id: Optional[str] = None,
         user_id: Optional[str] = None,
         self_context: str = "",
+        resume: bool = False,
+        cancel_event: Optional[asyncio.Event] = None,
     ) -> Dict[str, Any]:
         deliverables = deliverables or {"report": True, "prd": False}
+        self._stage_attempts = {}
+        if cancel_event is not None:
+            self.set_cancel_event(cancel_event)
 
         initial_sites = self._normalize_target_sites(
             target_urls=target_urls,
@@ -949,7 +1111,14 @@ class MVPWorkflow:
         state = self._initialize_state(user_query, initial_urls, task_id, user_id, self_context)
         state["target_sites"] = initial_sites
         state["custom_selectors"] = custom_selectors
+        state["deliverables"] = deliverables
         self.state = state
+
+        # 断点续跑：只恢复检查点里显式保存的字段；凭据类参数不落盘也不回灌。
+        if resume and task_id:
+            checkpoint = self.load_checkpoint(task_id)
+            if checkpoint:
+                self._apply_resume(state, checkpoint)
 
         # 澄清与定界前置：先定"主体是谁、竞品怎么算、重点看什么"，
         # 再决定去搜什么、抓谁。没有这一步，系统把整句任务描述当搜索词，
@@ -980,8 +1149,11 @@ class MVPWorkflow:
 
         try:
             state["status"] = "decomposing"
+            self._begin_stage(state, "decompose", "正在理解需求、拆解调研维度")
             self._emit("decompose", "decompose", "running", "正在理解需求、拆解调研维度")
-            state["subtasks"] = await self.coordinator.decompose_task(user_query, state["target_urls"])
+            if not state.get("_resume_past_decompose"):
+                state["subtasks"] = await self.coordinator.decompose_task(user_query, state["target_urls"])
+            state["subtasks"] = state.get("subtasks") or []
             degraded = next(
                 (task for task in state["subtasks"] if task.get("degraded")), None
             )
@@ -996,8 +1168,10 @@ class MVPWorkflow:
                     f"{state['decompose_fallback_reason']}",
                     payload={"degraded": True, "reason": state["decompose_fallback_reason"]},
                 )
+            self._end_stage(state, "decompose", "completed", "需求拆解完成")
 
             # 澄清与定界前置（计划已在模式分支之前生成，两种模式共用）
+            self._begin_stage(state, "crawl", "开始检索、抓取与准入筛选")
             if enable_search and not state["target_urls"]:
                 state["status"] = "researching"
                 from src.tools.officiality import DEFAULT_CACHE_PATH as _OFFICIALITY_CACHE
@@ -1062,16 +1236,17 @@ class MVPWorkflow:
 
             state["status"] = "crawling"
             self._emit("crawl_start", "crawl", "running", f"开始登录/抓取 {len(state['target_sites'])} 个竞品网站")
-            state["competitors"] = await self._fetch_all_competitors(
+            state["competitors"] = state.get("competitors") or await self._fetch_all_competitors(
                 state["target_sites"],
                 auth_credentials,
                 login_url,
                 custom_selectors,
                 page_tiers=state.get("page_tiers"),
             )
-            state["competitors"], state["evidence_orphans"] = self._merge_evidence_pages(
-                state["target_sites"], state["competitors"]
-            )
+            if not state.get("_resume_past_crawl"):
+                state["competitors"], state["evidence_orphans"] = self._merge_evidence_pages(
+                    state["target_sites"], state["competitors"]
+                )
             # 官方性 provenance（2026-11-02 §14/§8.21 ✓）：把发现阶段的判定
             # 按**主机**对齐到抓取行上（入选 URL 与实际抓的页可能不同路径），
             # 矩阵行据此加 ⚠️（suspect=域非开发者站，数据来源可疑）。
@@ -1094,22 +1269,27 @@ class MVPWorkflow:
             # 数量不够时从候选留池补位。放在这里（抓完、抽数据之前），
             # 是因为被淘汰的竞品的数据不能进报告——否则报告里会出现
             # "未核实"的行，而矩阵里又没有它，两边对不上。
-            await self._apply_admission_gate(
-                state,
-                auth_credentials=auth_credentials,
-                login_url=login_url,
-                custom_selectors=custom_selectors,
-            )
+            if not state.get("_resume_past_crawl"):
+                await self._apply_admission_gate(
+                    state,
+                    auth_credentials=auth_credentials,
+                    login_url=login_url,
+                    custom_selectors=custom_selectors,
+                )
+            self._end_stage(state, "crawl", "completed", "抓取与准入筛选完成")
 
-            for comp in state["competitors"]:
-                state["extracted_data"].extend(comp["extracted_data"])
-                if comp["status"] == "success":
-                    state["raw_search_results"].append({
-                        "url": comp["url"],
-                        "content": str(comp["extracted_data"]),
-                        "timestamp": datetime.now(),
-                        "source_type": "web"
-                    })
+            self._begin_stage(state, "extract", "正在归并抽取数据")
+            if not state.get("_resume_past_extract"):
+                for comp in state["competitors"]:
+                    state["extracted_data"].extend(comp["extracted_data"])
+                    if comp["status"] == "success":
+                        state["raw_search_results"].append({
+                            "url": comp["url"],
+                            "content": str(comp["extracted_data"]),
+                            "timestamp": datetime.now(),
+                            "source_type": "web"
+                        })
+            self._end_stage(state, "extract", "completed", "抽取数据归并完成")
 
             success_count = sum(1 for c in state["competitors"] if c["status"] == "success")
             failed_count = sum(1 for c in state["competitors"] if c["status"] == "failed")
@@ -1129,14 +1309,25 @@ class MVPWorkflow:
             # Extract is implicit in the crawl data, nothing extra to call
 
             state["status"] = "verifying"
+            self._begin_stage(state, "verify", "正在检查抽取数据的来源可追溯性")
             self._emit("verify", "verify", "running", "正在检查抽取数据的来源可追溯性")
-            verification_result = await self.coordinator.assess_extracted_data(state["extracted_data"])
-            state["verification_score"] = verification_result["score"]
-            state["verification_passed"] = verification_result["passed"]
-            state["verification_warnings"] = verification_result["warnings"]
-            state["source_coverage"] = verification_result["source_coverage"]
-            state["evidence_count"] = verification_result["evidence_count"]
-            state["numeric_evidence_count"] = verification_result["numeric_evidence_count"]
+            if not state.get("_resume_past_verify"):
+                verification_result = await self.coordinator.assess_extracted_data(state["extracted_data"])
+                state["verification_score"] = verification_result["score"]
+                state["verification_passed"] = verification_result["passed"]
+                state["verification_warnings"] = verification_result["warnings"]
+                state["source_coverage"] = verification_result["source_coverage"]
+                state["evidence_count"] = verification_result["evidence_count"]
+                state["numeric_evidence_count"] = verification_result["numeric_evidence_count"]
+            else:
+                verification_result = {
+                    "score": state.get("verification_score") or 0,
+                    "passed": bool(state.get("verification_passed")),
+                    "warnings": state.get("verification_warnings") or [],
+                    "source_coverage": state.get("source_coverage") or 0.0,
+                    "evidence_count": state.get("evidence_count") or 0,
+                    "numeric_evidence_count": state.get("numeric_evidence_count") or 0,
+                }
 
             successful_competitors = [c for c in state["competitors"] if c["status"] == "success"]
             state["comparison_passed"] = len(successful_competitors) >= MIN_COMPETITORS_FOR_COMPARISON
@@ -1150,8 +1341,10 @@ class MVPWorkflow:
             # 单独落 state 供评测/前端读取，不靠解析报告反推。
             matrix_obj = build_matrix(user_query, competitors=state["competitors"])
             state["competitor_matrix"] = matrix_obj.to_dict()
+            self._end_stage(state, "verify", "completed", "来源可追溯性检查完成")
 
             state["status"] = "writing"
+            self._begin_stage(state, "report", "正在生成竞品分析报告")
             if not state["verification_passed"]:
                 # 门禁现在只看两项可确定性验证的属性：来源覆盖率与证据条数。
                 # 绝不能再称作"可信度"——可信度由引用校验负责，这里管的是数据能不能追溯。
@@ -1183,6 +1376,7 @@ class MVPWorkflow:
                     f"证据 {state['evidence_count']} 条",
                 )
                 state["injection_findings_count"] = len(state.get("injection_findings") or [])
+                self._end_stage(state, "report", "failed", "验证门禁未通过，中止交付")
                 self._update_task_status_in_sqlite(state)
                 return state
 
@@ -1202,6 +1396,7 @@ class MVPWorkflow:
                 }
                 self._emit("error", "verify", "failed", f"数据质量不足：{quality_report.overall_score}/10")
                 state["injection_findings_count"] = len(state.get("injection_findings") or [])
+                self._end_stage(state, "report", "failed", "验证门禁未通过，中止交付")
                 self._update_task_status_in_sqlite(state)
                 return state
 
@@ -1212,18 +1407,32 @@ class MVPWorkflow:
             self._emit("report_generate", "report_generate", "running", "正在生成竞品分析报告")
             evidence_store = EvidenceStore.from_extracted_data(state["extracted_data"])
             state["evidence_store"] = evidence_store
-            state["report_final"] = await self.copywriter.generate_report(
-                user_query,
-                state["extracted_data"],
-                verification_result,
-                competitors=state["competitors"],
-                quality_report=quality_report,
-                evidence_store=evidence_store,
-                competitor_matrix=matrix_obj,
-            )
+            if not state.get("_resume_past_report"):
+                draft = self._load_report_draft(state)
+                if draft is not None:
+                    # 阶段内崩溃（报告已生成、检查点未落盘）重跑时复用草稿：
+                    # 矩阵推导仍会重跑，但报告生成不再重复付费。
+                    state["report_final"] = draft
+                    self._emit(
+                        "report_draft_reused", "report", "running",
+                        "复用报告草稿，跳过重复生成",
+                    )
+                else:
+                    state["report_final"] = await self.copywriter.generate_report(
+                        user_query,
+                        state["extracted_data"],
+                        verification_result,
+                        competitors=state["competitors"],
+                        quality_report=quality_report,
+                        evidence_store=evidence_store,
+                        competitor_matrix=matrix_obj,
+                    )
+                    self._save_report_draft(state, state["report_final"])
+            self._end_stage(state, "report", "completed", "报告初稿生成完成")
 
             # --- 引用校验闭环：不过则带违规清单重生成一次，仍不过标记低可信 ---
             state["status"] = "citation_check"
+            self._begin_stage(state, "citation", "正在校验引用完整性")
             self._emit(
                 "citation_check", "verify", "running",
                 f"正在校验引用完整性（证据 {len(evidence_store)} 条）",
@@ -1418,6 +1627,7 @@ class MVPWorkflow:
                     },
                 )
                 state["report_final"] = self._mark_low_trust(state["report_final"], citation_result)
+            self._end_stage(state, "citation", "completed", "引用校验闭环完成")
 
             # 交付前最后一道闸：注入文本不得原样出现在报告里
             self._enforce_report_output(state)
@@ -1425,6 +1635,8 @@ class MVPWorkflow:
                 # 清洗可能恰好删掉整份正文；空文件不能落盘后还把任务标 completed。
                 raise LLMError("报告在出口清洗后为空，已中止交付")
 
+            # 取消即止：后续每一步都可能写外部可见产物，进入前再检查一次。
+            self._raise_if_cancelled()
             state["sync_results"]["local_file"] = self._save_report(state["report_final"], state.get("task_id"))
             state["report_id"] = Path(state["sync_results"]["local_file"]).stem
 
@@ -1458,13 +1670,41 @@ class MVPWorkflow:
             if sync_targets:
                 state = await self._sync_documents(state, sync_targets)
 
+            self._raise_if_cancelled()
             state["status"] = "completed"
             state["termination_reason"] = "所有步骤执行完成"
             self._emit("completed", "completed", "completed", "全部完成")
+            if self._checkpoints_enabled:
+                self._save_checkpoint(state, "completed")
+            self._update_task_status_in_sqlite(state)
+
+        except asyncio.CancelledError:
+            # 取消是终态：不再写报告/PRD/同步，只落任务状态与审计事件。
+            logger.info("任务 %s 已取消", state.get("task_id"))
+            state["status"] = "cancelled"
+            state["termination_reason"] = "任务已取消"
+            if self._current_stage:
+                self._end_stage(state, self._current_stage, "failed", "任务已取消", "cancelled")
+                self._current_stage = None
+            self._emit(
+                "task_cancelled", "lifecycle", "cancelled", "任务已取消",
+                payload={
+                    "reason_code": LifecycleReasonCode.CANCELLED.value,
+                    "attempt": 1,
+                },
+            )
             self._update_task_status_in_sqlite(state)
 
         except Exception as e:
             logger.error(f"工作流执行失败: {e}", exc_info=True)
+            if self._current_stage:
+                # 阶段级定位：错误发生时正处于哪个阶段，直接写进 stage_end。
+                self._end_stage(
+                    state, self._current_stage, "failed",
+                    f"{self._current_stage} 阶段失败: {e}",
+                    error_code=type(e).__name__,
+                )
+                self._current_stage = None
             state["status"] = "failed"
             state["termination_reason"] = f"执行失败: {str(e)}"
             # 失败了就别留着报告生成前算出的分数：那不是这次交付的质量，是上一次
@@ -1583,6 +1823,10 @@ class MVPWorkflow:
             result = await runner.run(react_query, target_urls=target_urls)
 
             state["cost_report"] = result.cost_report
+            # 证据使用信号：终态事件与落库都要带上，便于真实 LLM 上线后直接观察
+            # “折叠进库但没人回读”的证据量，而不必等 citation 事故暴露。
+            state["unread_folded_evidence"] = result.unread_folded_evidence
+            state["unread_cited_evidence"] = result.unread_cited_evidence
 
             # workspace 的 facts 是 {url: [条目,...]}，拼平成 EvidenceStore 需要的列表
             facts = [
@@ -1647,11 +1891,19 @@ class MVPWorkflow:
                             "termination_reason": state["termination_reason"],
                             "stop_reason": result.stop_reason,
                             "cost_report": state["cost_report"],
+                            "unread_folded_evidence": state["unread_folded_evidence"],
+                            "unread_cited_evidence": state["unread_cited_evidence"],
                         },
                     )
                 else:
                     state["status"] = "completed"
-                    self._emit("completed", "completed", "completed", "全部完成")
+                    self._emit(
+                        "completed", "completed", "completed", "全部完成",
+                        payload={
+                            "unread_folded_evidence": state["unread_folded_evidence"],
+                            "unread_cited_evidence": state["unread_cited_evidence"],
+                        },
+                    )
                 self._update_task_status_in_sqlite(state)
             else:
                 state["status"] = "failed"
@@ -1664,7 +1916,12 @@ class MVPWorkflow:
                 self._emit(
                     "error", "agent", "failed",
                     f"ReAct 未产出终答：{result.stop_reason}",
-                    payload={"stop_reason": result.stop_reason, "steps": len(result.steps)},
+                    payload={
+                        "stop_reason": result.stop_reason,
+                        "steps": len(result.steps),
+                        "unread_folded_evidence": state.get("unread_folded_evidence", 0),
+                        "unread_cited_evidence": state.get("unread_cited_evidence", 0),
+                    },
                 )
         except Exception as e:
             logger.error(f"ReAct 工作流执行失败: {e}", exc_info=True)
@@ -1838,13 +2095,28 @@ class MVPWorkflow:
                         extra["page_tiers"] = page_tiers
                     if site.get("max_pages") is not None:
                         extra["max_pages"] = site["max_pages"]
-                    return await self._fetch_single_competitor(
-                        site["url"],
-                        site.get("auth_credentials"),
-                        site.get("login_url"),
-                        custom_selectors,
-                        **extra,
-                    )
+                    timeout = float(os.getenv("UNIT_FETCH_TIMEOUT", "240"))
+                    try:
+                        return await asyncio.wait_for(
+                            self._fetch_single_competitor(
+                                site["url"],
+                                site.get("auth_credentials"),
+                                site.get("login_url"),
+                                custom_selectors,
+                                **extra,
+                            ),
+                            timeout=timeout,
+                        )
+                    except asyncio.TimeoutError:
+                        # 单元级超时：只废掉这一站，不拖垮整批 gather。
+                        logger.warning("竞品 %s 抓取超时（>%ss），已回收", site["url"], timeout)
+                        return {
+                            "name": site["url"],
+                            "url": site["url"],
+                            "extracted_data": [],
+                            "status": "failed",
+                            "error_message": f"单元抓取超时（>{timeout}s）",
+                        }
 
             try:
                 tasks = [_limited_fetch(site) for site in site_configs]
@@ -1914,25 +2186,39 @@ class MVPWorkflow:
         维度补抓用它让 discover 优先命中缺口维度对应的页面（见 dimension_refetch）。
         """
         self._emit("crawl_progress", "crawl", "running", f"正在抓取 {url}", payload={"url": url, "name": "unknown"})
+        # 页缓存只在无凭据站点生效：鉴权页面内容不落盘（既有安全边界）。
+        cache_key = self._page_cache_key(url, max_pages, page_tiers)
+        cacheable = not auth_credentials and not login_url
+        cached_profile = self._load_cached_profile(self._state(), cache_key) if cacheable else None
+        if cached_profile is not None:
+            self._emit(
+                "crawl_cache_hit", "crawl", "running", f"复用页缓存 {url}",
+                payload={"url": url, "page_count": len(cached_profile.get("pages") or [])},
+            )
         try:
             async with contextlib.AsyncExitStack() as stack:
-                active_crawler = crawler
-                if active_crawler is None:
-                    active_crawler = await self._acquire_batch_crawler()
-                if active_crawler is None:
-                    active_crawler = await stack.enter_async_context(self.crawler_factory())
-                # max_pages 只在补抓显式给定时透传；None 时不传，让爬虫走默认值
-                # （FixtureSiteSource 的 max(1, max_pages) 对 None 会炸）
-                profile_kwargs: Dict[str, Any] = dict(
-                    auth_credentials=auth_credentials,
-                    login_url=login_url,
-                    custom_selectors=custom_selectors,
-                )
-                if max_pages is not None:
-                    profile_kwargs["max_pages"] = max_pages
-                if page_tiers is not None:
-                    profile_kwargs["priority_tiers"] = page_tiers
-                profile = await active_crawler.fetch_site_profile(url, **profile_kwargs)
+                if cached_profile is None:
+                    active_crawler = crawler
+                    if active_crawler is None:
+                        active_crawler = await self._acquire_batch_crawler()
+                    if active_crawler is None:
+                        active_crawler = await stack.enter_async_context(self.crawler_factory())
+                    # max_pages 只在补抓显式给定时透传；None 时不传，让爬虫走默认值
+                    # （FixtureSiteSource 的 max(1, max_pages) 对 None 会炸）
+                    profile_kwargs: Dict[str, Any] = dict(
+                        auth_credentials=auth_credentials,
+                        login_url=login_url,
+                        custom_selectors=custom_selectors,
+                    )
+                    if max_pages is not None:
+                        profile_kwargs["max_pages"] = max_pages
+                    if page_tiers is not None:
+                        profile_kwargs["priority_tiers"] = page_tiers
+                    profile = await active_crawler.fetch_site_profile(url, **profile_kwargs)
+                    if cacheable:
+                        self._save_cached_profile(self._state(), cache_key, profile)
+                else:
+                    profile = cached_profile
 
                 # 页级失败必须外发。爬虫已经把「发现出来但没抓到」的页面记在
                 # profile["failed_pages"] 里，但这个字段此前只停在爬虫的返回值中，
@@ -2694,23 +2980,144 @@ class MVPWorkflow:
         )
         return decision
 
+    def _report_filename_for_task(self, task_id: str) -> str:
+        """同一任务固定文件名：崩溃在“文件已写、状态未落库”窗口后续跑只覆盖不新增。
+
+        文件名映射先于正文落盘写库，因此进程被杀后仍能复用同一个名字。
+        库不可用时退回按任务后缀的秒级名（仍然同秒不同任务不撞车）。
+        """
+        import hashlib
+
+        try:
+            from src.storage import get_report_db
+
+            existing = get_report_db().get_task_draft(task_id, "report_filename")
+            if existing:
+                return existing
+        except Exception as exc:  # 缓存失败不得阻断报告落盘
+            logger.warning("读取报告文件名映射失败: %s", exc)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        suffix = hashlib.sha256(task_id.encode()).hexdigest()[:8]
+        filename = f"research_report_{timestamp}_{suffix}.md"
+        try:
+            from src.storage import get_report_db
+
+            get_report_db().save_task_draft(task_id, "report_filename", filename)
+        except Exception as exc:
+            logger.warning("保存报告文件名映射失败: %s", exc)
+        return filename
+
     def _save_report(self, content: str, task_id: Optional[str] = None) -> str:
-        """保存报告到本地文件"""
+        """保存报告到本地文件。
+
+        默认按 task 固定文件名 + 临时文件原子替换：续跑重写同一路径，
+        不会出现“崩溃前一份、续跑后两份”的重复报告。
+        `LIFECYCLE_ATOMIC_REPORT=0` 回到旧的“时间戳命名 + 直接写”。
+        """
         from src.config.settings import OUTPUT_DIR
         import os
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # 附上 task_id 前 8 位：秒级时间戳在多用户并发下会撞车，导致互相覆盖。
-        # task_id 是 uuid4 派生的，不含用户信息，不会成为枚举入口。
-        suffix = f"_{task_id[:8]}" if task_id else ""
-        filename = f"research_report_{timestamp}{suffix}.md"
+        if not task_id or not getattr(self, "_atomic_report_enabled", True):
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            suffix = f"_{task_id[:8]}" if task_id else ""
+            filename = f"research_report_{timestamp}{suffix}.md"
+            filepath = os.path.join(OUTPUT_DIR, filename)
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(content)
+            return filepath
+
+        filename = self._report_filename_for_task(task_id)
         filepath = os.path.join(OUTPUT_DIR, filename)
-
         os.makedirs(OUTPUT_DIR, exist_ok=True)
-        with open(filepath, "w", encoding="utf-8") as f:
+        tmp_path = filepath + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(content)
-
+        os.replace(tmp_path, filepath)
         return filepath
+
+    # ------------------------------------------------------------------
+    # 断点：报告草稿与页缓存（按 task 键，进程被杀后仍可复用）
+    # ------------------------------------------------------------------
+
+    def _load_report_draft(self, state: Dict[str, Any]) -> Optional[str]:
+        task_id = state.get("task_id")
+        if not task_id or not getattr(self, "_report_draft_enabled", True):
+            return None
+        try:
+            from src.storage import get_report_db
+
+            return get_report_db().get_task_draft(task_id, "report")
+        except Exception as exc:
+            logger.warning("读取报告草稿失败: %s", exc)
+            return None
+
+    def _save_report_draft(self, state: Dict[str, Any], content: str) -> None:
+        task_id = state.get("task_id")
+        if not task_id or not content or not getattr(self, "_report_draft_enabled", True):
+            return
+        try:
+            from src.storage import get_report_db
+
+            get_report_db().save_task_draft(task_id, "report", content)
+        except Exception as exc:
+            logger.warning("保存报告草稿失败: %s", exc)
+
+    @staticmethod
+    def _page_cache_key(url: str, max_pages: Optional[int], page_tiers: Optional[tuple]) -> str:
+        """缓存键：站点 URL + 抓取作用域。content_hash 在读时另行校验。"""
+        return f"{url}|max_pages={max_pages}|tiers={page_tiers}"
+
+    @staticmethod
+    def _profile_content_hash(profile: Dict[str, Any]) -> str:
+        """对站内全部页的 URL+正文求哈希：内容变了哈希必变，脏缓存按未命中处理。"""
+        import hashlib
+
+        digest = hashlib.sha256()
+        for page in profile.get("pages") or []:
+            digest.update(str(page.get("url") or "").encode())
+            digest.update(b"\x00")
+            digest.update(str(page.get("content") or "").encode())
+            digest.update(b"\x01")
+        return digest.hexdigest()
+
+    def _load_cached_profile(self, state: Dict[str, Any], cache_key: str) -> Optional[Dict[str, Any]]:
+        task_id = state.get("task_id")
+        # 未走 __init__ 的实例（单测直接构造个别方法）不启用缓存：
+        # 没有生命周期开关就没有副作用持久化，避免测试间任务号复用导致脏命中。
+        if not getattr(self, "_page_cache_enabled", False):
+            return None
+        try:
+            from src.storage import get_report_db
+
+            row = get_report_db().get_page_cache(task_id, cache_key)
+            if not row:
+                return None
+            profile = row.get("payload") or {}
+            if self._profile_content_hash(profile) != row.get("content_hash"):
+                return None
+            return profile if profile.get("pages") else None
+        except Exception as exc:
+            logger.warning("读取页缓存失败: %s", exc)
+            return None
+
+    def _save_cached_profile(
+        self, state: Dict[str, Any], cache_key: str, profile: Dict[str, Any],
+    ) -> None:
+        task_id = state.get("task_id")
+        if not task_id or not getattr(self, "_page_cache_enabled", False):
+            return
+        if not isinstance(profile, dict) or not profile.get("pages"):
+            return
+        try:
+            from src.storage import get_report_db
+
+            get_report_db().save_page_cache(
+                task_id, cache_key, self._profile_content_hash(profile), profile,
+            )
+        except Exception as exc:
+            logger.warning("保存页缓存失败: %s", exc)
 
     @staticmethod
     def _competitor_record(c: Dict[str, Any]) -> Dict[str, Any]:

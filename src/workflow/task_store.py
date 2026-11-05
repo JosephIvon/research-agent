@@ -30,6 +30,24 @@ class TaskStatus(str, Enum):
     # 预算耗尽收束：已有结论但未跑完预算，按部分结果交付（README 对外口径）
     PARTIAL = "partial"
     FAILED = "failed"
+    # 用户/系统主动取消：终态，且不得被后续 running/failed 覆盖
+    CANCELLED = "cancelled"
+
+
+#: 终态集合。进入终态后状态只能保持，不能回退或改写。
+TERMINAL_STATUSES = frozenset({
+    TaskStatus.COMPLETED,
+    TaskStatus.PARTIAL,
+    TaskStatus.FAILED,
+    TaskStatus.CANCELLED,
+})
+
+
+def is_terminal(status: "TaskStatus | str") -> bool:
+    try:
+        return TaskStatus(status) in TERMINAL_STATUSES
+    except ValueError:
+        return False
 
 
 class TaskEventType(str, Enum):
@@ -63,10 +81,33 @@ class TaskEventType(str, Enum):
     PARTIAL = "partial"
     # 缺口定向补抓（gap refetch）：判定层决定补抓 / 补抓进行中 / 补抓完成 / 判定不触发
     GAP_REFETCH = "gap_refetch"
+    # 生命周期（D7/M2–M4）：阶段级 start/end、取消、断点恢复
+    STAGE_START = "stage_start"
+    STAGE_END = "stage_end"
+    TASK_CANCELLED = "task_cancelled"
+    TASK_RESUMED = "task_resumed"
+    # 断点复用（本轮）：报告草稿命中 / 抓取页缓存命中
+    REPORT_DRAFT_REUSED = "report_draft_reused"
+    CRAWL_CACHE_HIT = "crawl_cache_hit"
 
 
 #: 事件名白名单。`_emit` 对表用，避免每个调用点各自遍历枚举。
 KNOWN_EVENT_NAMES = frozenset(item.value for item in TaskEventType)
+
+
+class LifecycleReasonCode(str, Enum):
+    """生命周期失败/终止的可机读原因码（写进事件 payload 的 `reason_code`）。
+
+    与 `src.agent.error_codes.ReasonCode` 刻意分开：那套描述一次 Agent Runner
+    的终止原因，这套描述**进程级生命周期**（启动恢复、续跑调度）失败在哪一步，
+    前端/运维据此区分「没检查点可恢复」和「恢复后执行挂了」。
+    """
+
+    NO_CHECKPOINT = "no_checkpoint"
+    REQUEST_REBUILD_FAILED = "request_rebuild_failed"
+    SCHEDULE_FAILED = "schedule_failed"
+    EXECUTION_FAILED = "execution_failed"
+    CANCELLED = "cancelled"
 
 
 @dataclass
@@ -137,6 +178,10 @@ class TaskState:
     injection_findings_count: int = 0
     # ReAct 模式的成本报告（TaskBudget.snapshot() 的口径）；legacy 路径为 None
     cost_report: Optional[Dict[str, Any]] = None
+    # 生命周期：每个阶段的尝试次数（stage_start 递增），断点续跑后继续累加
+    stage_attempts: Dict[str, int] = field(default_factory=dict)
+    # 该任务被 resume 的次数；0 表示从未续跑
+    resume_count: int = 0
 
     def __post_init__(self):
         if isinstance(self.status, str):
@@ -165,6 +210,8 @@ class TaskState:
             "user_id": self.user_id,
             "injection_findings_count": self.injection_findings_count,
             "cost_report": self.cost_report,
+            "stage_attempts": self.stage_attempts,
+            "resume_count": self.resume_count,
             "artifacts": {k: v.to_dict() for k, v in self.artifacts.items()},
             "events": [e.to_dict() for e in self.events],
         }
@@ -178,6 +225,24 @@ class TaskState:
         d["artifacts"] = artifacts
         d["events"] = events
         return cls(**d)
+
+
+def _set_status_guarded(ts: TaskState, value: Any) -> bool:
+    """终态单调：已进入终态的任务不能被改写为另一个状态。
+
+    取消/失败/完成都是不可逆事实；若允许把 cancelled 改回 running，
+    崩溃恢复与重复回调就能把一次已取消的任务“复活”，前端状态也会来回跳。
+    返回是否真的发生了状态变化。
+    """
+    new_status = TaskStatus(value)
+    if ts.status in TERMINAL_STATUSES and new_status != ts.status:
+        logger.warning(
+            "任务 %s 已是终态 %s，拒绝改写为 %s",
+            ts.task_id, ts.status.value, new_status.value,
+        )
+        return False
+    ts.status = new_status
+    return True
 
 
 class EventEmitter:
@@ -335,7 +400,7 @@ class InMemoryTaskStore(PersistenceBackend):
             if not ts:
                 return None
             if "status" in kwargs and kwargs["status"] is not None:
-                ts.status = TaskStatus(kwargs["status"])
+                _set_status_guarded(ts, kwargs["status"])
             if "current_stage" in kwargs:
                 ts.current_stage = kwargs["current_stage"]
             if "current_message" in kwargs:
@@ -358,6 +423,10 @@ class InMemoryTaskStore(PersistenceBackend):
                 ts.injection_findings_count = kwargs["injection_findings_count"]
             if "cost_report" in kwargs:
                 ts.cost_report = kwargs["cost_report"]
+            if "stage_attempts" in kwargs:
+                ts.stage_attempts = kwargs["stage_attempts"] or {}
+            if "resume_count" in kwargs:
+                ts.resume_count = kwargs["resume_count"]
             self._tasks[task_id] = ts
             return ts
 
@@ -509,7 +578,7 @@ class RedisTaskStore(PersistenceBackend):
     @staticmethod
     def _apply_update_fields(ts: TaskState, kwargs: Dict[str, Any]) -> None:
         if "status" in kwargs and kwargs["status"] is not None:
-            ts.status = TaskStatus(kwargs["status"])
+            _set_status_guarded(ts, kwargs["status"])
         if "current_stage" in kwargs:
             ts.current_stage = kwargs["current_stage"]
         if "current_message" in kwargs:
@@ -532,6 +601,10 @@ class RedisTaskStore(PersistenceBackend):
             ts.injection_findings_count = kwargs["injection_findings_count"]
         if "cost_report" in kwargs:
             ts.cost_report = kwargs["cost_report"]
+        if "stage_attempts" in kwargs:
+            ts.stage_attempts = kwargs["stage_attempts"] or {}
+        if "resume_count" in kwargs:
+            ts.resume_count = kwargs["resume_count"]
 
     async def update(self, task_id: str, **kwargs) -> Optional[TaskState]:
         def _mutate(ts: TaskState) -> None:
