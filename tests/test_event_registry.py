@@ -10,6 +10,7 @@
 3. partial 走枚举而不是裸字符串
 """
 import asyncio
+import functools
 
 import pytest
 
@@ -20,18 +21,15 @@ from src.workflow.task_store import KNOWN_EVENT_NAMES, TaskEventType
 
 @pytest.fixture
 def offline_workflow(monkeypatch):
-    """构造 MVPWorkflow 不碰真实密钥：LLM 客户端换成脚本件。
+    """构造 MVPWorkflow 不碰真实密钥：LLM 客户端走构造注入。
 
-    构造器会去 get_llm_client()，那是真客户端——直接 new 会因为缺
+    构造器默认会去 get_llm_client()，那是真客户端——直接 new 会因为缺
     MINIMAX_API_KEY 直接炸，测的就不是事件名而是环境变量了。
     """
-    from src.workflow import mvp_workflow
-
-    monkeypatch.setattr(
-        mvp_workflow, "get_llm_client",
-        lambda *a, **k: ScriptedLLMClient(script={"react": ["占位，本用例不会真的调用模型"]}),
+    return functools.partial(
+        MVPWorkflow,
+        llm_client=ScriptedLLMClient(script={"react": ["占位，本用例不会真的调用模型"]}),
     )
-    return MVPWorkflow
 
 
 class _Collector:
@@ -95,12 +93,12 @@ def test_partial_event_goes_out_under_the_registered_name(tmp_path, monkeypatch)
 
     monkeypatch.setenv("AGENT_MODE", "react")
     llm = _react_llm(_call("web_search", query="q"), "## 部分结论\n\n预算耗尽前采集。")
-    _wire_offline(monkeypatch, tmp_path, llm)
+    build = _wire_offline(monkeypatch, tmp_path, llm)
     _wire_react_tools(monkeypatch)
     monkeypatch.setattr(config, "AGENT_TOKEN_BUDGET", 10)
 
     collector = _Collector()
-    workflow = MVPWorkflow(
+    workflow = build(
         event_emitter=collector,
         verify_report_fn=_verify_passed,
     )

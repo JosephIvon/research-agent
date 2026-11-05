@@ -84,8 +84,8 @@ def test_workflow_fetches_site_profile_instead_of_single_page(monkeypatch):
             captured["raw_content"] = raw_content
             return [{"key": "models", "value": "Models and pricing", "source_url": url}]
 
-    monkeypatch.setattr("src.workflow.mvp_workflow.WebCrawler", lambda: FakeCrawler())
     workflow = object.__new__(MVPWorkflow)
+    workflow._crawler_factory = lambda: FakeCrawler()
     workflow.coordinator = FakeCoordinator()
     workflow._event_emitter = None
     workflow.state = {"task_id": "test"}

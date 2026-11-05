@@ -203,17 +203,15 @@ def test_full_legacy_workflow_runs_offline_with_fake_llm(tmp_path, monkeypatch):
 
     monkeypatch.setattr(socket.socket, "connect", _guard_connect)
 
-    monkeypatch.setattr(mvp_workflow, "WebCrawler", _FakeWebCrawler)
-    monkeypatch.setattr(mvp_workflow, "get_llm_client", lambda *a, **k: client)
-    # URL 校验走透传以保持离线；其真实行为由 test_security_baseline 覆盖
-    monkeypatch.setattr(mvp_workflow, "validate_fetch_url", lambda u: u)
-    monkeypatch.setattr(mvp_workflow, "validate_fetch_urls", lambda us: list(us))
-
     monkeypatch.setattr("src.config.settings.OUTPUT_DIR", str(tmp_path / "output"))
     monkeypatch.setattr(dbmod, "DATABASE_PATH", str(tmp_path / "reports.db"))
     monkeypatch.setattr(dbmod, "_report_db", None)
 
-    workflow = mvp_workflow.MVPWorkflow()
+    workflow = mvp_workflow.MVPWorkflow(
+        llm_client=client,
+        crawler_factory=_FakeWebCrawler,
+        url_validator=lambda u: u,
+    )
     state = asyncio.run(workflow.run(
         "Acme 定价调研",
         target_urls=[TARGET_URL],

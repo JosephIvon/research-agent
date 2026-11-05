@@ -11,6 +11,7 @@
 - AgentResult.usage_estimated 真实反映"本轮是否只拿到估算值"
 """
 import asyncio
+import functools
 import json
 from typing import Any, Dict, List, get_args
 
@@ -128,17 +129,23 @@ class _BudgetExhaustedRunner:
 
 
 def _wire_offline(monkeypatch, tmp_path, llm_client):
-    """工作流层零网络隔离：LLM、URL 校验、输出目录、SQLite 全部离线化。"""
+    """工作流层零网络隔离：LLM、URL 校验走构造注入，输出目录/SQLite 仍打模块级。
+
+    返回绑好替身的构造器；调用时可用关键字覆盖
+    （如 `build(event_emitter=..., usd_budget=0.0)`）。
+    """
     from src.config import settings
     from src.storage import database as dbmod
-    from src.workflow import mvp_workflow
+    from src.workflow.mvp_workflow import MVPWorkflow
 
-    monkeypatch.setattr(mvp_workflow, "get_llm_client", lambda *a, **k: llm_client)
-    monkeypatch.setattr(mvp_workflow, "validate_fetch_url", lambda u: u)
-    monkeypatch.setattr(mvp_workflow, "validate_fetch_urls", lambda us: list(us))
     monkeypatch.setattr(settings, "OUTPUT_DIR", str(tmp_path / "output"))
     monkeypatch.setattr(dbmod, "DATABASE_PATH", str(tmp_path / "reports.db"))
     monkeypatch.setattr(dbmod, "_report_db", None)
+    return functools.partial(
+        MVPWorkflow,
+        llm_client=llm_client,
+        url_validator=lambda u: u,
+    )
 
 
 def _wire_react_tools(monkeypatch):
@@ -178,13 +185,11 @@ def test_partial_is_a_declared_task_status():
 def test_budget_exceeded_with_answer_is_partial(tmp_path, monkeypatch):
     """预算耗尽 + 有终答 → partial 终态，交付链照常走完。"""
     monkeypatch.setenv("AGENT_MODE", "react")
-    _wire_offline(monkeypatch, tmp_path, _react_llm("不会被调用"))
+    build = _wire_offline(monkeypatch, tmp_path, _react_llm("不会被调用"))
     _wire_react_tools(monkeypatch)
 
-    from src.workflow import mvp_workflow
-
     # 引用校验打桩只为了让 passed=True 可确定断言，链路本身仍由真实工作流驱动
-    workflow = mvp_workflow.MVPWorkflow(
+    workflow = build(
         react_runner_factory=_BudgetExhaustedRunner,
         verify_report_fn=_verify_passed,
     )
@@ -216,15 +221,12 @@ def test_budget_exceeded_without_answer_still_fails(tmp_path, monkeypatch):
         _call("web_search", query="b"),  # 永不产出终答
         _call("web_search", query="c"),
     )
-    _wire_offline(monkeypatch, tmp_path, llm)
     _wire_react_tools(monkeypatch)
 
-    from src.workflow import mvp_workflow
-
     # USD 上限压到 0：第一轮记账后，下一轮预算守卫必然收束
-    monkeypatch.setattr(mvp_workflow, "AGENT_USD_BUDGET", 0.0)
+    build = _wire_offline(monkeypatch, tmp_path, llm)
 
-    workflow = mvp_workflow.MVPWorkflow()
+    workflow = build(usd_budget=0.0)
     collector = _EventCollector()
     workflow._event_emitter = collector
 
@@ -240,12 +242,10 @@ def test_budget_exceeded_without_answer_still_fails(tmp_path, monkeypatch):
 def test_normal_halt_still_emits_completed(tmp_path, monkeypatch):
     """对照用例：预算未耗尽的正常收束仍是 completed，防止 partial 分支外溢。"""
     monkeypatch.setenv("AGENT_MODE", "react")
-    _wire_offline(monkeypatch, tmp_path, _react_llm("正常终答。"))
+    build = _wire_offline(monkeypatch, tmp_path, _react_llm("正常终答。"))
     _wire_react_tools(monkeypatch)
 
-    from src.workflow import mvp_workflow
-
-    workflow = mvp_workflow.MVPWorkflow()
+    workflow = build()
     collector = _EventCollector()
     workflow._event_emitter = collector
 
@@ -266,12 +266,10 @@ def test_normal_halt_still_emits_completed(tmp_path, monkeypatch):
 def test_partial_event_payload_carries_status_and_cost(tmp_path, monkeypatch):
     """partial 事件带齐 status / termination_reason / stop_reason / cost_report。"""
     monkeypatch.setenv("AGENT_MODE", "react")
-    _wire_offline(monkeypatch, tmp_path, _react_llm("不会被调用"))
+    build = _wire_offline(monkeypatch, tmp_path, _react_llm("不会被调用"))
     _wire_react_tools(monkeypatch)
 
-    from src.workflow import mvp_workflow
-
-    workflow = mvp_workflow.MVPWorkflow(
+    workflow = build(
         react_runner_factory=_BudgetExhaustedRunner,
         verify_report_fn=_verify_passed,
     )
@@ -298,12 +296,10 @@ def test_agent_step_event_payload_has_real_stop_reason(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENT_MODE", "react")
     monkeypatch.setattr("src.agent.config.AGENT_MAX_STEPS", 8)
     same = _call("web_search", query="acme")
-    _wire_offline(monkeypatch, tmp_path, _react_llm(same, same, same, same))
+    build = _wire_offline(monkeypatch, tmp_path, _react_llm(same, same, same, same))
     _wire_react_tools(monkeypatch)
 
-    from src.workflow import mvp_workflow
-
-    workflow = mvp_workflow.MVPWorkflow()
+    workflow = build()
     collector = _EventCollector()
     workflow._event_emitter = collector
 
@@ -391,7 +387,6 @@ def test_usage_estimated_true_when_any_round_lacks_usage():
 
 def test_real_runner_delivers_partial_when_budget_runs_out(tmp_path, monkeypatch):
     from src.agent import config
-    from src.workflow import mvp_workflow
 
     monkeypatch.setenv("AGENT_MODE", "react")
     # 第 1 轮调工具把事实采回来；第 2 轮守卫立刻判定超额，然后走收敛调用
@@ -399,12 +394,12 @@ def test_real_runner_delivers_partial_when_budget_runs_out(tmp_path, monkeypatch
         _call("web_search", query="q"),
         "## 部分结论\n\n基于预算耗尽前已采集的信息。未覆盖：性能对比。",
     )
-    _wire_offline(monkeypatch, tmp_path, llm)
+    build = _wire_offline(monkeypatch, tmp_path, llm)
     _wire_react_tools(monkeypatch)
     # 把 runner 的 token 预算压到必然超额
     monkeypatch.setattr(config, "AGENT_TOKEN_BUDGET", 10)
 
-    workflow = mvp_workflow.MVPWorkflow(verify_report_fn=_verify_passed)
+    workflow = build(verify_report_fn=_verify_passed)
     state = asyncio.run(_drive(workflow))
 
     assert state["termination_reason"] == "react:budget_exceeded"
@@ -417,16 +412,15 @@ def test_real_runner_delivers_partial_when_budget_runs_out(tmp_path, monkeypatch
 
 def test_real_runner_emits_partial_event_not_completed(tmp_path, monkeypatch):
     from src.agent import config
-    from src.workflow import mvp_workflow
 
     monkeypatch.setenv("AGENT_MODE", "react")
     llm = _react_llm(_call("web_search", query="q"), "## 部分结论\n\n预算耗尽前采集。")
-    _wire_offline(monkeypatch, tmp_path, llm)
+    build = _wire_offline(monkeypatch, tmp_path, llm)
     _wire_react_tools(monkeypatch)
     monkeypatch.setattr(config, "AGENT_TOKEN_BUDGET", 10)
 
     collector = _EventCollector()
-    workflow = mvp_workflow.MVPWorkflow(
+    workflow = build(
         event_emitter=collector, verify_report_fn=_verify_passed,
     )
     asyncio.run(_drive(workflow))
@@ -462,20 +456,18 @@ def test_terminal_status_actually_reaches_sqlite(tmp_path, monkeypatch, expected
             "react_runner_factory": _BudgetExhaustedRunner,
             "verify_report_fn": _verify_passed,
         }
-        _wire_offline(monkeypatch, tmp_path, _react_llm("不会被调用"))
+        build = _wire_offline(monkeypatch, tmp_path, _react_llm("不会被调用"))
     elif expected == "completed":
-        _wire_offline(monkeypatch, tmp_path, _react_llm("正常终答。"))
+        build = _wire_offline(monkeypatch, tmp_path, _react_llm("正常终答。"))
     else:
         # 无终答 -> failed：runner 永远只吐工具调用
-        _wire_offline(monkeypatch, tmp_path,
-                      _react_llm(_call("web_search", query="a"),
-                                 _call("web_search", query="b")))
+        build = _wire_offline(monkeypatch, tmp_path,
+                              _react_llm(_call("web_search", query="a"),
+                                         _call("web_search", query="b")))
     _wire_react_tools(monkeypatch)
 
-    from src.workflow import mvp_workflow
-
     task_id = f"sqlite-terminal-{expected}-0001"
-    workflow = mvp_workflow.MVPWorkflow(**workflow_kwargs)
+    workflow = build(**workflow_kwargs)
     workflow._event_emitter = _EventCollector()
     state = asyncio.run(_drive(workflow, enable_search=False, task_id=task_id))
 

@@ -184,6 +184,7 @@ def test_all_good_competitors_are_not_penalised():
 def test_failed_run_does_not_keep_a_high_score(tmp_path, monkeypatch):
     """报告生成失败时，任务不得挂着报告生成前算出的分数（实测 10/10 A 级）。"""
     from tests.test_agent_mode_wiring import EXTRACT_ITEMS, _wire_offline
+    from tests.test_scripted_llm import _FakeWebCrawler
     from src.llm import ScriptedLLMClient
 
     monkeypatch.setenv("AGENT_MODE", "legacy")
@@ -191,10 +192,9 @@ def test_failed_run_does_not_keep_a_high_score(tmp_path, monkeypatch):
         "extract": [json.dumps(EXTRACT_ITEMS, ensure_ascii=False)],
         "report": [""],  # 空正文 → generate_report 显式抛错
     })
-    _wire_offline(monkeypatch, tmp_path, llm)
+    build = _wire_offline(monkeypatch, tmp_path, llm, crawler_cls=_FakeWebCrawler)
 
-    from src.workflow import mvp_workflow
-    workflow = mvp_workflow.MVPWorkflow()
+    workflow = build()
     state = asyncio.run(workflow.run(
         "Acme 定价调研",
         target_urls=["https://acme.example.com/pricing"],

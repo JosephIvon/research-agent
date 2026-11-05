@@ -31,7 +31,6 @@ def _wire(tmp_root: Path, task_id: str, stage: str):
     from src.agent.citations import EvidenceStore
     from src.llm import ScriptedLLMClient
     from src.storage import database as dbmod
-    from src.workflow import mvp_workflow
     from tests.test_scripted_llm import EXTRACT_ITEMS, TARGET_URL, _FakeWebCrawler
 
     expected = [dict(item, source_url=TARGET_URL) for item in EXTRACT_ITEMS]
@@ -41,19 +40,21 @@ def _wire(tmp_root: Path, task_id: str, stage: str):
         "extract": [json.dumps(EXTRACT_ITEMS, ensure_ascii=False)],
         "report": [report],
     })
-    mvp_workflow.WebCrawler = _FakeWebCrawler
-    mvp_workflow.get_llm_client = lambda *a, **k: client
-    mvp_workflow.validate_fetch_url = lambda u: u
-    mvp_workflow.validate_fetch_urls = lambda us: list(us)
+    # 依赖走构造注入，不再在各模块属性上做赋值（探针与单测共用同一注入面）。
+    wiring = dict(
+        llm_client=client,
+        crawler_factory=_FakeWebCrawler,
+        url_validator=lambda u: u,
+    )
     dbmod.DATABASE_PATH = str(tmp_root / "reports.db")
     dbmod._report_db = None
     from src.config import settings
     settings.OUTPUT_DIR = str(tmp_root / "output")
-    return mvp_workflow, task_id, stage, TARGET_URL
+    return wiring, task_id, stage, TARGET_URL
 
 
 def _run_child(mode: str, tmp_root: Path, task_id: str, stage: str):
-    mvp_workflow, task_id, stage, target_url = _wire(tmp_root, task_id, stage)
+    wiring, task_id, stage, target_url = _wire(tmp_root, task_id, stage)
     from src.workflow.mvp_workflow import MVPWorkflow
 
     class _StopAfterStage(MVPWorkflow):
@@ -68,7 +69,7 @@ def _run_child(mode: str, tmp_root: Path, task_id: str, stage: str):
             while True:
                 time.sleep(0.2)
 
-    workflow = _StopAfterStage() if mode == "crash" else MVPWorkflow()
+    workflow = _StopAfterStage(**wiring) if mode == "crash" else MVPWorkflow(**wiring)
     state = asyncio.run(workflow.run(
         "Acme 定价调研",
         target_urls=[target_url],

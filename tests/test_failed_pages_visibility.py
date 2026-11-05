@@ -46,14 +46,10 @@ def _profile(failed_pages):
 
 
 def _workflow(monkeypatch, collector):
-    from src.workflow import mvp_workflow
-
-    monkeypatch.setattr(
-        mvp_workflow,
-        "get_llm_client",
-        lambda *a, **k: ScriptedLLMClient(script={"react": ["占位，本用例不真调模型"]}),
+    wf = MVPWorkflow(
+        event_emitter=collector,
+        llm_client=ScriptedLLMClient(script={"react": ["占位，本用例不真调模型"]}),
     )
-    wf = MVPWorkflow(event_emitter=collector)
 
     async def _fake_extract(content, url):
         return []

@@ -13,6 +13,7 @@
 表达不了「报告引用补抓新增证据」的 id，所以这里直接手算 `make_evidence_id`。
 """
 import asyncio
+import functools
 import json
 
 from src.agent.citations import make_evidence_id
@@ -74,26 +75,30 @@ class _EventCollector:
 
 
 def _wire_offline(monkeypatch, tmp_path, llm_client, crawler_cls):
+    """工作流层零网络隔离：LLM、爬虫、URL 校验走构造注入。
+
+    返回绑好替身的构造器；调用时可用关键字覆盖。
+    """
     from src.config import settings
     from src.storage import database as dbmod
-    from src.workflow import mvp_workflow
+    from src.workflow.mvp_workflow import MVPWorkflow
 
-    monkeypatch.setattr(mvp_workflow, "get_llm_client", lambda *a, **k: llm_client)
-    monkeypatch.setattr(mvp_workflow, "WebCrawler", crawler_cls)
-    monkeypatch.setattr(mvp_workflow, "validate_fetch_url", lambda u: u)
-    monkeypatch.setattr(mvp_workflow, "validate_fetch_urls", lambda us: list(us))
     monkeypatch.setattr(settings, "OUTPUT_DIR", str(tmp_path / "output"))
     monkeypatch.setattr(dbmod, "DATABASE_PATH", str(tmp_path / "reports.db"))
     monkeypatch.setattr(dbmod, "_report_db", None)
+    return functools.partial(
+        MVPWorkflow,
+        llm_client=llm_client,
+        crawler_factory=crawler_cls,
+        url_validator=lambda u: u,
+    )
 
 
 def _run_legacy(monkeypatch, tmp_path, script, crawler_cls=None):
-    from src.workflow import mvp_workflow
-
     llm = ScriptedLLMClient(script=script)
-    _wire_offline(monkeypatch, tmp_path, llm, crawler_cls or _TwoPhaseCrawler)
+    build = _wire_offline(monkeypatch, tmp_path, llm, crawler_cls or _TwoPhaseCrawler)
 
-    workflow = mvp_workflow.MVPWorkflow()
+    workflow = build()
     collector = _EventCollector()
     workflow._event_emitter = collector
     state = asyncio.run(workflow.run(
@@ -239,11 +244,10 @@ def test_dimension_refetch_skipped_when_budget_exhausted(tmp_path, monkeypatch):
     per_site=1 的坑（只剩首页、选页意图失效），必须显式跳过并记录原因。
     """
     from src.agent.citations import EvidenceStore
-    from src.workflow import mvp_workflow
 
     llm = ScriptedLLMClient(script={"extract": ["[]"], "report": ["占位"], "decompose": ["[]"]})
-    _wire_offline(monkeypatch, tmp_path, llm, _TwoPhaseCrawler)
-    workflow = mvp_workflow.MVPWorkflow()
+    build = _wire_offline(monkeypatch, tmp_path, llm, _TwoPhaseCrawler)
+    workflow = build()
     collector = _EventCollector()
     workflow._event_emitter = collector
 
@@ -286,7 +290,7 @@ def test_refetch_runs_through_single_competitor_fetch(tmp_path, monkeypatch):
     from src.workflow import mvp_workflow
 
     llm = ScriptedLLMClient(script=script)
-    _wire_offline(monkeypatch, tmp_path, llm, lambda: crawler)
+    build = _wire_offline(monkeypatch, tmp_path, llm, lambda: crawler)
     calls = []
     original = mvp_workflow.MVPWorkflow._fetch_single_competitor
 
@@ -297,7 +301,7 @@ def test_refetch_runs_through_single_competitor_fetch(tmp_path, monkeypatch):
 
     monkeypatch.setattr(mvp_workflow.MVPWorkflow, "_fetch_single_competitor", _spy)
 
-    workflow = mvp_workflow.MVPWorkflow()
+    workflow = build()
     state = asyncio.run(workflow.run(
         "Acme 定价调研", target_urls=[SITE_URL], enable_search=False,
         deliverables={"report": True, "prd": False}, task_id="gap-spy-0001",

@@ -166,14 +166,14 @@ def test_prune_keeps_checkpoints_and_resume_still_works(tmp_path, monkeypatch, c
 
     db, path = cache_db
     client, cite, _ = _scripted_client()
-    _wire(monkeypatch, tmp_path, client)
+    build = _wire(monkeypatch, tmp_path, client)
     # _wire 会把库切到 tmp/reports.db；以它为准，否则检查点落在另一个文件。
     dbmod.init_db()
     db = dbmod.get_report_db()
     path = tmp_path / "reports.db"
 
     crash_task = "prune-resume-1"
-    asyncio.run(_CrashAfterStage(crash_stage="verify").run(
+    asyncio.run(_CrashAfterStage(crash_stage="verify", **build.keywords).run(
         "Acme 定价调研", target_urls=[TARGET_URL],
         enable_search=False, deliverables={"report": True, "prd": False},
         task_id=crash_task,
@@ -192,7 +192,7 @@ def test_prune_keeps_checkpoints_and_resume_still_works(tmp_path, monkeypatch, c
 
     # 清理只碰缓存表：检查点/事件原样保留，续跑仍能完成。
     assert db.load_latest_checkpoint(crash_task)["stage"] == "verify"
-    resumed = asyncio.run(MVPWorkflow().run(
+    resumed = asyncio.run(build().run(
         "Acme 定价调研", target_urls=[TARGET_URL],
         enable_search=False, deliverables={"report": True, "prd": False},
         task_id=crash_task, resume=True,

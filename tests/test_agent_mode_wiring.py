@@ -1,8 +1,8 @@
 """M3 工作流接线测试：AGENT_MODE=react 分支、爬虫批次共享、TaskState 新字段。
 
-隔离手法与 test_scripted_llm.py 一致：monkeypatch `mvp_workflow.WebCrawler`、
-`mvp_workflow.get_llm_client`、`mvp_workflow.validate_fetch_url/urls`、
-`src.config.settings.OUTPUT_DIR`、`src.storage.database` 的 DATABASE_PATH/_report_db。
+隔离手法与 test_scripted_llm.py 一致：LLM、爬虫、URL 校验走构造注入
+（`_wire_offline` 返回绑好替身的构造器），`src.config.settings.OUTPUT_DIR`、
+`src.storage.database` 的 DATABASE_PATH/_report_db 仍打模块级。
 react 工具链的触网点在 `src.agent.tool_specs` / `src.agent.tools`，单独打补丁。
 
 react 全流程的语义锚点：
@@ -12,6 +12,7 @@ react 全流程的语义锚点：
 - 事件流必须有 agent_step（on_step 回调 → _emit → 事件桩收集）
 """
 import asyncio
+import functools
 import json
 
 import pytest
@@ -93,20 +94,22 @@ class _EventCollector:
 
 
 def _wire_offline(monkeypatch, tmp_path, llm_client, crawler_cls=None):
-    """工作流层的零网络隔离：LLM、爬虫、URL 校验、输出目录、SQLite 全部离线化。"""
+    """工作流层的零网络隔离：LLM、爬虫、URL 校验走构造注入，输出目录/SQLite 打模块级。
+
+    返回绑好替身的构造器；调用时可用关键字覆盖（如 `build(event_emitter=...)`）。
+    """
     from src.config import settings
     from src.storage import database as dbmod
-    from src.workflow import mvp_workflow
-
-    monkeypatch.setattr(mvp_workflow, "get_llm_client", lambda *a, **k: llm_client)
-    monkeypatch.setattr(mvp_workflow, "WebCrawler", crawler_cls or _FakeWebCrawler)
-    # URL 校验走透传以保持离线；其真实行为由 test_security_baseline 覆盖
-    monkeypatch.setattr(mvp_workflow, "validate_fetch_url", lambda u: u)
-    monkeypatch.setattr(mvp_workflow, "validate_fetch_urls", lambda us: list(us))
+    from src.workflow.mvp_workflow import MVPWorkflow
 
     monkeypatch.setattr(settings, "OUTPUT_DIR", str(tmp_path / "output"))
     monkeypatch.setattr(dbmod, "DATABASE_PATH", str(tmp_path / "reports.db"))
     monkeypatch.setattr(dbmod, "_report_db", None)
+    kwargs = {"llm_client": llm_client, "url_validator": lambda u: u}
+    if crawler_cls is not None:
+        # react 路径的爬虫由 tool_specs 侧单独注入；只有 legacy 管线才绑这里
+        kwargs["crawler_factory"] = crawler_cls
+    return functools.partial(MVPWorkflow, **kwargs)
 
 
 def _wire_react_tools(monkeypatch, react_crawler_cls=None):
@@ -131,11 +134,10 @@ def test_react_full_flow_completes_with_cost_and_events(tmp_path, monkeypatch):
             "最终结论：无数字句。",
         ],
     })
-    _wire_offline(monkeypatch, tmp_path, llm)
+    build = _wire_offline(monkeypatch, tmp_path, llm)
     _wire_react_tools(monkeypatch)
 
-    from src.workflow import mvp_workflow
-    workflow = mvp_workflow.MVPWorkflow()
+    workflow = build()
     collector = _EventCollector()
     workflow._event_emitter = collector
 
@@ -186,11 +188,10 @@ def test_react_flow_with_citation_trusted(tmp_path, monkeypatch):
         ],
         "extract": [json.dumps([{"key": "pricing", "value": fact_value, "confidence": 0.9}])],
     })
-    _wire_offline(monkeypatch, tmp_path, llm)
+    build = _wire_offline(monkeypatch, tmp_path, llm)
     _wire_react_tools(monkeypatch, react_crawler_cls=lambda: _StaticReactCrawler(page_url))
 
-    from src.workflow import mvp_workflow
-    workflow = mvp_workflow.MVPWorkflow()
+    workflow = build()
 
     state = asyncio.run(workflow.run(
         "react 定价调研",
@@ -217,11 +218,10 @@ def test_react_without_final_answer_fails_with_max_steps(tmp_path, monkeypatch):
             for i in range(3)
         ],
     })
-    _wire_offline(monkeypatch, tmp_path, llm)
+    build = _wire_offline(monkeypatch, tmp_path, llm)
     _wire_react_tools(monkeypatch)
 
-    from src.workflow import mvp_workflow
-    workflow = mvp_workflow.MVPWorkflow()
+    workflow = build()
 
     state = asyncio.run(workflow.run("无终答调研", enable_search=False, task_id="react-max-0001"))
 
@@ -259,10 +259,9 @@ def test_legacy_mode_is_default_and_unchanged(tmp_path, monkeypatch):
         "extract": [json.dumps(EXTRACT_ITEMS, ensure_ascii=False)],
         "report": [report_md],
     })
-    _wire_offline(monkeypatch, tmp_path, llm)
+    build = _wire_offline(monkeypatch, tmp_path, llm, crawler_cls=_FakeWebCrawler)
 
-    from src.workflow import mvp_workflow
-    workflow = mvp_workflow.MVPWorkflow()
+    workflow = build()
     state = asyncio.run(workflow.run(
         "Acme 定价调研",
         target_urls=[target_url],
@@ -298,10 +297,9 @@ def test_fetch_all_competitors_shares_one_crawler_instance(tmp_path, monkeypatch
         "extract": [json.dumps(EXTRACT_ITEMS, ensure_ascii=False)],
         "report": [report_md],
     })
-    _wire_offline(monkeypatch, tmp_path, llm, crawler_cls=_CountingCrawler)
+    build = _wire_offline(monkeypatch, tmp_path, llm, crawler_cls=_CountingCrawler)
 
-    from src.workflow import mvp_workflow
-    workflow = mvp_workflow.MVPWorkflow()
+    workflow = build()
     state = asyncio.run(workflow.run(
         "双站调研",
         target_urls=[url_a, url_b],
@@ -409,7 +407,7 @@ def test_workflow_hands_its_budget_to_the_tool_registry(tmp_path, monkeypatch):
         ],
         "extract": [json.dumps([{"key": "pricing", "value": "$49/月", "confidence": 0.9}])],
     })
-    _wire_offline(monkeypatch, tmp_path, llm)
+    build = _wire_offline(monkeypatch, tmp_path, llm)
     _wire_react_tools(monkeypatch, react_crawler_cls=lambda: _StaticReactCrawler(f"{site_url}/p"))
 
     from src.workflow import mvp_workflow
@@ -418,11 +416,11 @@ def test_workflow_hands_its_budget_to_the_tool_registry(tmp_path, monkeypatch):
     captured = {}
     real_builder = mvp_workflow.build_default_tools
 
-    def _spy(llm_client, workspace, budget=None):
+    def _spy(llm_client, workspace, budget=None, **kwargs):
         captured["budget"] = budget
-        return real_builder(llm_client, workspace, budget=budget)
+        return real_builder(llm_client, workspace, budget=budget, **kwargs)
 
-    workflow = mvp_workflow.MVPWorkflow(tools_builder=_spy)
+    workflow = build(tools_builder=_spy)
     asyncio.run(workflow.run("接线调研", enable_search=False, task_id="budget-wire-0001"))
 
     assert "budget" in captured, "工作流根本没调 build_default_tools，用例失去意义"

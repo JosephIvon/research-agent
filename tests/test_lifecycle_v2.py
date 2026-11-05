@@ -5,6 +5,7 @@
 docs/design/2026-11-04-track.md 的 resume 探针一节）。
 """
 import asyncio
+import functools
 import json
 from typing import Any, Dict, List
 
@@ -13,7 +14,6 @@ import pytest
 from src.agent.citations import EvidenceStore
 from src.llm import ScriptedLLMClient
 from src.storage import database as dbmod
-from src.workflow import mvp_workflow
 from src.workflow.mvp_workflow import MVPWorkflow
 from src.workflow.task_store import (
     InMemoryTaskStore,
@@ -76,8 +76,8 @@ def test_cancelled_is_a_declared_terminal_status():
 def test_cancel_event_stops_workflow_before_side_effects(tmp_path, monkeypatch):
     """取消后不得再落报告：raise_if_cancelled 在 _save_report 之前生效。"""
     client, cite, report = _scripted_client()
-    _wire(monkeypatch, tmp_path, client)
-    workflow = MVPWorkflow()
+    build = _wire(monkeypatch, tmp_path, client)
+    workflow = build()
     cancel_event = asyncio.Event()
     cancel_event.set()
 
@@ -166,7 +166,7 @@ def test_resume_flags_skip_completed_stages():
 # --------------------------------------------------------------------------
 
 def test_unit_fetch_timeout_isolated_to_one_site(monkeypatch):
-    workflow = MVPWorkflow(llm_client=object())
+    workflow = MVPWorkflow(llm_client=object(), request_interval=0)
     monkeypatch.setenv("UNIT_FETCH_TIMEOUT", "0.05")
 
     async def _slow(url, *a, **k):
@@ -175,7 +175,6 @@ def test_unit_fetch_timeout_isolated_to_one_site(monkeypatch):
 
     monkeypatch.setattr(workflow, "_fetch_single_competitor", _slow)
     # 抓取前的限速睡睡由并发控制器控制；这里直接跳过批次爬虫初始化。
-    monkeypatch.setattr(mvp_workflow, "CRAWL_REQUEST_INTERVAL", 0)
 
     results = asyncio.run(workflow._fetch_all_competitors([{"url": "https://slow.test"}]))
     assert len(results) == 1
@@ -198,14 +197,20 @@ def _scripted_client():
     }), cite, report
 
 
-def _wire(monkeypatch, tmp_path, client):
-    monkeypatch.setattr(mvp_workflow, "WebCrawler", _FakeWebCrawler)
-    monkeypatch.setattr(mvp_workflow, "get_llm_client", lambda *a, **k: client)
-    monkeypatch.setattr(mvp_workflow, "validate_fetch_url", lambda u: u)
-    monkeypatch.setattr(mvp_workflow, "validate_fetch_urls", lambda us: list(us))
+def _wire(monkeypatch, tmp_path, client, crawler_cls=_FakeWebCrawler):
+    """工作流层零网络隔离：LLM、爬虫、URL 校验走构造注入。
+
+    返回绑好替身的构造器；调用时可用关键字覆盖（如 `build(event_emitter=...)`）。
+    """
     monkeypatch.setattr("src.config.settings.OUTPUT_DIR", str(tmp_path / "output"))
     monkeypatch.setattr(dbmod, "DATABASE_PATH", str(tmp_path / "reports.db"))
     monkeypatch.setattr(dbmod, "_report_db", None)
+    return functools.partial(
+        MVPWorkflow,
+        llm_client=client,
+        crawler_factory=crawler_cls,
+        url_validator=lambda u: u,
+    )
 
 
 def test_sqlite_read_fallback_after_restart(tmp_path, monkeypatch):
@@ -254,14 +259,14 @@ def _report_rows(tmp_path, task_id: str) -> int:
 def test_report_write_is_idempotent_when_crash_after_write(tmp_path, monkeypatch):
     """“文件已写、状态未落库”窗口被杀：续跑只覆盖同一文件，不产生第二份。"""
     client, cite, report = _scripted_client()
-    _wire(monkeypatch, tmp_path, client)
+    build = _wire(monkeypatch, tmp_path, client)
     task_id = "atomic-report-1"
 
     class _CrashAfterWrite(MVPWorkflow):
         def _persist_to_sqlite(self, state):
             raise _Crash("after report write")
 
-    first = asyncio.run(_CrashAfterWrite().run(
+    first = asyncio.run(_CrashAfterWrite(**build.keywords).run(
         "Acme 定价调研", target_urls=[TARGET_URL], enable_search=False,
         deliverables={"report": True, "prd": False}, task_id=task_id,
     ))
@@ -275,7 +280,7 @@ def test_report_write_is_idempotent_when_crash_after_write(tmp_path, monkeypatch
 
     time.sleep(1.05)
 
-    resumed = MVPWorkflow()
+    resumed = build()
     state = asyncio.run(resumed.run(
         "Acme 定价调研", target_urls=[TARGET_URL], enable_search=False,
         deliverables={"report": True, "prd": False}, task_id=task_id, resume=True,
@@ -297,7 +302,7 @@ def test_report_draft_reused_after_stage_internal_crash(tmp_path, monkeypatch):
         "extract": [json.dumps(EXTRACT_ITEMS, ensure_ascii=False)],
         "report": [report, report],
     })
-    _wire(monkeypatch, tmp_path, client)
+    build = _wire(monkeypatch, tmp_path, client)
     task_id = "draft-report-1"
 
     class _CrashBeforeReportCheckpoint(MVPWorkflow):
@@ -306,14 +311,14 @@ def test_report_draft_reused_after_stage_internal_crash(tmp_path, monkeypatch):
                 raise _Crash("report before checkpoint")
             super()._end_stage(state, stage, status, message, error_code)
 
-    first = asyncio.run(_CrashBeforeReportCheckpoint().run(
+    first = asyncio.run(_CrashBeforeReportCheckpoint(**build.keywords).run(
         "Acme 定价调研", target_urls=[TARGET_URL], enable_search=False,
         deliverables={"report": True, "prd": False}, task_id=task_id,
     ))
     assert first["status"] == "failed"
     assert dbmod.get_report_db().load_latest_checkpoint(task_id)["stage"] == "verify"
 
-    resumed = MVPWorkflow()
+    resumed = build()
     calls = {"generate": 0}
     original = resumed.copywriter.generate_report
 
@@ -343,7 +348,6 @@ def test_crawl_page_cache_skips_refetch_on_stage_internal_crash(tmp_path, monkey
         ],
         "report": [report],
     })
-    _wire(monkeypatch, tmp_path, client)
     calls = {"fetch": 0}
 
     class _CountingCrawler(_FakeWebCrawler):
@@ -351,7 +355,7 @@ def test_crawl_page_cache_skips_refetch_on_stage_internal_crash(tmp_path, monkey
             calls["fetch"] += 1
             return await super().fetch_site_profile(url, **kwargs)
 
-    monkeypatch.setattr(mvp_workflow, "WebCrawler", _CountingCrawler)
+    build = _wire(monkeypatch, tmp_path, client, crawler_cls=_CountingCrawler)
     task_id = "cache-crawl-1"
 
     class _CrashBeforeCrawlCheckpoint(MVPWorkflow):
@@ -360,7 +364,7 @@ def test_crawl_page_cache_skips_refetch_on_stage_internal_crash(tmp_path, monkey
                 raise _Crash("crawl before checkpoint")
             super()._end_stage(state, stage, status, message, error_code)
 
-    first = asyncio.run(_CrashBeforeCrawlCheckpoint().run(
+    first = asyncio.run(_CrashBeforeCrawlCheckpoint(**build.keywords).run(
         "Acme 定价调研", target_urls=[TARGET_URL], enable_search=False,
         deliverables={"report": True, "prd": False}, task_id=task_id,
     ))
@@ -369,7 +373,7 @@ def test_crawl_page_cache_skips_refetch_on_stage_internal_crash(tmp_path, monkey
     assert dbmod.get_report_db().load_latest_checkpoint(task_id)["stage"] == "decompose"
 
     before = calls["fetch"]
-    state = asyncio.run(MVPWorkflow().run(
+    state = asyncio.run(build().run(
         "Acme 定价调研", target_urls=[TARGET_URL], enable_search=False,
         deliverables={"report": True, "prd": False}, task_id=task_id, resume=True,
     ))
@@ -380,10 +384,12 @@ def test_crawl_page_cache_skips_refetch_on_stage_internal_crash(tmp_path, monkey
 @pytest.mark.parametrize("crash_stage", ["crawl", "extract", "verify", "report", "citation"])
 def test_resume_after_crash_reaches_completed(tmp_path, monkeypatch, crash_stage):
     client, cite, _ = _scripted_client()
-    _wire(monkeypatch, tmp_path, client)
+    build = _wire(monkeypatch, tmp_path, client)
     task_id = f"crash-{crash_stage}"
 
-    crashed = _CrashAfterStage(crash_stage=crash_stage, event_emitter=_Collector())
+    crashed = _CrashAfterStage(
+        crash_stage=crash_stage, event_emitter=_Collector(), **build.keywords,
+    )
     bad_state = asyncio.run(crashed.run(
         "Acme 定价调研", target_urls=[TARGET_URL], enable_search=False,
         deliverables={"report": True, "prd": False}, task_id=task_id,
@@ -392,7 +398,7 @@ def test_resume_after_crash_reaches_completed(tmp_path, monkeypatch, crash_stage
     checkpoint = dbmod.get_report_db().load_latest_checkpoint(task_id)
     assert checkpoint and checkpoint["stage"] == crash_stage
 
-    resumed = MVPWorkflow(event_emitter=_Collector())
+    resumed = build(event_emitter=_Collector())
     state = asyncio.run(resumed.run(
         "Acme 定价调研", target_urls=[TARGET_URL], enable_search=False,
         deliverables={"report": True, "prd": False}, task_id=task_id, resume=True,

@@ -175,7 +175,7 @@ async def test_fetch_all_competitors_uses_per_site_credentials(monkeypatch):
         calls.append((url, auth_credentials, login_url))
         return {"name": url, "url": url, "extracted_data": [], "status": "success", "error_message": None}
 
-    monkeypatch.setattr(wf, "WebCrawler", _FakeCrawler)
+    workflow._crawler_factory = _FakeCrawler
     monkeypatch.setattr(workflow, "_fetch_single_competitor", fake_fetch)
     await workflow._fetch_all_competitors([
         {

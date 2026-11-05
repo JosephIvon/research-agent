@@ -11,15 +11,8 @@ from pathlib import Path
 TESTS_DIR = Path(__file__).resolve().parent
 MODULE = "src.workflow.mvp_workflow"
 
-# 批③待迁移的网络边界注入点；迁移完成后清空，守卫即覆盖全部模块属性。
-PENDING = {
-    "get_llm_client",
-    "WebCrawler",
-    "validate_fetch_url",
-    "validate_fetch_urls",
-    "AGENT_USD_BUDGET",
-    "CRAWL_REQUEST_INTERVAL",
-}
+# 批③已完成：网络边界注入点全部迁到构造参数，守卫覆盖全部模块属性。
+PENDING = set()
 # 整体替换被测类（server 侧的 MVPWorkflow）是测试边界，不是依赖替身，不在此列。
 ALLOWED = {"MVPWorkflow"}
 
