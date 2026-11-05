@@ -51,6 +51,7 @@ from src.workflow.competitor_matrix import (
 )
 from src.workflow import borrowable_derivation
 from src.workflow import evidence_merge
+from src.workflow import page_cache
 from src.workflow import report_io
 from src.workflow import research_plan
 from src.workflow import search_stages
@@ -2917,58 +2918,23 @@ class MVPWorkflow:
 
     @staticmethod
     def _page_cache_key(url: str, max_pages: Optional[int], page_tiers: Optional[tuple]) -> str:
-        """缓存键：站点 URL + 抓取作用域。content_hash 在读时另行校验。"""
-        return f"{url}|max_pages={max_pages}|tiers={page_tiers}"
+        return page_cache.page_cache_key(url, max_pages, page_tiers)
 
     @staticmethod
     def _profile_content_hash(profile: Dict[str, Any]) -> str:
-        """对站内全部页的 URL+正文求哈希：内容变了哈希必变，脏缓存按未命中处理。"""
-        import hashlib
-
-        digest = hashlib.sha256()
-        for page in profile.get("pages") or []:
-            digest.update(str(page.get("url") or "").encode())
-            digest.update(b"\x00")
-            digest.update(str(page.get("content") or "").encode())
-            digest.update(b"\x01")
-        return digest.hexdigest()
+        return page_cache.profile_content_hash(profile)
 
     def _load_cached_profile(self, state: Dict[str, Any], cache_key: str) -> Optional[Dict[str, Any]]:
-        task_id = state.get("task_id")
-        # 未走 __init__ 的实例（单测直接构造个别方法）不启用缓存：
-        # 没有生命周期开关就没有副作用持久化，避免测试间任务号复用导致脏命中。
-        if not getattr(self, "_page_cache_enabled", False):
-            return None
-        try:
-            from src.storage import get_report_db
-
-            row = get_report_db().get_page_cache(task_id, cache_key)
-            if not row:
-                return None
-            profile = row.get("payload") or {}
-            if self._profile_content_hash(profile) != row.get("content_hash"):
-                return None
-            return profile if profile.get("pages") else None
-        except Exception as exc:
-            logger.warning("读取页缓存失败: %s", exc)
-            return None
+        return page_cache.load_cached_profile(
+            state, cache_key, enabled=getattr(self, "_page_cache_enabled", False)
+        )
 
     def _save_cached_profile(
         self, state: Dict[str, Any], cache_key: str, profile: Dict[str, Any],
     ) -> None:
-        task_id = state.get("task_id")
-        if not task_id or not getattr(self, "_page_cache_enabled", False):
-            return
-        if not isinstance(profile, dict) or not profile.get("pages"):
-            return
-        try:
-            from src.storage import get_report_db
-
-            get_report_db().save_page_cache(
-                task_id, cache_key, self._profile_content_hash(profile), profile,
-            )
-        except Exception as exc:
-            logger.warning("保存页缓存失败: %s", exc)
+        page_cache.save_cached_profile(
+            state, cache_key, profile, enabled=getattr(self, "_page_cache_enabled", False)
+        )
 
     @staticmethod
     def _competitor_record(c: Dict[str, Any]) -> Dict[str, Any]:
