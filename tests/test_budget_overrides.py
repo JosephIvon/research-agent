@@ -44,18 +44,12 @@ class _CapturingRunner:
 
 def _wire(monkeypatch, tmp_path):
     from src.agent import config
-    from src.workflow import mvp_workflow
     from tests.test_partial_status import _wire_offline, _wire_react_tools
 
     monkeypatch.setenv("AGENT_MODE", "react")
     llm = ScriptedLLMClient(script={"react": ["占位，本用例用桩 Runner"]})
     _wire_offline(monkeypatch, tmp_path, llm)
     _wire_react_tools(monkeypatch)
-    monkeypatch.setattr(mvp_workflow, "ReActRunner", _CapturingRunner)
-    monkeypatch.setattr(mvp_workflow, "verify_report", lambda report, store: {
-        "passed": True, "coverage": 1.0, "valid_ratio": 1.0, "grounding": 1.0,
-        "violations": [],
-    })
     return config
 
 
@@ -111,8 +105,7 @@ def test_task_request_rejects_absurd_budgets(field, value):
 
 def test_injected_budgets_reach_the_runner(monkeypatch, tmp_path):
     """注入的步数/墙钟必须真的传到 Runner——此前它们永远取默认。"""
-    from src.workflow import mvp_workflow
-    from tests.test_partial_status import _drive
+    from tests.test_partial_status import _drive, _verify_passed
 
     _wire(monkeypatch, tmp_path)
     _CapturingRunner.captured = {}
@@ -123,6 +116,8 @@ def test_injected_budgets_reach_the_runner(monkeypatch, tmp_path):
         token_budget=333000,
         wall_clock_budget=900,
         usd_budget=3.5,
+        react_runner_factory=_CapturingRunner,
+        verify_report_fn=_verify_passed,
     )
     asyncio.run(_drive(workflow))
 
@@ -140,12 +135,16 @@ def test_injected_budgets_reach_the_runner(monkeypatch, tmp_path):
 def test_without_overrides_the_runner_keeps_server_defaults(monkeypatch, tmp_path):
     """不传预算时必须落回服务端默认，不能被 None 覆盖成 0。"""
     from src.agent import config
-    from tests.test_partial_status import _drive
+    from tests.test_partial_status import _drive, _verify_passed
 
     _wire(monkeypatch, tmp_path)
     _CapturingRunner.captured = {}
 
-    workflow = MVPWorkflow(llm_client=ScriptedLLMClient(script={"react": ["占位"]}))
+    workflow = MVPWorkflow(
+        llm_client=ScriptedLLMClient(script={"react": ["占位"]}),
+        react_runner_factory=_CapturingRunner,
+        verify_report_fn=_verify_passed,
+    )
     asyncio.run(_drive(workflow))
 
     captured = _CapturingRunner.captured

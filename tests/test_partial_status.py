@@ -157,6 +157,14 @@ async def _drive(workflow, user_query="预算耗尽收束调研", **run_kwargs):
     return state
 
 
+def _verify_passed(report, store):
+    """引用校验打桩：链路仍由真实工作流驱动，只固定 passed 结果。"""
+    return {
+        "passed": True, "coverage": 1.0, "valid_ratio": 1.0, "grounding": 1.0,
+        "violations": [],
+    }
+
+
 # --------------------------------------------------------------------------
 # 终态取值
 # --------------------------------------------------------------------------
@@ -175,14 +183,11 @@ def test_budget_exceeded_with_answer_is_partial(tmp_path, monkeypatch):
 
     from src.workflow import mvp_workflow
 
-    monkeypatch.setattr(mvp_workflow, "ReActRunner", _BudgetExhaustedRunner)
     # 引用校验打桩只为了让 passed=True 可确定断言，链路本身仍由真实工作流驱动
-    monkeypatch.setattr(mvp_workflow, "verify_report", lambda report, store: {
-        "passed": True, "coverage": 1.0, "valid_ratio": 1.0, "grounding": 1.0,
-        "violations": [],
-    })
-
-    workflow = mvp_workflow.MVPWorkflow()
+    workflow = mvp_workflow.MVPWorkflow(
+        react_runner_factory=_BudgetExhaustedRunner,
+        verify_report_fn=_verify_passed,
+    )
     collector = _EventCollector()
     workflow._event_emitter = collector
 
@@ -266,13 +271,10 @@ def test_partial_event_payload_carries_status_and_cost(tmp_path, monkeypatch):
 
     from src.workflow import mvp_workflow
 
-    monkeypatch.setattr(mvp_workflow, "ReActRunner", _BudgetExhaustedRunner)
-    monkeypatch.setattr(mvp_workflow, "verify_report", lambda report, store: {
-        "passed": True, "coverage": 1.0, "valid_ratio": 1.0, "grounding": 1.0,
-        "violations": [],
-    })
-
-    workflow = mvp_workflow.MVPWorkflow()
+    workflow = mvp_workflow.MVPWorkflow(
+        react_runner_factory=_BudgetExhaustedRunner,
+        verify_report_fn=_verify_passed,
+    )
     collector = _EventCollector()
     workflow._event_emitter = collector
 
@@ -401,12 +403,8 @@ def test_real_runner_delivers_partial_when_budget_runs_out(tmp_path, monkeypatch
     _wire_react_tools(monkeypatch)
     # 把 runner 的 token 预算压到必然超额
     monkeypatch.setattr(config, "AGENT_TOKEN_BUDGET", 10)
-    monkeypatch.setattr(mvp_workflow, "verify_report", lambda report, store: {
-        "passed": True, "coverage": 1.0, "valid_ratio": 1.0, "grounding": 1.0,
-        "violations": [],
-    })
 
-    workflow = mvp_workflow.MVPWorkflow()
+    workflow = mvp_workflow.MVPWorkflow(verify_report_fn=_verify_passed)
     state = asyncio.run(_drive(workflow))
 
     assert state["termination_reason"] == "react:budget_exceeded"
@@ -426,13 +424,11 @@ def test_real_runner_emits_partial_event_not_completed(tmp_path, monkeypatch):
     _wire_offline(monkeypatch, tmp_path, llm)
     _wire_react_tools(monkeypatch)
     monkeypatch.setattr(config, "AGENT_TOKEN_BUDGET", 10)
-    monkeypatch.setattr(mvp_workflow, "verify_report", lambda report, store: {
-        "passed": True, "coverage": 1.0, "valid_ratio": 1.0, "grounding": 1.0,
-        "violations": [],
-    })
 
     collector = _EventCollector()
-    workflow = mvp_workflow.MVPWorkflow(event_emitter=collector)
+    workflow = mvp_workflow.MVPWorkflow(
+        event_emitter=collector, verify_report_fn=_verify_passed,
+    )
     asyncio.run(_drive(workflow))
 
     assert len(collector.of("partial")) == 1, "预算耗尽应收束出 partial 事件"
@@ -459,14 +455,13 @@ def test_terminal_status_actually_reaches_sqlite(tmp_path, monkeypatch, expected
     """
     monkeypatch.setenv("AGENT_MODE", "react")
 
+    workflow_kwargs = {}
     if expected == "partial":
-        llm = _BudgetExhaustedRunner  # noqa: F841 - 仅作为哨兵，实际用下面的 monkeypatch
-        from src.workflow import mvp_workflow
-        monkeypatch.setattr(mvp_workflow, "ReActRunner", _BudgetExhaustedRunner)
-        monkeypatch.setattr(mvp_workflow, "verify_report", lambda report, store: {
-            "passed": True, "coverage": 1.0, "valid_ratio": 1.0, "grounding": 1.0,
-            "violations": [],
-        })
+        llm = _BudgetExhaustedRunner  # noqa: F841 - 仅作为哨兵，实际用下面的注入
+        workflow_kwargs = {
+            "react_runner_factory": _BudgetExhaustedRunner,
+            "verify_report_fn": _verify_passed,
+        }
         _wire_offline(monkeypatch, tmp_path, _react_llm("不会被调用"))
     elif expected == "completed":
         _wire_offline(monkeypatch, tmp_path, _react_llm("正常终答。"))
@@ -480,7 +475,7 @@ def test_terminal_status_actually_reaches_sqlite(tmp_path, monkeypatch, expected
     from src.workflow import mvp_workflow
 
     task_id = f"sqlite-terminal-{expected}-0001"
-    workflow = mvp_workflow.MVPWorkflow()
+    workflow = mvp_workflow.MVPWorkflow(**workflow_kwargs)
     workflow._event_emitter = _EventCollector()
     state = asyncio.run(_drive(workflow, enable_search=False, task_id=task_id))
 

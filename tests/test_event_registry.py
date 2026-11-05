@@ -84,11 +84,11 @@ def test_partial_event_goes_out_under_the_registered_name(tmp_path, monkeypatch)
     import json
 
     from src.agent import config
-    from src.workflow import mvp_workflow
     from tests.test_partial_status import (
         _call,
         _drive,
         _react_llm,
+        _verify_passed,
         _wire_offline,
         _wire_react_tools,
     )
@@ -98,13 +98,12 @@ def test_partial_event_goes_out_under_the_registered_name(tmp_path, monkeypatch)
     _wire_offline(monkeypatch, tmp_path, llm)
     _wire_react_tools(monkeypatch)
     monkeypatch.setattr(config, "AGENT_TOKEN_BUDGET", 10)
-    monkeypatch.setattr(mvp_workflow, "verify_report", lambda report, store: {
-        "passed": True, "coverage": 1.0, "valid_ratio": 1.0, "grounding": 1.0,
-        "violations": [],
-    })
 
     collector = _Collector()
-    workflow = MVPWorkflow(event_emitter=collector)
+    workflow = MVPWorkflow(
+        event_emitter=collector,
+        verify_report_fn=_verify_passed,
+    )
     asyncio.run(_drive(workflow))
 
     emitted = collector.names()

@@ -422,9 +422,7 @@ def test_workflow_hands_its_budget_to_the_tool_registry(tmp_path, monkeypatch):
         captured["budget"] = budget
         return real_builder(llm_client, workspace, budget=budget)
 
-    monkeypatch.setattr(mvp_workflow, "build_default_tools", _spy)
-
-    workflow = mvp_workflow.MVPWorkflow()
+    workflow = mvp_workflow.MVPWorkflow(tools_builder=_spy)
     asyncio.run(workflow.run("接线调研", enable_search=False, task_id="budget-wire-0001"))
 
     assert "budget" in captured, "工作流根本没调 build_default_tools，用例失去意义"
