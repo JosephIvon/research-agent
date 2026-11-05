@@ -53,6 +53,7 @@ from src.workflow import borrowable_derivation
 from src.workflow import evidence_merge
 from src.workflow import page_cache
 from src.workflow import planning
+from src.workflow import quality_refresh
 from src.workflow import report_io
 from src.workflow import research_plan
 from src.workflow import search_stages
@@ -2563,31 +2564,10 @@ class MVPWorkflow:
         }
 
     def _refresh_quality_report(self, state: Dict[str, Any]):
-        """按当前竞品数据重算数据完整度（补抓后必须重算）。
-
-        附录自评表必须与报告正文看到的数据一致，否则报告会出现
-        「正文有定价、附录说定价缺失」的自相矛盾——下游 judge 只能照着错账扣分。
-        """
-        quality_report = QualityScorer(state.get("competitors", [])).evaluate()
-        state["quality_score"] = quality_report.overall_score
-        state["quality_grade"] = quality_report.grade
-        state["missing_dimensions"] = quality_report.missing_dimensions
-        return quality_report
+        return quality_refresh.refresh_quality_report(state)
 
     async def _refresh_verification(self, state: Dict[str, Any]):
-        """补抓后重算可追溯性校验（补抓前算的结果已经过期）。
-
-        报告开头的「数据质量提示」用的就是它：补抓带回的数字不进旧结果，
-        报告就会自称「没有任何一条数据包含数值」却给出了价格——同样是自相矛盾。
-        """
-        verification_result = await self.coordinator.assess_extracted_data(state["extracted_data"])
-        state["verification_score"] = verification_result["score"]
-        state["verification_passed"] = verification_result["passed"]
-        state["verification_warnings"] = verification_result["warnings"]
-        state["source_coverage"] = verification_result["source_coverage"]
-        state["evidence_count"] = verification_result["evidence_count"]
-        state["numeric_evidence_count"] = verification_result["numeric_evidence_count"]
-        return verification_result
+        return await quality_refresh.refresh_verification(self.coordinator, state)
 
     async def _maybe_refetch_for_gaps(
         self,
