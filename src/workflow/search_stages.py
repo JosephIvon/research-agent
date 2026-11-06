@@ -32,6 +32,9 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 from src.workflow.research_plan import ResearchPlan, admit_competitors
+
+# C5 官方域通道的进程内结果缓存（12 轮只查一次 ✓，消搜索抖动 ✓）
+_OFFICIAL_DOMAIN_RESULTS: Dict[str, List[Dict[str, Any]]] = {}
 from src.tools.search_tool import SearchBackendError
 from src.workflow.site_types import (  # noqa: F401  (转出以兼容既有引用)
     SITE_APP_STORE,
@@ -274,6 +277,10 @@ class DiscoveryResult:
     deep_dive_candidates: List[str] = field(default_factory=list)
     # 通道自己的 site: 查询失败记录（**不**算整轮无效的依据 ✗）
     channel_failures: List[Dict[str, Any]] = field(default_factory=list)
+    # C5 官方域通道（verified 白名单反哺，§17）：site: 定向探测过的官方域
+    # + 新进池的候选（观测口径 ✓）
+    official_domain_pages: List[str] = field(default_factory=list)
+    official_domain_candidates: List[str] = field(default_factory=list)
     # 名额账（谁占了名额、依据、谁被挤掉）
     slot_ledger: Dict[str, Any] = field(default_factory=dict)
 
@@ -293,6 +300,8 @@ class DiscoveryResult:
             "store_candidates": list(self.store_candidates),
             "deep_dive_brands": list(self.deep_dive_brands),
             "deep_dive_candidates": list(self.deep_dive_candidates),
+            "official_domain_pages": list(self.official_domain_pages),
+            "official_domain_candidates": list(self.official_domain_candidates),
             "channel_failures": list(self.channel_failures),
             "slot_ledger": dict(self.slot_ledger),
         }
@@ -308,7 +317,9 @@ class SearchStageRunner:
                  max_deep_dives: int = 8,
                  enable_officiality: bool = True,
                  max_officiality_lookups: int = 16,
-                 officiality_cache_path: Optional[str] = None):
+                 officiality_cache_path: Optional[str] = None,
+                 enable_official_domain_channel: bool = True,
+                 max_official_domain_queries: int = 8):
         self.search_tool = search_tool
         self.num_results = num_results
         # C3 目录页通道（默认开）：模型不知道、搜索也搜不到的长尾产品，
@@ -333,6 +344,15 @@ class SearchStageRunner:
         self.enable_officiality = enable_officiality
         self.max_officiality_lookups = max_officiality_lookups
         self.officiality_cache_path = officiality_cache_path
+        # C5 官方域通道（默认开，§17 预注册）：verified 白名单反哺发现查询——
+        # 对**池中缺位**的官方域发 site: 定向查询补池。
+        # 引擎探测（2026-11-06 ✓）：site: 在 SearXNG 可用（character.ai 17 条），
+        # 且 talkie-ai.com **是被收录的**（7 条）——第十三轮"索引里没有"的
+        # 证伪结论是**查询形态错误**（关键词 `talkie 官网` ≠ 收录性）✗。
+        # 判定来源 = officiality 进程缓存（App Store 元数据 ✓ 不用 golden 知识 ✓）。
+        # 必须直用 searxng 后端：search() 合并层会把 site: 结果丢掉（实测 ✗）。
+        self.enable_official_domain_channel = enable_official_domain_channel
+        self.max_official_domain_queries = max_official_domain_queries
         # 主体锚定的结果缓存：竞品发现阶段要据此排除"主体自己的官方页"
         self._entity_pages: List[Dict[str, Any]] = []
         # 主体自己官网的域名：按"实体锚定阶段排名最高的官网"判定。
@@ -634,6 +654,48 @@ class SearchStageRunner:
                     f"unknown {counts.get('unknown', 0)}")
             except Exception as exc:  # noqa: BLE001 —— 检查挂掉按 unknown 处理 ✓
                 result.notes.append(f"官方性检查异常（按 unknown 处理）：{type(exc).__name__}")
+        # -- C5 官方域通道（verified 白名单反哺发现查询，§17 预注册）--------
+        # 动机（第十九轮量化 ✗）：落盘白名单 27 个官方域里 18 个**不在池**
+        # （67%）——它们是"已收录但关键词查询没命中"的官方站，site: 定向
+        # 能拉出自己的页面 ✓。判定来源 = officiality 判定（不用 golden 知识 ✓）。
+        # 有界（8 域/进程 ✓）+ 进程内结果缓存（12 轮只查一次 ✓）+ 失败隔离 ✓。
+        if self.enable_official_domain_channel and pool:
+            before_urls = {c.url for c in result.candidates}
+            probes = self._official_domain_queries(
+                pool, subject_hosts=subject_hosts)
+            fresh: List[Dict[str, Any]] = []
+            for _host, items in probes:
+                fresh.extend(items)
+            added = 0
+            if fresh:
+                added = self._absorb_results(
+                    fresh, result, seen, by_name, title_by_name, model_names,
+                    skip_urls=frozenset(self_page_urls),
+                    skip_hosts=frozenset(subject_hosts),
+                    entity_name=entity_name,
+                )
+            probed_hosts = {host for host, _ in probes}
+
+            def _norm_host(url: str) -> str:
+                h = (host_of(url) or "").lower()
+                return h[4:] if h.startswith("www.") else h
+
+            # 官方域通道拉回的页面**就是开发者站自己的**（site: 限定 ✓）——
+            # 直接标 verified（省一次 App Store 复判 ✓ 判定来源同源 ✓）。
+            for cand in result.candidates:
+                if (not cand.officiality
+                        and _norm_host(str(cand.url or "")) in probed_hosts):
+                    cand.officiality = "verified"
+            result.official_domain_pages = [host for host, _ in probes]
+            result.official_domain_candidates = [
+                c.url for c in result.candidates if c.url not in before_urls]
+            if probes:
+                result.notes.append(
+                    f"官方域通道：site: 定向 {len(probes)} 个缺位域"
+                    f"（{'、'.join(list(probed_hosts)[:3])}…），新增 {added} 个候选")
+            if added:
+                by_name = _merge_brand_hosts(by_name)
+                pool = [c for c in by_name.values() if not c.is_aggregator]
         admission = admit_competitors([c.to_dict() for c in pool], plan)
         result.selected = admission["selected"]
         result.scored = admission["scored"]
@@ -656,6 +718,59 @@ class SearchStageRunner:
         # 它的 site: 查询挂掉不影响主链路数据的完整性（2026-11-01 决策 ✓）。
         result.channel_failures = list(self.channel_failures)
         return result
+
+    def _official_domain_queries(self, pool: Sequence["Candidate"],
+                                 subject_hosts: Sequence[str] = ()
+                                 ) -> List[Tuple[str, List[Dict[str, Any]]]]:
+        """缺位官方域的 site: 定向查询（结果带域分组返回）。
+
+        目标选取：officiality 进程缓存（已被本 run 的官方性检查填充 ✓，
+        含落盘载入的历史判定 ✓）里**不在池**的开发者站；每品牌取第一个
+        缺位域 ✓；有界 max_official_domain_queries ✓。
+        查询必须直用 searxng 后端（search() 合并层丢 site: 结果 ✗ 实测）；
+        进程内结果缓存（12 轮只查一次 ✓）；失败进 channel_failures ✓。
+        """
+        from src.tools.officiality import _SELLER_CACHE
+
+        def _norm(host: str) -> str:
+            v = (host or "").strip().lower()
+            if not v:
+                return ""
+            if "//" not in v:  # 落盘缓存存的是**裸主机名**（无 scheme ✗）
+                v = "https://" + v
+            h = (host_of(v) or "").lower()
+            return h[4:] if h.startswith("www.") else h
+
+        pool_hosts = {_norm(str(c.url or "")) for c in pool}
+        subject_set = {_norm(str(h or "")) for h in subject_hosts}
+        targets: List[Tuple[str, str]] = []
+        for brand, hosts in sorted(_SELLER_CACHE.items()):
+            if len(targets) >= self.max_official_domain_queries:
+                break
+            for host in hosts:
+                h2 = _norm(host)
+                if not h2 or h2 in pool_hosts or h2 in subject_set:
+                    continue
+                if all(h2 != t[0] for t in targets):
+                    targets.append((h2, brand))
+                break  # 每品牌只取第一个缺位域 ✓
+        out: List[Tuple[str, List[Dict[str, Any]]]] = []
+        for host, _brand in targets:
+            query = f"site:{host}"
+            if query in _OFFICIAL_DOMAIN_RESULTS:
+                out.append((host, _OFFICIAL_DOMAIN_RESULTS[query]))
+                continue
+            try:
+                items = self.search_tool.search_with_searxng(
+                    query, num_results=6) or []
+            except Exception as exc:  # noqa: BLE001 —— 失败隔离 ✓
+                self.channel_failures.append({
+                    "stage": "official_domain", "query": query,
+                    "error": type(exc).__name__})
+                items = []
+            _OFFICIAL_DOMAIN_RESULTS[query] = list(items)
+            out.append((host, list(items)))
+        return out
 
     def _absorb_results(self, items: Sequence[Dict[str, Any]], result: "DiscoveryResult",
                         seen: set, by_name: Dict[str, "Candidate"],

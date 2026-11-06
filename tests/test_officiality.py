@@ -335,3 +335,84 @@ def test_search_stage_annotates_officiality(monkeypatch):
     assert match and match[0].officiality == "suspect", "池里候选要带官方性标注 ✓"
     assert result.to_dict()["candidates"][0]["officiality"] == "suspect"
     assert any("官方性检查" in n for n in result.notes)
+
+def test_official_domain_channel_fills_absent_host():
+    """C5 官方域通道（§17）：verified 白名单里池中缺位的官方域 →
+    site: 定向查询补池，拉回的页面直接标 verified ✓。"""
+    ss._OFFICIAL_DOMAIN_RESULTS.clear()
+    off._SELLER_CACHE.clear(); off._FETCH_FAILED.clear(); off._REDIRECT_CACHE.clear()
+    off._SELLER_CACHE["talkie"] = ["talkie-ai.com"]
+
+    class _Fake:
+        def __init__(self):
+            self.site_queries = []
+        def search(self, query, num_results=None):
+            if query.startswith("猫箱"):
+                return [{"url": "https://talkieai.cc/", "title": "Talkie",
+                         "content": "x"}]
+            return []
+        def search_with_searxng(self, query, num_results=None):
+            self.site_queries.append(query)
+            assert query == "site:talkie-ai.com", "定向 site: 查询 ✓"
+            return [{"url": "https://talkie-ai.com/", "title": "Talkie AI",
+                     "content": "y"}]
+
+    fake = _Fake()
+    runner = ss.SearchStageRunner(fake)
+    result = runner.run_competitor_discovery(_plan())
+    assert "https://talkie-ai.com/" in {c.url for c in result.candidates}, "官方域补进池 ✓"
+    official = [c for c in result.candidates if "talkie-ai.com" in c.url]
+    assert official[0].officiality == "verified", "通道拉回的页面直接标 verified ✓"
+    assert result.official_domain_pages == ["talkie-ai.com"]
+    assert "https://talkie-ai.com/" in result.official_domain_candidates
+    assert any("官方域通道" in n for n in result.notes)
+    assert fake.site_queries == ["site:talkie-ai.com"], "走 searxng 直用（search() 丢 site: ✗）"
+
+
+def test_official_domain_channel_skips_present_and_bounds():
+    """已在池的官方域不查 ✓；有界 max_official_domain_queries ✓。"""
+    ss._OFFICIAL_DOMAIN_RESULTS.clear()
+    off._SELLER_CACHE.clear(); off._FETCH_FAILED.clear(); off._REDIRECT_CACHE.clear()
+    off._SELLER_CACHE["xingye"] = ["xingyeai.com"]  # 已在池 → 不查
+    for i in range(12):
+        off._SELLER_CACHE[f"brand{i}x"] = [f"https://b{i}.example/"]  # 缺位 ×12
+
+    class _Fake:
+        def __init__(self):
+            self.site_queries = []
+        def search(self, query, num_results=None):
+            if query.startswith("猫箱"):
+                return [{"url": "https://xingyeai.com/", "title": "星野",
+                         "content": "x"}]
+            return []
+        def search_with_searxng(self, query, num_results=None):
+            self.site_queries.append(query)
+            return []
+
+    fake = _Fake()
+    runner = ss.SearchStageRunner(fake)
+    runner.run_competitor_discovery(_plan())
+    assert not any("xingyeai.com" in q for q in fake.site_queries), "已在池不查 ✓"
+    assert len(fake.site_queries) == 8, "有界 8 ✓"
+
+
+def test_official_domain_channel_failure_isolated():
+    """searxng 查询挂掉 → channel_failures 记账 ✓ 不作废整轮 ✓。"""
+    ss._OFFICIAL_DOMAIN_RESULTS.clear()
+    off._SELLER_CACHE.clear(); off._FETCH_FAILED.clear(); off._REDIRECT_CACHE.clear()
+    off._SELLER_CACHE["talkie"] = ["talkie-ai.com"]
+
+    class _Fake:
+        def search(self, query, num_results=None):
+            if query.startswith("猫箱"):
+                return [{"url": "https://talkieai.cc/", "title": "Talkie",
+                         "content": "x"}]
+            return []
+        def search_with_searxng(self, query, num_results=None):
+            raise RuntimeError("searxng down")
+
+    runner = ss.SearchStageRunner(_Fake())
+    result = runner.run_competitor_discovery(_plan())
+    assert result.to_dict()["candidates"], "池不受影响 ✓"
+    assert result.search_failed is False, "通道失败不算整轮无效 ✓"
+    assert any(f.get("stage") == "official_domain" for f in result.channel_failures)
