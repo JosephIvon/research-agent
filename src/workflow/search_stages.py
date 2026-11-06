@@ -35,6 +35,16 @@ from src.workflow.research_plan import ResearchPlan, admit_competitors
 
 # C5 官方域通道的进程内结果缓存（12 轮只查一次 ✓，消搜索抖动 ✓）
 _OFFICIAL_DOMAIN_RESULTS: Dict[str, List[Dict[str, Any]]] = {}
+
+# **免费托管域**：sellerUrl 指向这些域的 App，其"官方站"其实是托管页 ✗
+# （blogspot/wordpress 等谁都能开）——**不能**当 site: 定向目标（第二十轮
+# 实测 ✗：blogspot 涌入 36 候选/轮，挤掉金标准）。只拦 C5 目标选取，
+# 不动 officiality 判定（那是 App Store 的权威源，判定不受影响 ✓）。
+_FREE_HOST_SUFFIXES = (
+    "blogspot.com", "wordpress.com", "github.io", "gitlab.io", "medium.com",
+    "wixsite.com", "weebly.com", "strikingly.com", "tumblr.com", "notion.site",
+    "fc2.com", "blogspot.dk", "blogspot.hu", "typepad.com", "substack.com",
+)
 from src.tools.search_tool import SearchBackendError
 from src.workflow.site_types import (  # noqa: F401  (转出以兼容既有引用)
     SITE_APP_STORE,
@@ -743,14 +753,24 @@ class SearchStageRunner:
 
         pool_hosts = {_norm(str(c.url or "")) for c in pool}
         subject_set = {_norm(str(h or "")) for h in subject_hosts}
+        # 目标排序（§18 修正 ✗ 首版字母序截断——talkie 排 T 永远轮不到，
+        # #108 同族第三踩）：**池内品牌优先**（池里已有它的候选——常是
+        # 蹭名域——它的官方域正是缺口 ✗ 优先补），白名单残留延后。
+        pool_brands = {_normalized_brand(c.name) for c in pool}
+        pool_brands.discard("")
         targets: List[Tuple[str, str]] = []
-        for brand, hosts in sorted(_SELLER_CACHE.items()):
+        ranked = sorted(_SELLER_CACHE.items(),
+                        key=lambda kv: (0 if kv[0] in pool_brands else 1, kv[0]))
+        for brand, hosts in ranked:
             if len(targets) >= self.max_official_domain_queries:
                 break
             for host in hosts:
                 h2 = _norm(host)
                 if not h2 or h2 in pool_hosts or h2 in subject_set:
                     continue
+                if any(h2 == s or h2.endswith("." + s)
+                       for s in _FREE_HOST_SUFFIXES):
+                    continue  # 免费托管域不配当官方域目标 ✗
                 if all(h2 != t[0] for t in targets):
                     targets.append((h2, brand))
                 break  # 每品牌只取第一个缺位域 ✓
@@ -763,6 +783,11 @@ class SearchStageRunner:
             try:
                 items = self.search_tool.search_with_searxng(
                     query, num_results=6) or []
+                # **每域限吸收根/浅层 2 条**（§18 ✗ 首版整包 6 条 × 8 域 =
+                # 36-39 候选/轮洪水涌入挤名额 ✗）——官方域只需要"域被收录 +
+                # 主页进池"这一个事实，不是越多越好 ✗。
+                items = [it for it in items
+                         if str(it.get("url") or "").count("/") <= 4][:2]
             except Exception as exc:  # noqa: BLE001 —— 失败隔离 ✓
                 self.channel_failures.append({
                     "stage": "official_domain", "query": query,

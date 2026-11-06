@@ -416,3 +416,32 @@ def test_official_domain_channel_failure_isolated():
     assert result.to_dict()["candidates"], "池不受影响 ✓"
     assert result.search_failed is False, "通道失败不算整轮无效 ✓"
     assert any(f.get("stage") == "official_domain" for f in result.channel_failures)
+
+def test_official_domain_channel_free_hosts_and_priority():
+    """§18 修正：① 免费托管域不当目标 ✗；② 池内品牌优先（talkie 先于
+    字母序更前的池外品牌 ✓，#108 排序截断同族）；③ 每域限吸收 2 条 ✓。"""
+    ss._OFFICIAL_DOMAIN_RESULTS.clear()
+    off._SELLER_CACHE.clear(); off._FETCH_FAILED.clear(); off._REDIRECT_CACHE.clear()
+    off._SELLER_CACHE.update({
+        "aaa": ["https://zblog0.example/"],          # 池外品牌（字母序最先但延后）
+        "talkie": ["talkie-ai.com"],                 # 池内品牌（优先）
+        "freehost": ["https://junk.blogspot.com/"],  # 免费托管 → 不当目标
+    })
+    calls = []
+
+    class _Fake:
+        def search(self, query, num_results=None):
+            if query.startswith("猫箱"):
+                return [{"url": "https://talkieai.cc/", "title": "Talkie",
+                         "content": "x"}]
+            return []
+        def search_with_searxng(self, query, num_results=None):
+            calls.append(query)
+            return [{"url": f"https://talkie-ai.com/page{i}", "title": "T",
+                     "content": "y"} for i in range(6)]
+
+    runner = ss.SearchStageRunner(_Fake())
+    result = runner.run_competitor_discovery(_plan())
+    assert calls[:1] == ["site:talkie-ai.com"], "池内品牌优先 ✓"
+    assert not any("blogspot" in q for q in calls), "免费托管域不当目标 ✓"
+    assert len(result.official_domain_candidates) <= 2, "每域限吸收 2 ✓"
