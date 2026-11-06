@@ -136,6 +136,9 @@ async def run_once(llm: Any, search_tool: Any, subject: str, style: str,
     # 测量时用它与金标准命中的交集回答"下钻带来了多少" ✓）
     record["deep_dive_brands"] = list(getattr(discovery, "deep_dive_brands", []) or [])
     record["deep_dive_candidates"] = list(getattr(discovery, "deep_dive_candidates", []) or [])
+    # C5 官方域通道（§20 补漏：字段加了没透传 ✗ 导致 artifact 里恒缺）
+    record["official_domain_pages"] = list(getattr(discovery, "official_domain_pages", []) or [])
+    record["official_domain_candidates"] = list(getattr(discovery, "official_domain_candidates", []) or [])
     # 通道自己的 site: 查询失败（**不**作废整轮 ✓，但要看得见）
     record["channel_failures"] = list(getattr(discovery, "channel_failures", []) or [])
     # 名额账：每个名额给了谁、依据是什么、谁被挤掉了（纯观测 ✓）
